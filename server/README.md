@@ -7,11 +7,14 @@ hold their config on disk and keep running if it's unreachable.
 
 ## Run it (Unraid / any Docker host)
 
+    cp .env.example .env     # then edit it
     docker compose up -d --build
 
 Then http://<host>:8099 and sign in with `ADMIN_PASSWORD`.
 
-Set in `docker-compose.yml`:
+Set in `.env` (gitignored; `docker-compose.yml` is tracked, so secrets must
+not go there). Changing these needs `docker compose up -d`, not `restart` —
+they are read once at import:
 
 | Variable | Purpose |
 |---|---|
