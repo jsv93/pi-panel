@@ -100,6 +100,7 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
         <span class="pill" id="cUnclaimed" style="color:var(--warn);background:rgba(216,166,87,.14)">0 unclaimed</span>
         <span id="haWarn" class="pill" style="color:var(--warn);background:rgba(216,166,87,.14);display:none">HA not configured</span>
         <div style="margin-left:auto;display:flex;gap:8px">
+          <button class="btn" id="settingsBtn">Settings</button>
           <button class="btn" id="refreshBtn">Refresh</button>
           <button class="btn primary" id="pushAllBtn">Push all</button>
         </div>
@@ -109,6 +110,71 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
         <span>LAST SEEN</span><span>CONFIG</span><span></span>
       </div>
       <div id="fleetRows"></div>
+    </div>
+  </div>
+
+  <!-- ============ SETTINGS ============ -->
+  <div id="settingsView" style="display:none">
+    <div style="display:flex;align-items:center;gap:12px">
+      <button class="btn" id="setBackBtn">← Fleet</button>
+      <h1>Server settings</h1>
+    </div>
+
+    <div class="card" style="padding:18px;margin-top:14px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+        <h2>Home Assistant</h2>
+        <span class="pill" id="sHaState"></span>
+      </div>
+      <p class="muted" style="font-size:13px">
+        Used only for entity dropdowns and the live preview. Panels hold their own
+        tokens and talk to Home Assistant directly, so nothing here is in the path
+        of a light turning on.
+      </p>
+      <div class="f2" style="margin-top:14px">
+        <div>
+          <div class="lbl">URL</div>
+          <input id="sHaUrl" placeholder="http://192.168.1.10:8123">
+          <div class="muted" style="font-size:12px;margin-top:5px">
+            Use an IP address — homeassistant.local generally does not resolve
+            from inside the container.
+          </div>
+        </div>
+        <div>
+          <div class="lbl">LONG-LIVED ACCESS TOKEN</div>
+          <input id="sHaToken" type="password" placeholder="leave blank to keep current">
+          <div class="muted" id="sTokenState" style="font-size:12px;margin-top:5px"></div>
+        </div>
+      </div>
+      <div id="sHaResult"></div>
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button class="btn" id="sTestBtn">Test connection</button>
+        <button class="btn primary" id="sSaveHaBtn">Save</button>
+        <button class="btn danger" id="sClearTokenBtn" style="margin-left:auto">Clear token</button>
+      </div>
+    </div>
+
+    <div class="card" style="padding:18px;margin-top:14px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+        <h2>Admin password</h2>
+        <span class="pill" id="sPwState"></span>
+      </div>
+      <div id="sPwWarn"></div>
+      <div class="f2" style="margin-top:14px">
+        <div><div class="lbl">CURRENT PASSWORD</div><input id="sPwCur" type="password"></div>
+        <div><div class="lbl">NEW PASSWORD</div><input id="sPwNew" type="password"></div>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:8px">
+        Minimum 8 characters. Stored as a PBKDF2 hash, never in plain text. Saving
+        signs out every other session; this one stays.
+      </div>
+      <div style="margin-top:14px">
+        <button class="btn primary" id="sSavePwBtn">Change password</button>
+      </div>
+    </div>
+
+    <div class="card" style="padding:18px;margin-top:14px">
+      <h2 style="margin-bottom:12px">Server</h2>
+      <div id="sServerInfo"></div>
     </div>
   </div>
 
@@ -493,6 +559,102 @@ $("#pushAllBtn").onclick = async ()=>{
       const r = await api("/push_all",{method:"POST"});
       toast(`Pushed to ${r.sent.length}, queued for ${r.queued.length}`); loadFleet();
     });
+};
+
+/* ---------------- settings ---------------- */
+function showSettings(on){
+  $("#fleetView").style.display    = on ? "none"  : "block";
+  $("#detailView").style.display   = "none";
+  $("#settingsView").style.display = on ? "block" : "none";
+}
+$("#settingsBtn").onclick = ()=>{ showSettings(true); loadSettings(); };
+$("#setBackBtn").onclick  = ()=>{ showSettings(false); loadFleet(); };
+
+function pill(el, text, kind){
+  const c = {ok:"var(--ok)", bad:"var(--bad)", warn:"var(--warn)"}[kind] || "var(--faint)";
+  const bg = {ok:"rgba(29,158,117,.14)", bad:"rgba(196,112,90,.14)",
+              warn:"rgba(216,166,87,.14)"}[kind] || "transparent";
+  el.textContent = text; el.style.color = c; el.style.background = bg;
+}
+/* Where a value came from matters here: "saved" and "inherited from the
+   container env" behave identically until someone edits the compose file. */
+function srcNote(src){
+  return src==="settings" ? "saved here"
+       : src==="env"      ? "from environment variable"
+       : "not set";
+}
+async function loadSettings(){
+  const s = await api("/settings");
+  $("#sHaUrl").value = s.ha_url || "";
+  $("#sHaToken").value = "";
+  $("#sTokenState").textContent = s.ha_token_set
+    ? `Token set (${s.ha_token_hint}) — ${srcNote(s.sources.ha_token)}`
+    : "No token set.";
+  pill($("#sHaState"), s.ha_configured ? "configured" : "not configured",
+       s.ha_configured ? "ok" : "warn");
+  $("#sHaResult").innerHTML = s.ha_last_error
+    ? `<div class="warn">Last request to Home Assistant failed: ${s.ha_last_error}</div>` : "";
+  pill($("#sPwState"), s.admin_password_source==="settings" ? "set here" : "from environment",
+       s.admin_password_source==="settings" ? "ok" : "warn");
+  $("#sPwWarn").innerHTML = s.admin_password_is_default
+    ? `<div class="warn">The admin password is still the shipped default. Anyone who can
+       reach this server can sign in and reconfigure every panel.</div>` : "";
+  const inf = s.server;
+  $("#sServerInfo").innerHTML = `
+    <div class="f2">
+      <div><div class="lbl">HOME ASSISTANT URL SOURCE</div>${srcNote(s.sources.ha_url)}</div>
+      <div><div class="lbl">SESSION LENGTH</div>${inf.session_ttl_hours} hours</div>
+      <div><div class="lbl">DATABASE</div><code>${inf.db_path}</code></div>
+      <div><div class="lbl">PREVIEW UI DIRECTORY</div><code>${inf.ui_dir}</code></div>
+    </div>
+    <div style="margin-top:12px">${inf.preview_ui_present
+      ? `<span class="muted">panel.html found — live preview available.</span>`
+      : `<div class="warn">No panel.html in ${inf.ui_dir}, so the live preview will
+         404. Copy the panel UI there to enable it. Everything else works without it.</div>`}</div>
+    <div class="muted" style="font-size:12px;margin-top:12px">
+      These two paths are set by the container and are not editable here — changing
+      the database path would orphan the existing fleet.
+    </div>`;
+}
+$("#sTestBtn").onclick = async ()=>{
+  const box = $("#sHaResult");
+  box.innerHTML = `<div class="muted" style="margin-top:12px">Testing…</div>`;
+  /* Tests what is in the boxes, not what is stored, so a token can be checked
+     before it replaces a working one. */
+  const r = await api("/settings/test_ha",{method:"POST",body:JSON.stringify({
+    ha_url:$("#sHaUrl").value, ha_token:$("#sHaToken").value})});
+  box.innerHTML = r.ok
+    ? `<div class="warn" style="background:rgba(29,158,117,.10);border-color:rgba(29,158,117,.35);color:var(--ok)">
+        Connected — ${r.entities} entities visible.</div>`
+    : `<div class="warn">Failed${r.status?` (HTTP ${r.status})`:""}: ${r.error}</div>`;
+};
+$("#sSaveHaBtn").onclick = async ()=>{
+  await api("/settings",{method:"PUT",body:JSON.stringify({
+    ha_url:$("#sHaUrl").value, ha_token:$("#sHaToken").value})});
+  ENTITIES = {};              // dropdowns were built from the old credentials
+  toast("Home Assistant settings saved");
+  loadSettings();
+};
+$("#sClearTokenBtn").onclick = ()=>{
+  confirmModal("Clear Home Assistant token",
+    `<p>Remove the stored token? Entity dropdowns and the live preview stop working
+      until a new one is set.</p>
+     <p class="muted" style="margin-top:10px;font-size:13px">Panels are unaffected —
+      they hold their own tokens. If <code>HA_TOKEN</code> is set in the environment,
+      that value applies again.</p>`,
+    async ()=>{
+      await api("/settings",{method:"PUT",body:JSON.stringify({clear_ha_token:true})});
+      ENTITIES = {}; toast("Token cleared"); loadSettings();
+    });
+};
+$("#sSavePwBtn").onclick = async ()=>{
+  const cur = $("#sPwCur").value, nw = $("#sPwNew").value;
+  if(nw.length < 8){ toast("New password must be at least 8 characters"); return; }
+  try{
+    await api("/settings/password",{method:"POST",body:JSON.stringify({current:cur,new:nw})});
+    $("#sPwCur").value = ""; $("#sPwNew").value = "";
+    toast("Password changed"); loadSettings();
+  }catch(e){ toast(e.message || "Could not change password"); }
 };
 
 /* ---------------- preview ---------------- */

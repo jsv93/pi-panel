@@ -42,6 +42,14 @@ CREATE TABLE IF NOT EXISTS templates (
     data       TEXT NOT NULL,
     updated_at REAL NOT NULL
 );
+
+-- Server settings edited from the GUI. Env vars remain the bootstrap default
+-- so an existing deployment keeps working; anything set here wins over them.
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
 """
 
 DEFAULT_TEMPLATE = {
@@ -210,6 +218,27 @@ def merged_config(panel_id):
     own = get_config(panel_id) or {}
     own.pop("_version", None)
     return deep_merge(tpl, own)
+
+
+# ---------------------------------------------------------------- settings
+def get_setting(key, default=""):
+    with conn() as c:
+        r = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return r["value"] if r else default
+
+
+def set_setting(key, value):
+    with conn() as c:
+        c.execute(
+            "INSERT INTO settings(key,value,updated_at) VALUES(?,?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+            (key, value, time.time()),
+        )
+
+
+def clear_setting(key):
+    with conn() as c:
+        c.execute("DELETE FROM settings WHERE key=?", (key,))
 
 
 # ---------------------------------------------------------------- templates

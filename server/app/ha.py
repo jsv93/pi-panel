@@ -12,32 +12,87 @@ import time
 
 import httpx
 
-HA_URL = os.environ.get("HA_URL", "").rstrip("/")
-HA_TOKEN = os.environ.get("HA_TOKEN", "")
+from . import db
 
 _cache = {"at": 0, "states": []}
 CACHE_S = 30
 
+# Why the last failure is kept: a swallowed exception here shows up as empty
+# entity dropdowns and nothing else, which is indistinguishable from "HA has
+# no entities". The settings page surfaces this instead of leaving it silent.
+_last_error = ""
+
+
+def url():
+    """Stored setting wins; env is the bootstrap default for a fresh deploy."""
+    return (db.get_setting("ha_url") or os.environ.get("HA_URL", "")).rstrip("/")
+
+
+def token():
+    return db.get_setting("ha_token") or os.environ.get("HA_TOKEN", "")
+
+
+def source():
+    """Where each value is coming from, so the GUI can say so."""
+    return {
+        "ha_url": "settings" if db.get_setting("ha_url") else ("env" if os.environ.get("HA_URL") else "unset"),
+        "ha_token": "settings" if db.get_setting("ha_token") else ("env" if os.environ.get("HA_TOKEN") else "unset"),
+    }
+
 
 def configured():
-    return bool(HA_URL and HA_TOKEN)
+    return bool(url() and token())
+
+
+def last_error():
+    return _last_error
+
+
+def invalidate():
+    """Drop the cache so a settings change takes effect on the next request."""
+    _cache["at"] = 0
+    _cache["states"] = []
+
+
+async def check(test_url="", test_token=""):
+    """Live credential test. Takes explicit values so the GUI can verify before
+    saving. Returns a dict rather than raising — the caller renders it."""
+    u = (test_url or url()).rstrip("/")
+    t = test_token or token()
+    if not u or not t:
+        return {"ok": False, "error": "URL and token are both required"}
+    try:
+        async with httpx.AsyncClient(timeout=8) as c:
+            r = await c.get(f"{u}/api/states", headers={"Authorization": f"Bearer {t}"})
+    except Exception as e:
+        return {"ok": False, "error": f"cannot reach {u}: {e.__class__.__name__}"}
+    if r.status_code == 401:
+        return {"ok": False, "status": 401, "error": "token rejected"}
+    if r.status_code != 200:
+        return {"ok": False, "status": r.status_code, "error": r.text[:200]}
+    try:
+        return {"ok": True, "status": 200, "entities": len(r.json())}
+    except Exception:
+        return {"ok": False, "status": 200, "error": "response was not JSON — is this a Home Assistant URL?"}
 
 
 async def states(force=False):
+    global _last_error
     if not configured():
         return []
     if not force and time.time() - _cache["at"] < CACHE_S:
         return _cache["states"]
-    headers = {"Authorization": f"Bearer {HA_TOKEN}"}
+    headers = {"Authorization": f"Bearer {token()}"}
     try:
         async with httpx.AsyncClient(timeout=8) as c:
-            r = await c.get(f"{HA_URL}/api/states", headers=headers)
+            r = await c.get(f"{url()}/api/states", headers=headers)
             r.raise_for_status()
             _cache["states"] = r.json()
             _cache["at"] = time.time()
-    except Exception:
-        # stale cache beats an error page in the GUI
-        pass
+            _last_error = ""
+    except Exception as e:
+        # stale cache beats an error page in the GUI, but record why
+        _last_error = f"{e.__class__.__name__}: {e}"[:200]
     return _cache["states"]
 
 

@@ -12,14 +12,23 @@ hold their config on disk and keep running if it's unreachable.
 
 Then http://<host>:8099 and sign in with `ADMIN_PASSWORD`.
 
-Set in `.env` (gitignored; `docker-compose.yml` is tracked, so secrets must
-not go there). Changing these needs `docker compose up -d`, not `restart` —
-they are read once at import:
+`.env` only has to get you as far as the login screen. Everything below is
+editable in **Settings** once you are signed in, stored in the database, and
+applied immediately — no recreate, no container access.
 
 | Variable | Purpose |
 |---|---|
-| `ADMIN_PASSWORD` | GUI login. Change it. |
+| `ADMIN_PASSWORD` | GUI login. Change it in Settings; the new one is stored hashed and the env var stops being used. |
 | `HA_URL` / `HA_TOKEN` | Only for entity dropdowns and live preview. Never sent to the browser. |
+
+A value set in Settings wins over the environment. Clearing it falls back to
+the env var, and the page says which of the two is in force. Settings has a
+**Test connection** button that reports the actual HTTP result — use it rather
+than guessing at an empty dropdown, which is what a bad URL or token looks
+like from the outside.
+
+The env vars are still read at import, so changing *those* needs
+`docker compose up -d` rather than `restart`.
 
 Put a copy of `panel.html` in `./data/ui/` so the preview can render it.
 
