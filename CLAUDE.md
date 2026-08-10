@@ -25,6 +25,7 @@ Corollaries:
     server/       FastAPI + SQLite config server (Docker, runs on Unraid)
     agent/        Panel-side sync agent; also serves the UI over localhost
     panel-ui/     panel.html — the Pi panel UI (single file, vanilla JS)
+                  backlight.py — localhost sysfs brightness helper (systemd)
     esphome/      ESP32-P4 panel firmware (panel-poc.yaml)
     docs/         Architecture decisions and hardware findings
 
