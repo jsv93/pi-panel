@@ -490,7 +490,11 @@ function connect(){
     if(m.type==="auth_required"){ ws.send(JSON.stringify({type:"auth",access_token:HA_TOKEN})); return; }
     if(m.type==="auth_ok"){
       wsReady=true; status("connected","ok"); reportHA(true);
-      wsSend({type:"get_states"}).then(r=>{ (r||[]).forEach(applyState); paintAll(); });
+      /* A throw anywhere in this seed silently loses every initial value —
+         the panel then looks connected but blank until something changes. */
+      wsSend({type:"get_states"})
+        .then(r=>{ (r||[]).forEach(applyState); paintAll(); })
+        .catch(e=>status("state load failed: "+(e.message||e),"bad"));
       wsSend({type:"subscribe_events", event_type:"state_changed"});
       return;
     }
@@ -539,7 +543,7 @@ function applyState(s){
     }
   } else if(id===TEMP_ENT){ st.temp = parseFloat(s.state);
   } else if(id===HUM_ENT){  st.hum  = parseFloat(s.state);
-  } else if(id===SPEAKERS[target][0]){
+  } else if(SPEAKERS[target] && id===SPEAKERS[target][0]){
     st.playing = s.state==="playing";
     st.title   = s.attributes.media_title || "";
     st.artist  = s.attributes.media_artist || s.attributes.media_series_title || s.attributes.app_name || "";
@@ -728,7 +732,9 @@ SPEAKERS.forEach(function(sp,i){
     $("#spkNow").textContent=sp[1];
     ovClose();
     st.title=""; st.artist=""; st.art=""; st.playing=false;
-    if(live) wsSend({type:"get_states"}).then(r=>{ (r||[]).forEach(applyState); paintAll(); });
+    if(live) wsSend({type:"get_states"})
+      .then(r=>{ (r||[]).forEach(applyState); paintAll(); })
+      .catch(e=>status("state load failed: "+(e.message||e),"bad"));
     bump();
   });
   $("#spkList").appendChild(d);
@@ -894,7 +900,8 @@ function paintAll(){
   $("#rmTitle").textContent = st.title || "Nothing playing";
   $("#rmArtist").textContent = st.artist;
   $("#mTitle").textContent  = st.title || "Nothing playing";
-  $("#mArtist").textContent = st.artist ? st.artist+"  ·  "+SPEAKERS[target][1] : SPEAKERS[target][1];
+  const spkName = (SPEAKERS[target]||[])[1] || "";
+  $("#mArtist").textContent = st.artist ? st.artist+"  ·  "+spkName : spkName;
   $("#idTitle").textContent = st.title; $("#idArtist").textContent = st.artist;
   $("#pp").innerHTML   = st.playing?PAUSE:PLAY;
   $("#rmPP").innerHTML = st.playing?PAUSE:PLAY;
