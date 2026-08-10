@@ -1,0 +1,15 @@
+services:
+  panel-server:
+    build: .
+    container_name: panel-server
+    restart: unless-stopped
+    ports:
+      - "8099:8099"
+    volumes:
+      - ./data:/data          # panels.db + ui/panel.html for preview
+    environment:
+      ADMIN_PASSWORD: "change-me"
+      # Token used only to list entities and drive the live preview.
+      # Panels hold their own tokens; this one never reaches a browser.
+      HA_URL: "http://homeassistant.local:8123"
+      HA_TOKEN: ""

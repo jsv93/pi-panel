@@ -1,0 +1,16 @@
+[Unit]
+Description=Panel config sync agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=PANEL_SERVER=http://unraid.local:8099
+Environment=PANEL_DIR=/opt/panel
+ExecStart=/usr/local/bin/panel-agent
+Restart=always
+RestartSec=10
+User=root
+
+[Install]
+WantedBy=multi-user.target

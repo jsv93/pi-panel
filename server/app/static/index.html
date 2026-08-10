@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel Config</title>
+<style>
+:root{
+  --bg:#0E0E14; --card:#15151E; --line:#26262F; --line2:#1D1D25; --sunk:#0F0F16;
+  --ink:#E8E8EC; --dim:#B4B4BE; --quiet:#9A9AA6; --faint:#61616C;
+  --ok:#5DCAA5; --bad:#C4705A; --warn:#D8A657; --violet:#8A8AF0;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.45 Inter,system-ui,-apple-system,sans-serif}
+button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
+input,select{font:inherit;background:var(--sunk);border:1px solid #2A2A34;border-radius:7px;
+  padding:9px 11px;color:var(--ink);width:100%}
+input:focus,select:focus{outline:0;border-color:var(--ok)}
+.wrap{max-width:1180px;margin:0 auto;padding:22px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px}
+.btn{border:1px solid #2E2E38;color:var(--quiet);padding:7px 13px;border-radius:7px;font-size:13px}
+.btn:hover{color:var(--ink);border-color:#3A3A46}
+.btn.primary{background:var(--ok);color:#0E0E14;border-color:var(--ok);font-weight:600}
+.btn.danger{color:var(--bad);border-color:rgba(196,112,90,.4)}
+.pill{font-size:12px;padding:3px 9px;border-radius:20px}
+.dot{width:7px;height:7px;border-radius:4px;display:inline-block;flex:none}
+.muted{color:var(--faint)}
+.lbl{font-size:11px;color:var(--faint);margin-bottom:6px;letter-spacing:.4px}
+h1{font-size:17px;font-weight:600}
+h2{font-size:14px;font-weight:600}
+
+/* login */
+#login{display:grid;place-items:center;height:100vh}
+#login .card{padding:26px;width:330px}
+
+/* fleet */
+.head{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line2)}
+.grid{display:grid;grid-template-columns:1.5fr .8fr .6fr .9fr .9fr .7fr 90px;align-items:center;
+  gap:10px;padding:12px 18px;font-size:13px;border-bottom:1px solid var(--line2)}
+.grid.hdr{font-size:11px;color:var(--faint);letter-spacing:.4px;padding:9px 18px}
+.grid:last-child{border-bottom:0}
+.row-unclaimed{background:rgba(216,166,87,.06)}
+.row-off{opacity:.6}
+
+/* detail */
+.cols{display:grid;grid-template-columns:190px 1fr;gap:16px;margin-top:16px}
+.nav div{font-size:13px;padding:9px 10px;border-radius:7px;color:var(--quiet);cursor:pointer}
+.nav div.on{background:rgba(93,202,165,.13);color:var(--ok)}
+.sect{display:none} .sect.on{display:block}
+.f2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+table.lights{width:100%;border-collapse:collapse;border:1px solid var(--line2);border-radius:8px;overflow:hidden}
+table.lights th{font-size:11px;color:var(--faint);text-align:left;padding:8px 10px;background:#12121A;font-weight:400;letter-spacing:.4px}
+table.lights td{padding:7px 10px;border-top:1px solid var(--line2)}
+table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
+.diag{display:flex;gap:24px;flex-wrap:wrap;font-size:12px;color:var(--faint);
+  padding-top:14px;margin-top:16px;border-top:1px solid var(--line2)}
+
+/* modal */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;place-items:center;z-index:50}
+.modal.on{display:grid}
+.modal .card{width:560px;max-height:78vh;overflow:auto;padding:22px}
+.warn{background:rgba(216,166,87,.10);border:1px solid rgba(216,166,87,.3);color:#E8C98A;
+  padding:11px 13px;border-radius:8px;font-size:13px;margin:12px 0}
+.err{background:rgba(196,112,90,.10);border:1px solid rgba(196,112,90,.3);color:#E5A18C;
+  padding:11px 13px;border-radius:8px;font-size:13px;margin:12px 0}
+
+/* preview */
+#previewWrap{position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;place-items:center;z-index:60}
+#previewWrap.on{display:grid}
+#previewFrame{width:720px;height:1280px;border:0;transform:scale(.52);transform-origin:center;
+  border-radius:18px;background:#000}
+.pv-shell{width:390px;height:680px;overflow:hidden;display:grid;place-items:center;
+  border-radius:20px;border:1px solid var(--line);background:#000}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1C1C26;
+  border:1px solid var(--line);padding:11px 18px;border-radius:9px;font-size:13px;z-index:80;display:none}
+.toast.on{display:block}
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="card">
+    <h1 style="margin-bottom:14px">Panel Config</h1>
+    <div class="lbl">ADMIN PASSWORD</div>
+    <input type="password" id="pw" autofocus>
+    <div id="loginErr" class="err" style="display:none">Wrong password</div>
+    <button class="btn primary" style="width:100%;margin-top:14px;padding:10px" id="loginBtn">Sign in</button>
+  </div>
+</div>
+
+<div class="wrap" id="app" style="display:none">
+
+  <!-- ============ FLEET ============ -->
+  <div id="fleetView">
+    <div class="card">
+      <div class="head">
+        <h1>Panels</h1>
+        <span class="pill" id="cOnline" style="color:var(--ok);background:rgba(29,158,117,.14)">0 online</span>
+        <span class="pill" id="cOffline" style="color:var(--bad);background:rgba(196,112,90,.14)">0 offline</span>
+        <span class="pill" id="cUnclaimed" style="color:var(--warn);background:rgba(216,166,87,.14)">0 unclaimed</span>
+        <span id="haWarn" class="pill" style="color:var(--warn);background:rgba(216,166,87,.14);display:none">HA not configured</span>
+        <div style="margin-left:auto;display:flex;gap:8px">
+          <button class="btn" id="refreshBtn">Refresh</button>
+          <button class="btn primary" id="pushAllBtn">Push all</button>
+        </div>
+      </div>
+      <div class="grid hdr">
+        <span>PANEL</span><span>ROOM</span><span>KIND</span><span>HOME ASSISTANT</span>
+        <span>LAST SEEN</span><span>CONFIG</span><span></span>
+      </div>
+      <div id="fleetRows"></div>
+    </div>
+  </div>
+
+  <!-- ============ DETAIL ============ -->
+  <div id="detailView" style="display:none">
+    <div style="display:flex;align-items:center;gap:12px">
+      <button class="btn" id="backBtn">← Fleet</button>
+      <h1 id="dTitle">panel</h1>
+      <span class="pill" id="dTemplate" style="color:var(--violet);background:rgba(138,138,240,.13)"></span>
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button class="btn" id="previewBtn">Preview</button>
+        <button class="btn" id="revertBtn">Revert</button>
+        <button class="btn primary" id="saveBtn">Save &amp; push</button>
+      </div>
+    </div>
+
+    <div class="cols">
+      <div class="card nav" style="padding:10px" id="sectNav">
+        <div class="lbl" style="padding:6px 10px">SECTIONS</div>
+        <div data-s="identity" class="on">Identity</div>
+        <div data-s="lights">Lights &amp; presets</div>
+        <div data-s="media">Media</div>
+        <div data-s="sensors">Sensors</div>
+        <div data-s="display">Display</div>
+        <div data-s="diag">Diagnostics</div>
+      </div>
+
+      <div class="card" style="padding:18px">
+        <div id="problems"></div>
+
+        <div class="sect on" data-s="identity">
+          <h2 style="margin-bottom:14px">Identity</h2>
+          <div class="f2">
+            <div><div class="lbl">HOSTNAME</div><input id="fHostname" disabled></div>
+            <div><div class="lbl">ROOM LABEL (shown under the clock)</div><input id="fRoomLabel"></div>
+          </div>
+          <div class="f2" style="margin-top:14px">
+            <div><div class="lbl">ROOM</div><input id="fRoom"></div>
+            <div><div class="lbl">TEMPLATE</div><select id="fTemplate"></select></div>
+          </div>
+          <div style="margin-top:14px"><div class="lbl">HOME ASSISTANT URL</div><input id="fHaUrl"></div>
+        </div>
+
+        <div class="sect" data-s="lights">
+          <h2 style="margin-bottom:14px">Lights &amp; presets</h2>
+          <table class="lights">
+            <thead><tr><th style="width:36%">ENTITY</th><th style="width:26%">DISPLAY NAME</th>
+              <th style="width:14%">SOFT %</th><th style="width:14%">BRIGHT %</th><th></th></tr></thead>
+            <tbody id="lightRows"></tbody>
+          </table>
+          <button class="btn" style="margin-top:12px;color:var(--ok);border-color:rgba(93,202,165,.35)"
+            id="addLight">+ Add light</button>
+        </div>
+
+        <div class="sect" data-s="media">
+          <h2 style="margin-bottom:14px">Media</h2>
+          <div><div class="lbl">DEFAULT SPEAKER</div><select id="fSpeaker"></select></div>
+          <div class="lbl" style="margin-top:16px">SELECTABLE SPEAKERS</div>
+          <div id="speakerList"></div>
+          <button class="btn" style="margin-top:10px;color:var(--ok);border-color:rgba(93,202,165,.35)"
+            id="addSpeaker">+ Add speaker</button>
+        </div>
+
+        <div class="sect" data-s="sensors">
+          <h2 style="margin-bottom:14px">Sensors</h2>
+          <div class="f2">
+            <div><div class="lbl">TEMPERATURE</div><select id="fTemp"></select></div>
+            <div><div class="lbl">HUMIDITY</div><select id="fHum"></select></div>
+          </div>
+        </div>
+
+        <div class="sect" data-s="display">
+          <h2 style="margin-bottom:14px">Display</h2>
+          <div class="f2">
+            <div><div class="lbl">IDLE TIMEOUT (SECONDS)</div><input type="number" id="fIdle"></div>
+            <div><div class="lbl">GLASS TIER</div><select id="fGlass">
+              <option value="0">Full</option><option value="1">No sheet</option>
+              <option value="2">Tiles only</option><option value="3">Off</option></select></div>
+          </div>
+          <div class="f2" style="margin-top:14px">
+            <div><div class="lbl">BACKLIGHT DEFAULT %</div><input type="number" id="fBlDef"></div>
+            <div><div class="lbl">BACKLIGHT MINIMUM %</div><input type="number" id="fBlMin"></div>
+          </div>
+        </div>
+
+        <div class="sect" data-s="diag">
+          <h2 style="margin-bottom:14px">Diagnostics</h2>
+          <div id="diagBody" class="muted">–</div>
+          <div class="lbl" style="margin-top:20px">CONFIG HISTORY</div>
+          <div id="history"></div>
+          <div style="margin-top:18px;display:flex;gap:8px">
+            <button class="btn" data-act="reload">Reload UI</button>
+            <button class="btn" data-act="sync">Force sync</button>
+            <button class="btn" data-act="restart">Restart panel</button>
+            <button class="btn danger" id="removeBtn" style="margin-left:auto">Remove panel</button>
+          </div>
+        </div>
+
+        <div class="diag" id="diagStrip"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- modals -->
+<div class="modal" id="modal"><div class="card">
+  <h2 id="mTitle">Confirm</h2>
+  <div id="mBody" style="margin-top:12px"></div>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
+    <button class="btn" id="mCancel">Cancel</button>
+    <button class="btn primary" id="mOk">Confirm</button>
+  </div>
+</div></div>
+
+<div id="previewWrap">
+  <div>
+    <div class="pv-shell"><iframe id="previewFrame"></iframe></div>
+    <div style="text-align:center;margin-top:12px">
+      <button class="btn" id="pvClose">Close preview</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = async (path, opts={}) => {
+  const r = await fetch("/api"+path, {credentials:"same-origin",
+    headers:{"Content-Type":"application/json"}, ...opts});
+  if(r.status===401){ show("#login"); throw new Error("auth"); }
+  if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.statusText);
+  return r.status===204 ? null : r.json();
+};
+function show(sel){ $("#login").style.display = sel==="#login"?"grid":"none";
+                    $("#app").style.display   = sel==="#app"?"block":"none"; }
+function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("on");
+  setTimeout(()=>t.classList.remove("on"), 2600); }
+function confirmModal(title, html, onOk){
+  $("#mTitle").textContent=title; $("#mBody").innerHTML=html;
+  $("#modal").classList.add("on");
+  $("#mOk").onclick = async ()=>{ $("#modal").classList.remove("on"); await onOk(); };
+}
+$("#mCancel").onclick = ()=>$("#modal").classList.remove("on");
+
+/* ---------------- login ---------------- */
+$("#loginBtn").onclick = async ()=>{
+  try{
+    await api("/login",{method:"POST",body:JSON.stringify({password:$("#pw").value})});
+    $("#loginErr").style.display="none"; show("#app"); loadFleet();
+  }catch(e){ $("#loginErr").style.display="block"; }
+};
+$("#pw").addEventListener("keydown",e=>{ if(e.key==="Enter") $("#loginBtn").click(); });
+
+/* ---------------- fleet ---------------- */
+let PANELS=[], ENTITIES={};
+function ago(ts){
+  if(!ts) return "never";
+  const s = Date.now()/1000 - ts;
+  if(s<60) return Math.round(s)+"s ago";
+  if(s<3600) return Math.round(s/60)+"m ago";
+  if(s<86400) return Math.round(s/3600)+"h ago";
+  return Math.round(s/86400)+"d ago";
+}
+async function loadFleet(){
+  PANELS = await api("/panels");
+  const me = await api("/me");
+  $("#haWarn").style.display = me.ha_configured ? "none" : "inline-block";
+  const on = PANELS.filter(p=>p.online&&p.claimed).length;
+  const off = PANELS.filter(p=>!p.online&&p.claimed).length;
+  const un = PANELS.filter(p=>!p.claimed).length;
+  $("#cOnline").textContent = on+" online";
+  $("#cOffline").textContent = off+" offline";
+  $("#cUnclaimed").textContent = un+" unclaimed";
+
+  $("#fleetRows").innerHTML = PANELS.map(p=>{
+    const m = p.metrics||{};
+    const drift = p.claimed && p.config_version && p.config_version < p.latest_version;
+    const cls = !p.claimed ? "row-unclaimed" : (p.online?"":"row-off");
+    const dot = !p.claimed ? "var(--warn)" : (p.online?"var(--ok)":"var(--bad)");
+    const haState = !p.online ? '<span class="muted">—</span>'
+      : (m.ha_connected ? '<span style="color:var(--ok)">connected</span>'
+                        : '<span style="color:var(--bad)">disconnected</span>');
+    const cfg = !p.claimed ? "" : drift
+      ? `<span style="color:var(--warn)">v${p.config_version} drift</span>`
+      : `<span style="color:var(--ok)">v${p.latest_version} ✓</span>`;
+    const action = p.claimed
+      ? `<button class="btn" data-open="${p.id}">Configure</button>`
+      : `<button class="btn primary" data-claim="${p.id}">Claim</button>`;
+    return `<div class="grid ${cls}">
+      <span style="display:flex;align-items:center;gap:9px"><i class="dot" style="background:${dot}"></i>${p.hostname}</span>
+      <span class="muted">${p.room||'<span style="color:var(--warn)">unclaimed</span>'}</span>
+      <span class="muted">${p.kind}</span>
+      <span>${haState}</span>
+      <span class="muted">${ago(p.last_seen)}</span>
+      <span>${cfg}</span>
+      <span>${action}</span></div>`;
+  }).join("") || '<div class="grid"><span class="muted">No panels have registered yet</span></div>';
+
+  document.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>openPanel(b.dataset.open));
+  document.querySelectorAll("[data-claim]").forEach(b=>b.onclick=()=>claimPanel(b.dataset.claim));
+}
+$("#refreshBtn").onclick = loadFleet;
+setInterval(()=>{ if($("#fleetView").style.display!=="none" && $("#app").style.display!=="none") loadFleet(); }, 15000);
+
+async function claimPanel(id){
+  const p = PANELS.find(x=>x.id===id);
+  confirmModal("Claim panel",
+    `<div class="lbl">ROOM</div><input id="claimRoom" placeholder="e.g. Master Bedroom">
+     <div class="lbl" style="margin-top:12px">TEMPLATE</div><select id="claimTpl"></select>
+     <p class="muted" style="margin-top:12px;font-size:13px">${p.hostname} · ${p.ip||""}</p>`,
+    async ()=>{
+      await api(`/panels/${id}/claim`,{method:"POST",body:JSON.stringify({
+        room: $("#claimRoom")?.value||"", room_label: $("#claimRoom")?.value||"",
+        template: $("#claimTpl")?.value||"default"})});
+      toast("Panel claimed"); loadFleet();
+    });
+  const tpls = await api("/templates");
+  $("#claimTpl").innerHTML = tpls.map(t=>`<option value="${t.name}">${t.name}</option>`).join("");
+}
+
+/* ---------------- panel detail ---------------- */
+let CUR=null, CFG=null;
+async function loadEntities(){
+  if(ENTITIES.light) return;
+  ENTITIES.light  = await api("/entities?domain=light,switch");
+  ENTITIES.media  = await api("/entities?domain=media_player");
+  ENTITIES.sensor = await api("/entities?domain=sensor");
+}
+function opts(list, val, blank="— none —"){
+  const has = list.some(e=>e.entity_id===val);
+  let h = `<option value="">${blank}</option>`;
+  if(val && !has) h += `<option value="${val}" selected>${val} (missing)</option>`;
+  return h + list.map(e=>
+    `<option value="${e.entity_id}" ${e.entity_id===val?"selected":""}>${e.name} — ${e.entity_id}</option>`).join("");
+}
+async function openPanel(id){
+  CUR = await api("/panels/"+id);
+  CFG = JSON.parse(JSON.stringify(CUR.config));
+  await loadEntities();
+  $("#fleetView").style.display="none"; $("#detailView").style.display="block";
+  $("#dTitle").textContent = CUR.panel.hostname;
+  $("#dTemplate").textContent = "inherits: "+(CUR.panel.template||"default");
+  $("#fHostname").value = CUR.panel.hostname;
+  $("#fRoom").value = CUR.panel.room||"";
+  $("#fRoomLabel").value = CFG.room_label||"";
+  $("#fHaUrl").value = (CFG.connection||{}).ha_url||"";
+  const tpls = await api("/templates");
+  $("#fTemplate").innerHTML = tpls.map(t=>
+    `<option value="${t.name}" ${t.name===CUR.panel.template?"selected":""}>${t.name}</option>`).join("");
+  renderLights(); renderSpeakers();
+  $("#fTemp").innerHTML = opts(ENTITIES.sensor, (CFG.sensors||{}).temperature);
+  $("#fHum").innerHTML  = opts(ENTITIES.sensor, (CFG.sensors||{}).humidity);
+  $("#fSpeaker").innerHTML = opts(ENTITIES.media, (CFG.media||{}).default_speaker);
+  const d = CFG.display||{};
+  $("#fIdle").value = d.idle_timeout_s ?? 45;
+  $("#fGlass").value = d.glass_tier ?? 0;
+  $("#fBlDef").value = d.backlight_default ?? 100;
+  $("#fBlMin").value = d.backlight_min ?? 5;
+
+  $("#problems").innerHTML = (CUR.problems||[]).map(p=>
+    `<div class="err">⚠ ${p.message}</div>`).join("");
+
+  const m = CUR.panel.metrics||{};
+  $("#diagStrip").innerHTML = [
+    ["CPU", m.cpu_temp?m.cpu_temp+"°C":"—"], ["Disk free", m.disk_free||"—"],
+    ["Backlight", m.backlight||"—"], ["UI version", m.ui_version||"—"],
+    ["Running config", "v"+(CUR.panel.config_version||0)],
+    ["Socket", CUR.live?"live":"polling"],
+  ].map(([k,v])=>`<span>${k} <span style="color:var(--dim)">${v}</span></span>`).join("");
+  $("#diagBody").innerHTML = `<div class="f2">
+    <div><div class="lbl">IP</div>${CUR.panel.ip||"—"}</div>
+    <div><div class="lbl">MAC</div>${CUR.panel.mac||"—"}</div>
+    <div style="margin-top:10px"><div class="lbl">AGENT VERSION</div>${CUR.panel.agent_version||"—"}</div>
+    <div style="margin-top:10px"><div class="lbl">LAST SEEN</div>${ago(CUR.panel.last_seen)}</div></div>`;
+  $("#history").innerHTML = (CUR.history||[]).map(h=>
+    `<div style="display:flex;gap:12px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line2)">
+      <span>v${h.version}</span><span class="muted">${new Date(h.created_at*1000).toLocaleString()}</span>
+      <button class="btn" style="margin-left:auto" data-rb="${h.version}">Rollback</button></div>`).join("");
+  document.querySelectorAll("[data-rb]").forEach(b=>b.onclick=async()=>{
+    await api(`/panels/${CUR.panel.id}/rollback`,{method:"POST",body:JSON.stringify({version:+b.dataset.rb})});
+    toast("Rolled back"); openPanel(CUR.panel.id);
+  });
+}
+$("#backBtn").onclick=()=>{ $("#detailView").style.display="none"; $("#fleetView").style.display="block"; loadFleet(); };
+document.querySelectorAll("#sectNav div[data-s]").forEach(n=>n.onclick=()=>{
+  document.querySelectorAll("#sectNav div[data-s]").forEach(x=>x.classList.toggle("on",x===n));
+  document.querySelectorAll(".sect").forEach(s=>s.classList.toggle("on", s.dataset.s===n.dataset.s));
+});
+
+function renderLights(){
+  const rows = (CFG.lights||[]).map((l,i)=>`<tr>
+    <td><select data-l="${i}" data-k="entity_id">${opts(ENTITIES.light, l.entity_id)}</select></td>
+    <td><input data-l="${i}" data-k="name" value="${l.name||""}"></td>
+    <td><input type="number" data-l="${i}" data-k="soft" value="${l.soft??30}"></td>
+    <td><input type="number" data-l="${i}" data-k="bright" value="${l.bright??100}"></td>
+    <td><button class="btn danger" data-del="${i}" style="padding:5px 9px">✕</button></td></tr>`).join("");
+  $("#lightRows").innerHTML = rows || `<tr><td colspan="5" class="muted" style="padding:14px">No lights configured</td></tr>`;
+  $("#lightRows").querySelectorAll("[data-l]").forEach(el=>el.onchange=()=>{
+    const l = CFG.lights[+el.dataset.l], k = el.dataset.k;
+    l[k] = (k==="soft"||k==="bright") ? +el.value : el.value;
+  });
+  $("#lightRows").querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
+    CFG.lights.splice(+b.dataset.del,1); renderLights(); });
+}
+$("#addLight").onclick=()=>{ (CFG.lights=CFG.lights||[]).push({entity_id:"",name:"",soft:30,bright:100}); renderLights(); };
+
+function renderSpeakers(){
+  const sp = (CFG.media||{}).speakers||[];
+  $("#speakerList").innerHTML = sp.map((s,i)=>{
+    const eid = typeof s==="string"?s:s.entity_id, nm = typeof s==="string"?"":(s.name||"");
+    return `<div style="display:flex;gap:8px;margin-bottom:8px">
+      <select data-sp="${i}" style="flex:2">${opts(ENTITIES.media, eid)}</select>
+      <input data-spn="${i}" placeholder="Label" value="${nm}" style="flex:1">
+      <button class="btn danger" data-spd="${i}" style="padding:5px 11px">✕</button></div>`;
+  }).join("");
+  $("#speakerList").querySelectorAll("[data-sp]").forEach(el=>el.onchange=()=>{
+    CFG.media.speakers[+el.dataset.sp] = {entity_id:el.value,
+      name:(CFG.media.speakers[+el.dataset.sp]||{}).name||""}; });
+  $("#speakerList").querySelectorAll("[data-spn]").forEach(el=>el.onchange=()=>{
+    CFG.media.speakers[+el.dataset.spn].name = el.value; });
+  $("#speakerList").querySelectorAll("[data-spd]").forEach(b=>b.onclick=()=>{
+    CFG.media.speakers.splice(+b.dataset.spd,1); renderSpeakers(); });
+}
+$("#addSpeaker").onclick=()=>{
+  CFG.media = CFG.media||{speakers:[]}; (CFG.media.speakers=CFG.media.speakers||[]).push({entity_id:"",name:""});
+  renderSpeakers(); };
+
+function collect(){
+  CFG.room_label = $("#fRoomLabel").value;
+  CFG.connection = {...(CFG.connection||{}), ha_url:$("#fHaUrl").value};
+  CFG.media = {...(CFG.media||{}), default_speaker:$("#fSpeaker").value};
+  CFG.sensors = {temperature:$("#fTemp").value, humidity:$("#fHum").value};
+  CFG.display = {idle_timeout_s:+$("#fIdle").value, glass_tier:+$("#fGlass").value,
+                 backlight_default:+$("#fBlDef").value, backlight_min:+$("#fBlMin").value};
+  return CFG;
+}
+$("#saveBtn").onclick = async ()=>{
+  const body = collect();
+  await api(`/panels/${CUR.panel.id}/claim`,{method:"POST",body:JSON.stringify({
+    room:$("#fRoom").value, template:$("#fTemplate").value, room_label:CFG.room_label})});
+  const r = await api(`/panels/${CUR.panel.id}/config`,{method:"PUT",body:JSON.stringify(body)});
+  toast(r.pushed ? `Saved v${r.version} — pushed` : `Saved v${r.version} — panel offline, will sync`);
+  openPanel(CUR.panel.id);
+};
+$("#revertBtn").onclick = ()=>openPanel(CUR.panel.id);
+
+document.querySelectorAll("[data-act]").forEach(b=>b.onclick=async()=>{
+  const r = await api(`/panels/${CUR.panel.id}/action`,{method:"POST",
+    body:JSON.stringify({action:b.dataset.act})});
+  toast(r.sent ? "Command sent" : "Panel not connected");
+});
+
+$("#removeBtn").onclick = ()=>{
+  const online = CUR.live || CUR.panel && (Date.now()/1000 - (CUR.panel.last_seen||0) < 90);
+  confirmModal("Remove panel",
+    `<p>Remove <b>${CUR.panel.hostname}</b> and its config history?</p>` +
+    (online ? `<div class="warn">This panel is currently online. If the hardware is still
+       running it will re-register as unclaimed.</div>` : "") +
+    `<p class="muted" style="margin-top:10px;font-size:13px">This cannot be undone.</p>`,
+    async ()=>{
+      await api("/panels/"+CUR.panel.id,{method:"DELETE"});
+      toast("Panel removed"); $("#backBtn").click();
+    });
+};
+
+/* ---------------- push all ---------------- */
+$("#pushAllBtn").onclick = async ()=>{
+  const rows = await api("/push_all/preview");
+  if(!rows.length){ toast("No claimed panels"); return; }
+  const offline = rows.filter(r=>!r.online).length;
+  confirmModal("Push configuration to all panels",
+    `<p>The following panels will receive their latest config:</p>
+     <div style="margin-top:12px;border:1px solid var(--line2);border-radius:8px;overflow:hidden">
+     ${rows.map(r=>`<div style="display:flex;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line2);font-size:13px">
+        <i class="dot" style="background:${r.online?'var(--ok)':'var(--bad)'};margin-top:6px"></i>
+        <span style="flex:1">${r.hostname}<span class="muted"> · ${r.room||""}</span></span>
+        <span class="muted">v${r.running} → v${r.latest}</span></div>`).join("")}</div>`
+    + (offline ? `<div class="warn">${offline} panel${offline>1?"s are":" is"} offline and will
+         pick the change up on next sync rather than now.</div>` : ""),
+    async ()=>{
+      const r = await api("/push_all",{method:"POST"});
+      toast(`Pushed to ${r.sent.length}, queued for ${r.queued.length}`); loadFleet();
+    });
+};
+
+/* ---------------- preview ---------------- */
+$("#previewBtn").onclick = ()=>{
+  const f = $("#previewFrame");
+  f.src = `/preview/panel.html?preview=1&panel=${encodeURIComponent(CUR.panel.id)}`;
+  $("#previewWrap").classList.add("on");
+};
+$("#pvClose").onclick = ()=>{ $("#previewWrap").classList.remove("on"); $("#previewFrame").src="about:blank"; };
+
+/* ---------------- boot ---------------- */
+(async()=>{
+  try{ const me = await api("/me"); if(me.authenticated){ show("#app"); loadFleet(); } else show("#login"); }
+  catch(e){ show("#login"); }
+})();
+</script>
+</body>
+</html>

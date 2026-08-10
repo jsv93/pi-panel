@@ -1,0 +1,1102 @@
+esphome:
+  name: panel-poc
+  friendly_name: Wall Panel PoC
+  on_boot:
+    # Panel controller wake — lifted from Waveshare esp_lcd_hx8394.c, which runs
+    # this BEFORE creating the DPI panel. Without it the LCD never powers up and
+    # the first DSI writes after sleep-out block forever -> task WDT reset loop
+    # (this exact symptom is documented for the 10.1" sibling in esphome#15564).
+    # Priority 800: after the I2C bus (1000), before display setup. Must be a
+    # single blocking lambda — an async `delay:` action would NOT hold setup.
+    priority: 800
+    then:
+      - lambda: |-
+          id(backlight_ctrl).write_byte(0x95, 0x11);
+          id(backlight_ctrl).write_byte(0x95, 0x17);   // panel power/enable
+          id(backlight_ctrl).write_byte(0x96, 0x00);   // backlight off
+          delay(100);
+          id(backlight_ctrl).write_byte(0x96, 0xFF);   // backlight full
+          delay(1000);  // vendor waits 1s before DPI panel creation
+
+esp32:
+  variant: esp32p4
+  cpu_frequency: 360MHz
+  flash_size: 32MB       # board has 32MB NOR (was running as 4MB) — NOTE: partition
+                         # table changes, so this flash must go over USB, not OTA
+  engineering_sample: true  # rev v1.3 silicon (< v3.0)
+  framework:
+    type: esp-idf
+    advanced:
+      enable_idf_experimental_features: true  # required for OTA on 32MB flash
+    sdkconfig_options:
+      # --- XIP experiment: proven in the LVGL9 demo (7 -> 63 fps ceiling) ---
+      # Execute code from 200MHz PSRAM instead of 40MHz DIO flash. Engineering-
+      # sample P4 silicon can't run flash above 40MHz; this bypasses it.
+      CONFIG_SPIRAM_XIP_FROM_PSRAM: "y"
+      # Larger L2 cache, wider lines (matches the demo config)
+      CONFIG_CACHE_L2_CACHE_256KB: "y"
+      CONFIG_CACHE_L2_CACHE_LINE_128B: "y"
+
+logger:
+  hardware_uart: UART0   # board's USB-C is CH343 on UART0; P4 default (USB_SERIAL_JTAG) is unreachable here
+
+api:   # add `encryption:` key when adopting properly into HA
+
+ota:
+  - platform: esphome
+
+ethernet:
+  type: IP101
+  mdc_pin: GPIO31
+  mdio_pin: GPIO52
+  power_pin: GPIO51
+  phy_addr: 1     # IP101 straps to SMI address 1 on Waveshare P4 boards
+  clk:
+    pin: GPIO50
+    mode: CLK_EXT_IN
+
+psram:
+  speed: 200MHz   # CRITICAL: P4 default is 20MHz -> DPI underrun + DSI wedge + WDT
+
+esp_ldo:
+  - channel: 3
+    voltage: 2.5V
+
+i2c:
+  sda: GPIO7
+  scl: GPIO8
+  frequency: 400kHz
+
+i2c_device:
+  id: backlight_ctrl
+  address: 0x45
+
+time:
+  - platform: homeassistant
+    id: ha_time
+    on_time_sync:
+      - script.execute: update_clock
+    on_time:
+      - seconds: 0
+        then:
+          - script.execute: update_clock
+
+globals:
+  - id: media_target
+    type: int
+    restore_value: true
+    initial_value: '0'
+  - id: cur_state
+    type: std::string
+    restore_value: false
+  - id: cur_title
+    type: std::string
+    restore_value: false
+  - id: cur_artist
+    type: std::string
+    restore_value: false
+  - id: cur_vol
+    type: float
+    restore_value: false
+    initial_value: '0'
+
+text_sensor:
+  - platform: version
+    name: "ESPHome Version"
+    on_value:
+      - lvgl.label.update: {id: version_value, text: !lambda 'return x;'}
+  - platform: ethernet_info
+    ip_address:
+      name: "IP Address"
+      id: eth_ip
+      on_value:
+        - lvgl.label.update: {id: ip_value, text: !lambda 'return x;'}
+  - platform: homeassistant
+    id: p0_state
+    entity_id: media_player.lounge_room_tv
+    on_value:
+      - script.execute: refresh_media
+  - platform: homeassistant
+    id: p0_title
+    entity_id: media_player.lounge_room_tv
+    attribute: media_title
+    on_value:
+      - script.execute: refresh_media
+  - platform: homeassistant
+    id: p0_artist
+    entity_id: media_player.lounge_room_tv
+    attribute: media_artist
+    on_value:
+      - script.execute: refresh_media
+  - platform: homeassistant
+    id: p1_state
+    entity_id: media_player.kitchen_display
+    on_value:
+      - script.execute: refresh_media
+  - platform: homeassistant
+    id: p1_title
+    entity_id: media_player.kitchen_display
+    attribute: media_title
+    on_value:
+      - script.execute: refresh_media
+  - platform: homeassistant
+    id: p1_artist
+    entity_id: media_player.kitchen_display
+    attribute: media_artist
+    on_value:
+      - script.execute: refresh_media
+  - platform: homeassistant
+    id: p2_state
+    entity_id: media_player.shed_speaker_2
+    on_value:
+      - script.execute: refresh_media
+  - platform: homeassistant
+    id: p2_title
+    entity_id: media_player.shed_speaker_2
+    attribute: media_title
+    on_value:
+      - script.execute: refresh_media
+  - platform: homeassistant
+    id: p2_artist
+    entity_id: media_player.shed_speaker_2
+    attribute: media_artist
+    on_value:
+      - script.execute: refresh_media
+  - platform: homeassistant
+    id: p3_state
+    entity_id: media_player.archer_s_speaker
+    on_value:
+      - script.execute: refresh_media
+  - platform: homeassistant
+    id: p3_title
+    entity_id: media_player.archer_s_speaker
+    attribute: media_title
+    on_value:
+      - script.execute: refresh_media
+  - platform: homeassistant
+    id: p3_artist
+    entity_id: media_player.archer_s_speaker
+    attribute: media_artist
+    on_value:
+      - script.execute: refresh_media
+  - platform: homeassistant
+    id: p4_state
+    entity_id: media_player.kids
+    on_value:
+      - script.execute: refresh_media
+  - platform: homeassistant
+    id: p4_title
+    entity_id: media_player.kids
+    attribute: media_title
+    on_value:
+      - script.execute: refresh_media
+  - platform: homeassistant
+    id: p4_artist
+    entity_id: media_player.kids
+    attribute: media_artist
+    on_value:
+      - script.execute: refresh_media
+
+sensor:
+  - platform: uptime
+    name: "Uptime"
+    id: uptime_s
+    on_value:
+      - lvgl.label.update:
+          id: uptime_value
+          text: !lambda |-
+            int s = (int) x;
+            char buf[24]; snprintf(buf, sizeof(buf), "%dd %dh", s / 86400, (s % 86400) / 3600);
+            return std::string(buf);
+  - platform: homeassistant
+    id: p0_vol
+    entity_id: media_player.lounge_room_tv
+    attribute: volume_level
+    on_value:
+      - script.execute: refresh_media
+  - platform: homeassistant
+    id: p1_vol
+    entity_id: media_player.kitchen_display
+    attribute: volume_level
+    on_value:
+      - script.execute: refresh_media
+  - platform: homeassistant
+    id: p2_vol
+    entity_id: media_player.shed_speaker_2
+    attribute: volume_level
+    on_value:
+      - script.execute: refresh_media
+  - platform: homeassistant
+    id: p3_vol
+    entity_id: media_player.archer_s_speaker
+    attribute: volume_level
+    on_value:
+      - script.execute: refresh_media
+  - platform: homeassistant
+    id: p4_vol
+    entity_id: media_player.kids
+    attribute: volume_level
+    on_value:
+      - script.execute: refresh_media
+
+script:
+  - id: update_clock
+    then:
+      - lvgl.label.update:
+          id: clock_label
+          text: !lambda |-
+            auto now = id(ha_time).now();
+            if (!now.is_valid()) return std::string("--:--");
+            return now.strftime("%H:%M");
+      - lvgl.label.update:
+          id: idle_clock_label
+          text: !lambda |-
+            auto now = id(ha_time).now();
+            if (!now.is_valid()) return std::string("--:--");
+            return now.strftime("%H:%M");
+      - lvgl.label.update:
+          id: date_label
+          text: !lambda |-
+            auto now = id(ha_time).now();
+            if (!now.is_valid()) return std::string("Master bedroom");
+            return now.strftime("%a %d %b") + std::string("  \xC2\xB7  Master bedroom");
+
+  # Pulls the selected player's state into globals, then refreshes every
+  # media widget (room mini-player, media page, idle page) and shows/hides
+  # the blocks depending on whether anything is actually playing.
+  - id: refresh_media
+    mode: restart
+    then:
+      - lambda: |-
+          std::string s = "", t = "", a = ""; float v = 0;
+          switch (id(media_target)) {
+            case 0: s = id(p0_state).state; t = id(p0_title).state; a = id(p0_artist).state; v = id(p0_vol).state; break;
+            case 1: s = id(p1_state).state; t = id(p1_title).state; a = id(p1_artist).state; v = id(p1_vol).state; break;
+            case 2: s = id(p2_state).state; t = id(p2_title).state; a = id(p2_artist).state; v = id(p2_vol).state; break;
+            case 3: s = id(p3_state).state; t = id(p3_title).state; a = id(p3_artist).state; v = id(p3_vol).state; break;
+            case 4: s = id(p4_state).state; t = id(p4_title).state; a = id(p4_artist).state; v = id(p4_vol).state; break;
+          }
+          id(cur_state) = s; id(cur_title) = t; id(cur_artist) = a;
+          id(cur_vol) = (v > 0 && v <= 1.0f) ? v * 100.0f : v;
+          ESP_LOGD("media", "target=%d state='%s' title='%s' artist='%s' vol=%.0f",
+                   id(media_target), s.c_str(), t.c_str(), a.c_str(), id(cur_vol));
+      - lvgl.label.update:
+          id: room_media_title
+          text: !lambda 'return id(cur_title).empty() ? std::string("Nothing playing") : id(cur_title);'
+      - lvgl.label.update:
+          id: room_media_artist
+          text: !lambda 'return id(cur_artist);'
+      - lvgl.label.update:
+          id: media_title_lbl
+          text: !lambda 'return id(cur_title).empty() ? std::string("Nothing playing") : id(cur_title);'
+      - lvgl.label.update:
+          id: media_artist_lbl
+          text: !lambda |-
+            std::string who = "";
+            switch (id(media_target)) {
+              case 0: return std::string("Lounge TV");
+              case 1: return std::string("Kitchen");
+              case 2: return std::string("Shed");
+              case 3: return std::string("Archer's");
+              case 4: return std::string("Kids");
+            }
+            if (id(cur_artist).empty()) return who;
+            return id(cur_artist) + std::string("  \xC2\xB7  ") + who;
+      - lvgl.label.update:
+          id: idle_media_title
+          text: !lambda 'return id(cur_title);'
+      - lvgl.label.update:
+          id: idle_media_artist
+          text: !lambda 'return id(cur_artist);'
+      - lvgl.label.update:
+          id: speaker_current
+          text: !lambda |-
+            switch (id(media_target)) {
+              case 0: return std::string("Lounge TV");
+              case 1: return std::string("Kitchen");
+              case 2: return std::string("Shed");
+              case 3: return std::string("Archer's");
+              case 4: return std::string("Kids");
+            }
+            return std::string("-");
+      - lvgl.slider.update:
+          id: room_vol_slider
+          animated: true
+          value: !lambda 'return id(cur_vol);'
+      - lvgl.slider.update:
+          id: media_vol_slider
+          animated: true
+          value: !lambda 'return id(cur_vol);'
+      - lvgl.label.update:
+          id: media_play_icon
+          text: !lambda 'return id(cur_state) == "playing" ? std::string("\U000F03E4") : std::string("\U000F040A");'
+      - lvgl.label.update:
+          id: room_play_icon
+          text: !lambda 'return id(cur_state) == "playing" ? std::string("\U000F03E4") : std::string("\U000F040A");'
+      # Collapse the room mini-player and idle now-playing when idle/off
+      - if:
+          condition:
+            lambda: |-
+              // Show whenever the player is awake and doing something: a TV
+              // reports "on"/"idle" rather than "playing", and some sources
+              // never populate media_title.
+              const std::string &s = id(cur_state);
+              if (s == "off" || s == "unavailable" || s == "unknown" || s.empty()) return false;
+              return true;
+          then:
+            - lvgl.widget.show: room_media_box
+            - lvgl.widget.show: idle_media_box
+          else:
+            - lvgl.widget.hide: room_media_box
+            - lvgl.widget.hide: idle_media_box
+
+  # Fires a media_player action against whichever player is selected.
+  - id: media_cmd
+    parameters:
+      act: string
+    then:
+      - homeassistant.action:
+          action: !lambda 'return "media_player." + act;'
+          data_template:
+            entity_id: "{{ target }}"
+          variables:
+            target: !lambda |-
+              switch (id(media_target)) {
+                case 0: return std::string("media_player.lounge_room_tv");
+                case 1: return std::string("media_player.kitchen_display");
+                case 2: return std::string("media_player.shed_speaker_2");
+                case 3: return std::string("media_player.archer_s_speaker");
+                case 4: return std::string("media_player.kids");
+              }
+              return std::string("");
+
+font:
+  - file: "https://raw.githubusercontent.com/googlefonts/roboto-2/main/src/hinted/Roboto-Light.ttf"
+    id: clock_font
+    size: 84
+    glyphs: "0123456789:-"
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: mdi_36
+    size: 36
+    glyphs: [
+      "\U000F0335",  # lightbulb
+      "\U000F050F",  # thermometer
+      "\U000F00AC",  # blinds
+      "\U000F0493",  # cog
+      "\U000F0594",  # weather-night
+      "\U000F05A8",  # white-balance-sunny
+      "\U000F004D",  # arrow-left
+      "\U000F02DC",  # home
+      "\U000F075A",  # music
+      "\U000F03E4",  # pause
+      "\U000F040A",  # play
+      "\U000F04AD",  # skip-next
+      "\U000F04AE",  # skip-previous
+      "\U000F057E",  # volume
+      "\U000F0140",  # chevron-down
+    ]
+
+output:
+  - platform: template
+    id: backlight_output
+    type: float
+    write_action:
+      - lambda: |-
+          id(backlight_ctrl).write_byte(0x96, (uint8_t)(state * 255.0f));
+  - platform: template
+    id: downlights_out
+    type: float
+    write_action:
+      - lambda: 'ESP_LOGD("panel", "Downlights -> %.0f%%", state * 100.0f);'
+  - platform: template
+    id: lamp_out
+    type: float
+    write_action:
+      - lambda: 'ESP_LOGD("panel", "Lamp -> %.0f%%", state * 100.0f);'
+
+light:
+  - platform: monochromatic
+    id: backlight
+    name: "Backlight"
+    output: backlight_output
+    restore_mode: RESTORE_DEFAULT_ON
+    default_transition_length: 0s
+    gamma_correct: 1.0
+  - platform: monochromatic
+    id: downlights
+    name: "Downlights (test)"
+    output: downlights_out
+    default_transition_length: 0s
+    on_state:
+      - lvgl.slider.update:
+          id: dl_slider
+          animated: true
+          value: !lambda 'return id(downlights).current_values.is_on() ? id(downlights).current_values.get_brightness() * 100.0f : 0.0f;'
+      - lvgl.label.update:
+          id: dl_pct
+          text: !lambda |-
+            if (!id(downlights).current_values.is_on()) return std::string("Off");
+            char buf[8]; snprintf(buf, sizeof(buf), "%.0f%%", id(downlights).current_values.get_brightness() * 100.0f);
+            return std::string(buf);
+  - platform: monochromatic
+    id: lamp
+    name: "Lamp (test)"
+    output: lamp_out
+    default_transition_length: 0s
+    on_state:
+      - lvgl.slider.update:
+          id: lamp_slider
+          animated: true
+          value: !lambda 'return id(lamp).current_values.is_on() ? id(lamp).current_values.get_brightness() * 100.0f : 0.0f;'
+      - lvgl.label.update:
+          id: lamp_pct
+          text: !lambda |-
+            if (!id(lamp).current_values.is_on()) return std::string("Off");
+            char buf[8]; snprintf(buf, sizeof(buf), "%.0f%%", id(lamp).current_values.get_brightness() * 100.0f);
+            return std::string(buf);
+
+display:
+  # 5-DSI-TOUCH-A: HX8394 driver IC — no native ESPHome model (the 7" entry is
+  # ILI9881C and will NOT init this panel). CUSTOM init + timings lifted from
+  # Waveshare's official esp_lcd_hx8394 ESP-IDF component (waveshareteam/
+  # Waveshare-ESP32-components, display/lcd/esp_lcd_hx8394).
+  - platform: mipi_dsi
+    id: panel_display
+    model: CUSTOM
+    dimensions:
+      width: 720
+      height: 1280
+    hsync_back_porch: 20
+    hsync_pulse_width: 20
+    hsync_front_porch: 40
+    vsync_back_porch: 10
+    vsync_pulse_width: 4
+    vsync_front_porch: 24
+    pclk_frequency: 58MHz
+    lane_bit_rate: 700Mbps    # HX8394_PANEL_BUS_DSI_2CH_CONFIG
+    color_order: rgb
+    pixel_mode: 16bit         # ESPHome sends COLMOD 0x55; vendor uses 0x50 — same
+                              # 16bpp DPI format, low nibble (DBI) unused in video mode
+    auto_clear_enabled: false
+    init_sequence:
+      - [0xB9, 0xFF, 0x83, 0x94]
+      - [0xB1, 0x48, 0x0A, 0x6A, 0x09, 0x33, 0x54, 0x71, 0x71, 0x2E, 0x45]
+      - [0xBA, 0x61, 0x03, 0x68, 0x6B, 0xB2, 0xC0]
+      - [0xB2, 0x00, 0x80, 0x64, 0x0C, 0x06, 0x2F]
+      - [0xB4, 0x1C, 0x78, 0x1C, 0x78, 0x1C, 0x78, 0x01, 0x0C, 0x86, 0x75, 0x00, 0x3F, 0x1C, 0x78, 0x1C, 0x78, 0x1C, 0x78, 0x01, 0x0C, 0x86]
+      - [0xD3, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x08, 0x32, 0x10, 0x05, 0x00, 0x05, 0x32, 0x13, 0xC1, 0x00, 0x01, 0x32, 0x10, 0x08, 0x00, 0x00, 0x37, 0x03, 0x07, 0x07, 0x37, 0x05, 0x05, 0x37, 0x0C, 0x40]
+      - [0xD5, 0x18, 0x18, 0x18, 0x18, 0x22, 0x23, 0x20, 0x21, 0x04, 0x05, 0x06, 0x07, 0x00, 0x01, 0x02, 0x03, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x19, 0x19, 0x19, 0x19]
+      - [0xD6, 0x18, 0x18, 0x19, 0x19, 0x21, 0x20, 0x23, 0x22, 0x03, 0x02, 0x01, 0x00, 0x07, 0x06, 0x05, 0x04, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x19, 0x19, 0x18, 0x18]
+      - [0xE0, 0x07, 0x08, 0x09, 0x0D, 0x10, 0x14, 0x16, 0x13, 0x24, 0x36, 0x48, 0x4A, 0x58, 0x6F, 0x76, 0x80, 0x97, 0xA5, 0xA8, 0xB5, 0xC6, 0x62, 0x63, 0x68, 0x6F, 0x72, 0x78, 0x7F, 0x7F, 0x00, 0x02, 0x08, 0x0D, 0x0C, 0x0E, 0x0F, 0x10, 0x24, 0x36, 0x48, 0x4A, 0x58, 0x6F, 0x78, 0x82, 0x99, 0xA4, 0xA0, 0xB1, 0xC0, 0x5E, 0x5E, 0x64, 0x6B, 0x6C, 0x73, 0x7F, 0x7F]
+      - [0xCC, 0x0B]
+      - [0xC0, 0x1F, 0x73]
+      - [0xB6, 0x6B, 0x6B]
+      - [0xD4, 0x02]
+      - [0xBD, 0x01]
+      - [0xB1, 0x00]
+      - [0xBD, 0x00]
+      - [0xBF, 0x40, 0x81, 0x50, 0x00, 0x1A, 0xFC, 0x01]
+      - [0x11]
+      - delay 200ms
+      - [0xB2, 0x00, 0x80, 0x64, 0x0C, 0x06, 0x2F, 0x00, 0x00, 0x00, 0x00, 0xC0, 0x18]
+
+touchscreen:
+  - platform: gt911
+    id: panel_touch
+    display: panel_display
+
+button:
+  - platform: restart
+    id: restart_btn
+    name: "Restart"
+
+lvgl:
+  displays: [panel_display]
+  touchscreens: [panel_touch]
+  on_idle:
+    timeout: 45s
+    then:
+      - script.execute: update_clock
+      - script.execute: refresh_media
+      - lvgl.widget.hide: navbar
+      - lvgl.page.show: {id: idle_page, animation: NONE}
+      - light.turn_on: {id: backlight, brightness: 25%}
+  style_definitions:
+    - id: page_bg
+      bg_color: 0x0F0F16
+      pad_all: 0
+    - id: tile
+      bg_color: 0x1E1E28
+      bg_opa: 55%
+      border_width: 1
+      border_color: 0x3A3A46
+      border_opa: 70%
+      radius: 24
+      shadow_width: 0
+    - id: nav_label
+      text_font: montserrat_18
+      text_color: 0x55555C
+  top_layer:
+    widgets:
+      - obj:
+          id: navbar
+          align: bottom_mid
+          width: 720
+          height: 104
+          bg_color: 0x0B0B10
+          bg_opa: 80%
+          border_width: 0
+          radius: 0
+          pad_all: 0
+          layout:
+            type: flex
+            flex_flow: ROW
+            flex_align_main: space_evenly
+            flex_align_cross: center
+          widgets:
+            - button:
+                width: 144
+                height: 96
+                bg_opa: TRANSP
+                border_width: 0
+                shadow_width: 0
+                widgets:
+                  - label: {id: nav_room_icon, align: top_mid, y: 8, text_font: mdi_36, text_color: 0x55555C, text: "\U000F02DC"}
+                  - label: {align: bottom_mid, y: -6, styles: nav_label, text: "Room"}
+                on_click:
+                  - lvgl.page.show: {id: room_page, animation: FADE_IN, time: 120ms}
+            - button:
+                width: 144
+                height: 96
+                bg_opa: TRANSP
+                border_width: 0
+                shadow_width: 0
+                widgets:
+                  - label: {id: nav_lights_icon, align: top_mid, y: 8, text_font: mdi_36, text_color: 0x55555C, text: "\U000F0335"}
+                  - label: {align: bottom_mid, y: -6, styles: nav_label, text: "Lights"}
+                on_click:
+                  - lvgl.page.show: {id: lights_page, animation: FADE_IN, time: 120ms}
+            - button:
+                width: 144
+                height: 96
+                bg_opa: TRANSP
+                border_width: 0
+                shadow_width: 0
+                widgets:
+                  - label: {id: nav_climate_icon, align: top_mid, y: 8, text_font: mdi_36, text_color: 0x55555C, text: "\U000F050F"}
+                  - label: {align: bottom_mid, y: -6, styles: nav_label, text: "Climate"}
+                on_click:
+                  - lvgl.page.show: {id: climate_page, animation: FADE_IN, time: 120ms}
+            - button:
+                width: 144
+                height: 96
+                bg_opa: TRANSP
+                border_width: 0
+                shadow_width: 0
+                widgets:
+                  - label: {id: nav_blinds_icon, align: top_mid, y: 8, text_font: mdi_36, text_color: 0x55555C, text: "\U000F00AC"}
+                  - label: {align: bottom_mid, y: -6, styles: nav_label, text: "Blinds"}
+                on_click:
+                  - lvgl.page.show: {id: blinds_page, animation: FADE_IN, time: 120ms}
+            - button:
+                width: 144
+                height: 96
+                bg_opa: TRANSP
+                border_width: 0
+                shadow_width: 0
+                widgets:
+                  - label: {id: nav_settings_icon, align: top_mid, y: 8, text_font: mdi_36, text_color: 0x55555C, text: "\U000F0493"}
+                  - label: {align: bottom_mid, y: -6, styles: nav_label, text: "Settings"}
+                on_click:
+                  - lvgl.page.show: {id: settings_page, animation: FADE_IN, time: 120ms}
+  pages:
+    # ---------- ROOM (home) ----------
+    - id: room_page
+      styles: page_bg
+      on_load:
+        - lvgl.widget.update: {id: nav_room_icon, text_color: 0x5DCAA5}
+        - lvgl.widget.update: {id: nav_lights_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_climate_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_blinds_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_settings_icon, text_color: 0x55555C}
+        - script.execute: refresh_media
+      widgets:
+        - label: {id: clock_label, align: top_mid, y: 60, text_font: clock_font, text_color: 0xE8E8E4, text: "--:--"}
+        - label: {id: date_label, align: top_mid, y: 176, text_font: montserrat_24, text_color: 0x6F6F77, text: "Master bedroom"}
+        - obj:
+            align: top_mid
+            y: 250
+            width: 656
+            height: 140
+            bg_opa: TRANSP
+            border_width: 0
+            pad_all: 0
+            layout:
+              type: flex
+              flex_flow: ROW
+              flex_align_main: space_between
+              flex_align_cross: center
+            widgets:
+              - button:
+                  id: soft_btn
+                  width: 314
+                  height: 140
+                  styles: tile
+                  checked: {bg_color: 0x1D9E75, bg_opa: 30%, border_color: 0x1D9E75, border_opa: 100%}
+                  widgets:
+                    - label: {align: top_mid, y: 18, text_font: mdi_36, text_color: 0x9FE1CB, text: "\U000F0594"}
+                    - label: {align: bottom_mid, y: -16, text_font: montserrat_26, text_color: 0xB8B8BF, text: "Soft"}
+                  on_click:
+                    - light.turn_on: {id: downlights, brightness: 35%}
+                    - light.turn_on: {id: lamp, brightness: 30%}
+                    - lvgl.widget.update: {id: soft_btn, state: {checked: true}}
+                    - lvgl.widget.update: {id: bright_btn, state: {checked: false}}
+              - button:
+                  id: bright_btn
+                  width: 314
+                  height: 140
+                  styles: tile
+                  checked: {bg_color: 0x1D9E75, bg_opa: 30%, border_color: 0x1D9E75, border_opa: 100%}
+                  widgets:
+                    - label: {align: top_mid, y: 18, text_font: mdi_36, text_color: 0xE1E1D8, text: "\U000F05A8"}
+                    - label: {align: bottom_mid, y: -16, text_font: montserrat_26, text_color: 0xB8B8BF, text: "Bright"}
+                  on_click:
+                    - light.turn_on: {id: downlights, brightness: 100%}
+                    - light.turn_on: {id: lamp, brightness: 100%}
+                    - lvgl.widget.update: {id: bright_btn, state: {checked: true}}
+                    - lvgl.widget.update: {id: soft_btn, state: {checked: false}}
+        # --- mini now-playing (hidden when nothing is on) ---
+        - button:
+            id: room_media_box
+            align: top_mid
+            y: 410
+            width: 656
+            height: 170
+            styles: tile
+            widgets:
+              - obj:
+                  align: top_left
+                  x: 20
+                  y: 18
+                  width: 64
+                  height: 64
+                  bg_color: 0x1A1A22
+                  border_width: 1
+                  border_color: 0x2E2E34
+                  radius: 12
+                  pad_all: 0
+                  widgets:
+                    - label: {align: center, text_font: mdi_36, text_color: 0x8A8A92, text: "\U000F075A"}
+              - label: {id: room_media_title, align: top_left, x: 100, y: 24, text_font: montserrat_22, text_color: 0xD8D8DE, text: "Nothing playing"}
+              - label: {id: room_media_artist, align: top_left, x: 100, y: 54, text_font: montserrat_18, text_color: 0x6F6F77, text: ""}
+              - label: {id: room_play_icon, align: top_right, x: -24, y: 32, text_font: mdi_36, text_color: 0x9FE1CB, text: "\U000F040A"}
+              - slider:
+                  id: room_vol_slider
+                  align: bottom_mid
+                  y: -18
+                  width: 600
+                  height: 26
+                  min_value: 0
+                  max_value: 100
+                  anim_duration: 250ms
+                  radius: 13
+                  bg_color: 0x1F1F24
+                  bg_opa: COVER
+                  indicator: {bg_color: 0x0F6E56, radius: 13}
+                  knob: {bg_opa: TRANSP, pad_all: 0}
+                  on_release:
+                    - homeassistant.action:
+                        action: media_player.volume_set
+                        data_template:
+                          entity_id: "{{ target }}"
+                          volume_level: "{{ vol }}"
+                        variables:
+                          target: !lambda |-
+                            switch (id(media_target)) {
+                              case 0: return std::string("media_player.lounge_room_tv");
+                              case 1: return std::string("media_player.kitchen_display");
+                              case 2: return std::string("media_player.shed_speaker_2");
+                              case 3: return std::string("media_player.archer_s_speaker");
+                              case 4: return std::string("media_player.kids");
+                            }
+                            return std::string("");
+                          vol: !lambda |-
+                            char buf[16]; snprintf(buf, sizeof(buf), "%.2f", x / 100.0f);
+                            return std::string(buf);
+            on_click:
+              - lvgl.page.show: {id: media_page, animation: OVER_TOP, time: 200ms}
+        - button:
+            id: goodnight_btn
+            align: bottom_mid
+            y: -132
+            width: 656
+            height: 96
+            styles: tile
+            widgets:
+              - label: {align: left_mid, x: 28, text_font: mdi_36, text_color: 0xAFA9EC, text: "\U000F0594"}
+              - label: {align: left_mid, x: 84, text_font: montserrat_26, text_color: 0xB8B8BF, text: "Goodnight"}
+            on_click:
+              - light.turn_off: downlights
+              - light.turn_off: lamp
+              - lvgl.widget.update: {id: soft_btn, state: {checked: false}}
+              - lvgl.widget.update: {id: bright_btn, state: {checked: false}}
+              - homeassistant.action: {action: script.master_bedroom_goodnight}
+
+    # ---------- LIGHTS ----------
+    - id: lights_page
+      styles: page_bg
+      on_load:
+        - lvgl.widget.update: {id: nav_room_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_lights_icon, text_color: 0x5DCAA5}
+        - lvgl.widget.update: {id: nav_climate_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_blinds_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_settings_icon, text_color: 0x55555C}
+      widgets:
+        - label: {align: top_mid, y: 44, text_font: montserrat_28, text_color: 0xD8D8DE, text: "Lights"}
+        - label: {align: top_left, x: 40, y: 170, text_font: montserrat_26, text_color: 0xB8B8BF, text: "Downlights"}
+        - label: {id: dl_pct, align: top_right, x: -40, y: 172, text_font: montserrat_22, text_color: 0x6F6F77, text: "Off"}
+        - slider:
+            id: dl_slider
+            anim_duration: 250ms
+            align: top_mid
+            y: 220
+            width: 640
+            height: 64
+            min_value: 0
+            max_value: 100
+            value: 0
+            radius: 32
+            bg_color: 0x1F1F24
+            bg_opa: COVER
+            indicator: {bg_color: 0x0F6E56, radius: 32}
+            knob: {bg_opa: TRANSP, pad_all: 0}
+            on_release:
+              - lvgl.widget.update: {id: soft_btn, state: {checked: false}}
+              - lvgl.widget.update: {id: bright_btn, state: {checked: false}}
+              - if:
+                  condition: {lambda: 'return x < 1;'}
+                  then: [{light.turn_off: downlights}]
+                  else:
+                    - light.turn_on: {id: downlights, brightness: !lambda 'return x / 100.0;'}
+        - label: {align: top_left, x: 40, y: 340, text_font: montserrat_26, text_color: 0xB8B8BF, text: "Lamp"}
+        - label: {id: lamp_pct, align: top_right, x: -40, y: 342, text_font: montserrat_22, text_color: 0x6F6F77, text: "Off"}
+        - slider:
+            id: lamp_slider
+            anim_duration: 250ms
+            align: top_mid
+            y: 390
+            width: 640
+            height: 64
+            min_value: 0
+            max_value: 100
+            value: 0
+            radius: 32
+            bg_color: 0x1F1F24
+            bg_opa: COVER
+            indicator: {bg_color: 0x0F6E56, radius: 32}
+            knob: {bg_opa: TRANSP, pad_all: 0}
+            on_release:
+              - lvgl.widget.update: {id: soft_btn, state: {checked: false}}
+              - lvgl.widget.update: {id: bright_btn, state: {checked: false}}
+              - if:
+                  condition: {lambda: 'return x < 1;'}
+                  then: [{light.turn_off: lamp}]
+                  else:
+                    - light.turn_on: {id: lamp, brightness: !lambda 'return x / 100.0;'}
+
+    # ---------- MEDIA (reached by tapping the room mini-player) ----------
+    - id: media_page
+      styles: page_bg
+      widgets:
+        - button:
+            align: top_left
+            x: 20
+            y: 24
+            width: 84
+            height: 72
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            widgets:
+              - label: {align: center, text_font: mdi_36, text_color: 0x8A8A92, text: "\U000F004D"}
+            on_click:
+              - lvgl.page.show: {id: room_page, animation: FADE_IN, time: 120ms}
+        - label: {align: top_mid, y: 44, text_font: montserrat_28, text_color: 0xD8D8DE, text: "Media"}
+        - obj:
+            align: top_mid
+            y: 130
+            width: 200
+            height: 200
+            bg_color: 0x1A1A22
+            border_width: 1
+            border_color: 0x2E2E34
+            radius: 16
+            pad_all: 0
+            widgets:
+              - label: {align: center, text_font: mdi_36, text_color: 0x4A4A52, text: "\U000F075A"}
+        - label: {id: media_title_lbl, align: top_mid, y: 356, text_font: montserrat_26, text_color: 0xE8E8E4, text: "Nothing playing"}
+        - label: {id: media_artist_lbl, align: top_mid, y: 394, text_font: montserrat_20, text_color: 0x6F6F77, text: ""}
+        - button:
+            align: top_mid
+            x: -150
+            y: 450
+            width: 90
+            height: 90
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            widgets:
+              - label: {align: center, text_font: mdi_36, text_color: 0xB8B8BF, text: "\U000F04AE"}
+            on_click:
+              - script.execute: {id: media_cmd, act: 'media_previous_track'}
+        - button:
+            id: media_play_btn
+            align: top_mid
+            y: 450
+            width: 110
+            height: 90
+            styles: tile
+            widgets:
+              - label: {id: media_play_icon, align: center, text_font: mdi_36, text_color: 0x5DCAA5, text: "\U000F040A"}
+            on_click:
+              - script.execute: {id: media_cmd, act: 'media_play_pause'}
+        - button:
+            align: top_mid
+            x: 150
+            y: 450
+            width: 90
+            height: 90
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            widgets:
+              - label: {align: center, text_font: mdi_36, text_color: 0xB8B8BF, text: "\U000F04AD"}
+            on_click:
+              - script.execute: {id: media_cmd, act: 'media_next_track'}
+        - slider:
+            id: media_vol_slider
+            anim_duration: 250ms
+            align: top_mid
+            y: 570
+            width: 640
+            height: 64
+            min_value: 0
+            max_value: 100
+            radius: 32
+            bg_color: 0x1F1F24
+            bg_opa: COVER
+            indicator: {bg_color: 0x0F6E56, radius: 32}
+            knob: {bg_opa: TRANSP, pad_all: 0}
+            on_release:
+              - homeassistant.action:
+                  action: media_player.volume_set
+                  data_template:
+                    entity_id: "{{ target }}"
+                    volume_level: "{{ vol }}"
+                  variables:
+                    target: !lambda |-
+                      switch (id(media_target)) {
+                        case 0: return std::string("media_player.lounge_room_tv");
+                        case 1: return std::string("media_player.kitchen_display");
+                        case 2: return std::string("media_player.shed_speaker_2");
+                        case 3: return std::string("media_player.archer_s_speaker");
+                        case 4: return std::string("media_player.kids");
+                      }
+                      return std::string("");
+                    vol: !lambda |-
+                      char buf[16]; snprintf(buf, sizeof(buf), "%.2f", x / 100.0f);
+                      return std::string(buf);
+        - label: {align: top_left, x: 40, y: 660, text_font: montserrat_20, text_color: 0x6F6F77, text: "Playing on"}
+        - label: {id: speaker_current, align: top_right, x: -40, y: 660, text_font: montserrat_20, text_color: 0x9FE1CB, text: "Lounge TV"}
+        - button:
+            align: top_mid
+            y: 700
+            width: 640
+            height: 64
+            styles: tile
+            widgets:
+              - label: {align: left_mid, x: 20, text_font: montserrat_22, text_color: 0xB8B8BF, text: "Lounge TV"}
+            on_click:
+              - lambda: 'id(media_target) = 0;'
+              - script.execute: refresh_media
+        - button:
+            align: top_mid
+            y: 774
+            width: 640
+            height: 64
+            styles: tile
+            widgets:
+              - label: {align: left_mid, x: 20, text_font: montserrat_22, text_color: 0xB8B8BF, text: "Kitchen"}
+            on_click:
+              - lambda: 'id(media_target) = 1;'
+              - script.execute: refresh_media
+        - button:
+            align: top_mid
+            y: 848
+            width: 640
+            height: 64
+            styles: tile
+            widgets:
+              - label: {align: left_mid, x: 20, text_font: montserrat_22, text_color: 0xB8B8BF, text: "Shed"}
+            on_click:
+              - lambda: 'id(media_target) = 2;'
+              - script.execute: refresh_media
+        - button:
+            align: top_mid
+            y: 922
+            width: 640
+            height: 64
+            styles: tile
+            widgets:
+              - label: {align: left_mid, x: 20, text_font: montserrat_22, text_color: 0xB8B8BF, text: "Archer's"}
+            on_click:
+              - lambda: 'id(media_target) = 3;'
+              - script.execute: refresh_media
+        - button:
+            align: top_mid
+            y: 996
+            width: 640
+            height: 64
+            styles: tile
+            widgets:
+              - label: {align: left_mid, x: 20, text_font: montserrat_22, text_color: 0xB8B8BF, text: "Kids"}
+            on_click:
+              - lambda: 'id(media_target) = 4;'
+              - script.execute: refresh_media
+
+    # ---------- CLIMATE / BLINDS placeholders ----------
+    - id: climate_page
+      styles: page_bg
+      on_load:
+        - lvgl.widget.update: {id: nav_room_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_lights_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_climate_icon, text_color: 0x5DCAA5}
+        - lvgl.widget.update: {id: nav_blinds_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_settings_icon, text_color: 0x55555C}
+      widgets:
+        - label: {align: center, y: -60, text_font: mdi_36, text_color: 0x55555C, text: "\U000F050F"}
+        - label: {align: center, text_font: montserrat_26, text_color: 0x8A8A92, text: "Climate"}
+        - label: {align: center, y: 44, text_font: montserrat_22, text_color: 0x55555C, text: "Not set up yet"}
+    - id: blinds_page
+      styles: page_bg
+      on_load:
+        - lvgl.widget.update: {id: nav_room_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_lights_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_climate_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_blinds_icon, text_color: 0x5DCAA5}
+        - lvgl.widget.update: {id: nav_settings_icon, text_color: 0x55555C}
+      widgets:
+        - label: {align: center, y: -60, text_font: mdi_36, text_color: 0x55555C, text: "\U000F00AC"}
+        - label: {align: center, text_font: montserrat_26, text_color: 0x8A8A92, text: "Blinds"}
+        - label: {align: center, y: 44, text_font: montserrat_22, text_color: 0x55555C, text: "Not set up yet"}
+
+    # ---------- SETTINGS ----------
+    - id: settings_page
+      styles: page_bg
+      on_load:
+        - lvgl.widget.update: {id: nav_room_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_lights_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_climate_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_blinds_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_settings_icon, text_color: 0x5DCAA5}
+      widgets:
+        - label: {align: top_mid, y: 44, text_font: montserrat_28, text_color: 0xD8D8DE, text: "Settings"}
+        - label: {align: top_left, x: 40, y: 150, text_font: montserrat_26, text_color: 0xB8B8BF, text: "Backlight"}
+        - slider:
+            id: backlight_slider
+            anim_duration: 250ms
+            align: top_mid
+            y: 200
+            width: 640
+            height: 64
+            min_value: 5
+            max_value: 100
+            value: 100
+            radius: 32
+            bg_color: 0x1F1F24
+            bg_opa: COVER
+            indicator: {bg_color: 0x0F6E56, radius: 32}
+            knob: {bg_opa: TRANSP, pad_all: 0}
+            on_release:
+              - light.turn_on: {id: backlight, brightness: !lambda 'return x / 100.0;'}
+        - obj:
+            align: top_mid
+            y: 320
+            width: 656
+            height: 240
+            styles: tile
+            pad_all: 0
+            widgets:
+              - label: {align: top_left, x: 28, y: 26, text_font: montserrat_22, text_color: 0x8A8A92, text: "IP address"}
+              - label: {id: ip_value, align: top_right, x: -28, y: 26, text_font: montserrat_22, text_color: 0xD8D8DE, text: "-"}
+              - label: {align: top_left, x: 28, y: 104, text_font: montserrat_22, text_color: 0x8A8A92, text: "Version"}
+              - label: {id: version_value, align: top_right, x: -28, y: 104, text_font: montserrat_22, text_color: 0xD8D8DE, text: "-"}
+              - label: {align: top_left, x: 28, y: 182, text_font: montserrat_22, text_color: 0x8A8A92, text: "Uptime"}
+              - label: {id: uptime_value, align: top_right, x: -28, y: 182, text_font: montserrat_22, text_color: 0xD8D8DE, text: "-"}
+        - button:
+            align: top_mid
+            y: 600
+            width: 656
+            height: 96
+            styles: tile
+            widgets:
+              - label: {align: center, text_font: montserrat_24, text_color: 0xF0997B, text: "Restart panel"}
+            on_click:
+              - button.press: restart_btn
+
+    # ---------- IDLE / STANDBY ----------
+    - id: idle_page
+      bg_color: 0x000000
+      pad_all: 0
+      widgets:
+        - button:
+            align: center
+            width: 720
+            height: 1280
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            radius: 0
+            widgets:
+              - label: {id: idle_clock_label, align: center, y: -120, text_font: clock_font, text_color: 0x4A4A52, text: "--:--"}
+              - obj:
+                  id: idle_media_box
+                  align: center
+                  y: 60
+                  width: 400
+                  height: 170
+                  bg_opa: TRANSP
+                  border_width: 0
+                  pad_all: 0
+                  widgets:
+                    - obj:
+                        align: top_mid
+                        width: 76
+                        height: 76
+                        bg_color: 0x101018
+                        border_width: 1
+                        border_color: 0x1E1E28
+                        radius: 10
+                        pad_all: 0
+                        widgets:
+                          - label: {align: center, text_font: mdi_36, text_color: 0x2E2E38, text: "\U000F075A"}
+                    - label: {id: idle_media_title, align: top_mid, y: 92, text_font: montserrat_20, text_color: 0x5A5A63, text: ""}
+                    - label: {id: idle_media_artist, align: top_mid, y: 122, text_font: montserrat_18, text_color: 0x3D3D46, text: ""}
+              - label: {align: bottom_mid, y: -80, text_font: montserrat_18, text_color: 0x2E2E38, text: "Tap to wake"}
+            on_press:
+              - light.turn_on: {id: backlight, brightness: 100%}
+              - lvgl.widget.show: navbar
+              - lvgl.page.show: {id: room_page, animation: NONE}
+
+# =============================================================================
+# --- Stage 2: DALI bus (uncomment together with the dali light entry in the
+#     light: list above; wiring per spec §2.1 — Pico-DALI2 pads jumpered to
+#     GPIO47 TX / GPIO48 RX / 5V (VSYS) / GND, ignore its own silkscreen) ---
+# external_components:
+#   - source: github://jorticus/esphome-dali@master
+#     components: [dali]
+#
+# dali:
+#   tx_pin: GPIO47
+#   rx_pin: GPIO48
+# =============================================================================

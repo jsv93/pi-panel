@@ -1,0 +1,4 @@
+# Everything here is deployed to Linux (Pi, Docker, ESPHome). Normalise to LF
+# in the repo and on checkout so a Windows clone can't ship CRLF to a panel —
+# systemd units and shell-invoked files break subtly with CRLF.
+* text=auto eol=lf

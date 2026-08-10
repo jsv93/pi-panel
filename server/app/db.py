@@ -1,0 +1,234 @@
+"""SQLite storage for the panel fleet.
+
+Deliberately plain: one file, no ORM. Panels, their configs (versioned so
+rollback is possible), and reusable templates.
+"""
+import json
+import os
+import sqlite3
+import time
+from contextlib import contextmanager
+
+DB_PATH = os.environ.get("PANEL_DB", "/data/panels.db")
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS panels (
+    id              TEXT PRIMARY KEY,
+    hostname        TEXT NOT NULL,
+    mac             TEXT,
+    ip              TEXT,
+    kind            TEXT NOT NULL DEFAULT 'pi',   -- 'pi' | 'esp'
+    agent_version   TEXT,
+    room            TEXT,
+    template        TEXT,
+    claimed         INTEGER NOT NULL DEFAULT 0,
+    first_seen      REAL,
+    last_seen       REAL,
+    config_version  INTEGER NOT NULL DEFAULT 0,   -- version the panel reports running
+    metrics         TEXT                          -- JSON blob from heartbeat
+);
+
+CREATE TABLE IF NOT EXISTS configs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    panel_id   TEXT NOT NULL,
+    version    INTEGER NOT NULL,
+    data       TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    UNIQUE(panel_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS templates (
+    name       TEXT PRIMARY KEY,
+    data       TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
+"""
+
+DEFAULT_TEMPLATE = {
+    "room_label": "Room",
+    "lights": [],
+    "media": {"default_speaker": "", "speakers": []},
+    "sensors": {"temperature": "", "humidity": ""},
+    "display": {
+        "idle_timeout_s": 45,
+        "backlight_default": 100,
+        "backlight_min": 5,
+        "glass_tier": 0,
+    },
+    "connection": {"ha_url": "http://homeassistant.local:8123"},
+}
+
+
+@contextmanager
+def conn():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    c = sqlite3.connect(DB_PATH, timeout=10)
+    c.row_factory = sqlite3.Row
+    try:
+        yield c
+        c.commit()
+    finally:
+        c.close()
+
+
+def init():
+    with conn() as c:
+        c.executescript(SCHEMA)
+        row = c.execute("SELECT 1 FROM templates WHERE name='default'").fetchone()
+        if not row:
+            c.execute(
+                "INSERT INTO templates(name,data,updated_at) VALUES(?,?,?)",
+                ("default", json.dumps(DEFAULT_TEMPLATE), time.time()),
+            )
+
+
+# ---------------------------------------------------------------- panels
+def upsert_panel(panel_id, hostname, mac, ip, kind, agent_version):
+    now = time.time()
+    with conn() as c:
+        row = c.execute("SELECT id FROM panels WHERE id=?", (panel_id,)).fetchone()
+        if row:
+            c.execute(
+                """UPDATE panels SET hostname=?, mac=?, ip=?, kind=?, agent_version=?,
+                   last_seen=? WHERE id=?""",
+                (hostname, mac, ip, kind, agent_version, now, panel_id),
+            )
+        else:
+            c.execute(
+                """INSERT INTO panels(id,hostname,mac,ip,kind,agent_version,claimed,
+                   first_seen,last_seen) VALUES(?,?,?,?,?,?,0,?,?)""",
+                (panel_id, hostname, mac, ip, kind, agent_version, now, now),
+            )
+    return get_panel(panel_id)
+
+
+def get_panel(panel_id):
+    with conn() as c:
+        r = c.execute("SELECT * FROM panels WHERE id=?", (panel_id,)).fetchone()
+        return dict(r) if r else None
+
+
+def list_panels():
+    with conn() as c:
+        rows = c.execute("SELECT * FROM panels ORDER BY claimed DESC, hostname").fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["metrics"] = json.loads(d["metrics"]) if d["metrics"] else {}
+        d["latest_version"] = latest_version(d["id"])
+        d["online"] = bool(d["last_seen"] and (time.time() - d["last_seen"]) < 90)
+        out.append(d)
+    return out
+
+
+def touch(panel_id, metrics, config_version):
+    with conn() as c:
+        c.execute(
+            "UPDATE panels SET last_seen=?, metrics=?, config_version=? WHERE id=?",
+            (time.time(), json.dumps(metrics or {}), config_version or 0, panel_id),
+        )
+
+
+def claim(panel_id, room, template, room_label=None):
+    with conn() as c:
+        c.execute(
+            "UPDATE panels SET claimed=1, room=?, template=? WHERE id=?",
+            (room, template or "default", panel_id),
+        )
+    cfg = merged_config(panel_id)
+    cfg["room_label"] = room_label or room or cfg.get("room_label", "Room")
+    save_config(panel_id, cfg)
+    return get_panel(panel_id)
+
+
+def delete_panel(panel_id):
+    with conn() as c:
+        c.execute("DELETE FROM configs WHERE panel_id=?", (panel_id,))
+        c.execute("DELETE FROM panels WHERE id=?", (panel_id,))
+
+
+# ---------------------------------------------------------------- configs
+def latest_version(panel_id):
+    with conn() as c:
+        r = c.execute(
+            "SELECT MAX(version) v FROM configs WHERE panel_id=?", (panel_id,)
+        ).fetchone()
+    return r["v"] or 0
+
+
+def save_config(panel_id, data):
+    v = latest_version(panel_id) + 1
+    with conn() as c:
+        c.execute(
+            "INSERT INTO configs(panel_id,version,data,created_at) VALUES(?,?,?,?)",
+            (panel_id, v, json.dumps(data), time.time()),
+        )
+    return v
+
+
+def get_config(panel_id, version=None):
+    with conn() as c:
+        if version:
+            r = c.execute(
+                "SELECT * FROM configs WHERE panel_id=? AND version=?", (panel_id, version)
+            ).fetchone()
+        else:
+            r = c.execute(
+                "SELECT * FROM configs WHERE panel_id=? ORDER BY version DESC LIMIT 1",
+                (panel_id,),
+            ).fetchone()
+    if not r:
+        return None
+    d = json.loads(r["data"])
+    d["_version"] = r["version"]
+    return d
+
+
+def config_history(panel_id, limit=10):
+    with conn() as c:
+        rows = c.execute(
+            "SELECT version, created_at FROM configs WHERE panel_id=? ORDER BY version DESC LIMIT ?",
+            (panel_id, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def deep_merge(base, over):
+    out = dict(base)
+    for k, v in (over or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def merged_config(panel_id):
+    """Template values, overlaid with whatever this panel overrides."""
+    p = get_panel(panel_id) or {}
+    tpl = get_template(p.get("template") or "default") or DEFAULT_TEMPLATE
+    own = get_config(panel_id) or {}
+    own.pop("_version", None)
+    return deep_merge(tpl, own)
+
+
+# ---------------------------------------------------------------- templates
+def get_template(name):
+    with conn() as c:
+        r = c.execute("SELECT data FROM templates WHERE name=?", (name,)).fetchone()
+    return json.loads(r["data"]) if r else None
+
+
+def list_templates():
+    with conn() as c:
+        rows = c.execute("SELECT name, updated_at FROM templates ORDER BY name").fetchall()
+    return [dict(r) for r in rows]
+
+
+def save_template(name, data):
+    with conn() as c:
+        c.execute(
+            "INSERT INTO templates(name,data,updated_at) VALUES(?,?,?) "
+            "ON CONFLICT(name) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at",
+            (name, json.dumps(data), time.time()),
+        )
