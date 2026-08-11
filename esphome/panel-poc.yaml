@@ -239,6 +239,19 @@ sensor:
     on_value:
       - script.execute: refresh_media
 
+  # The nav bar's Climate button shows the room temperature rather than an
+  # icon, matching the Pi. Point this at the room's sensor and uncomment; the
+  # label reads "--°" until it reports.
+  # - platform: homeassistant
+  #   id: room_temp
+  #   entity_id: sensor.CHANGEME_temperature
+  #   on_value:
+  #     - lvgl.label.update:
+  #         id: nav_climate_icon
+  #         text: !lambda |-
+  #           char buf[12]; snprintf(buf, sizeof(buf), "%.0f°", x);
+  #           return std::string(buf);
+
 script:
   - id: update_clock
     then:
@@ -565,18 +578,7 @@ lvgl:
             flex_align_cross: center
           widgets:
             - button:
-                width: 144
-                height: 124
-                bg_opa: TRANSP
-                border_width: 0
-                shadow_width: 0
-                widgets:
-                  - label: {id: nav_room_icon, align: center, y: -14, text_font: mdi_36, text_color: 0x3D3D46, text: "\U000F02DC"}
-                  - label: {align: center, y: 22, styles: nav_label, text: "Room"}
-                on_click:
-                  - lvgl.page.show: {id: room_page, animation: FADE_IN, time: 120ms}
-            - button:
-                width: 144
+                width: 180
                 height: 124
                 bg_opa: TRANSP
                 border_width: 0
@@ -585,20 +587,23 @@ lvgl:
                   - label: {id: nav_lights_icon, align: center, y: -14, text_font: mdi_36, text_color: 0x3D3D46, text: "\U000F0335"}
                   - label: {align: center, y: 22, styles: nav_label, text: "Lights"}
                 on_click:
-                  - lvgl.page.show: {id: lights_page, animation: FADE_IN, time: 120ms}
+                  - lvgl.page.show: {id: lights_page, animation: OVER_TOP, time: 220ms}
             - button:
-                width: 144
+                width: 180
                 height: 124
                 bg_opa: TRANSP
                 border_width: 0
                 shadow_width: 0
                 widgets:
-                  - label: {id: nav_climate_icon, align: center, y: -14, text_font: mdi_36, text_color: 0x3D3D46, text: "\U000F050F"}
+                  # The Pi shows the live temperature here rather than an icon.
+                  # Stays "--°" until a temperature sensor is wired up; see the
+                  # commented block in `sensor:`.
+                  - label: {id: nav_climate_icon, align: center, y: -12, text_font: montserrat_28, text_color: 0x3D3D46, text: "--°"}
                   - label: {align: center, y: 22, styles: nav_label, text: "Climate"}
                 on_click:
-                  - lvgl.page.show: {id: climate_page, animation: FADE_IN, time: 120ms}
+                  - lvgl.page.show: {id: climate_page, animation: OVER_TOP, time: 220ms}
             - button:
-                width: 144
+                width: 180
                 height: 124
                 bg_opa: TRANSP
                 border_width: 0
@@ -607,9 +612,9 @@ lvgl:
                   - label: {id: nav_blinds_icon, align: center, y: -14, text_font: mdi_36, text_color: 0x3D3D46, text: "\U000F00AC"}
                   - label: {align: center, y: 22, styles: nav_label, text: "Blinds"}
                 on_click:
-                  - lvgl.page.show: {id: blinds_page, animation: FADE_IN, time: 120ms}
+                  - lvgl.page.show: {id: blinds_page, animation: OVER_TOP, time: 220ms}
             - button:
-                width: 144
+                width: 180
                 height: 124
                 bg_opa: TRANSP
                 border_width: 0
@@ -618,17 +623,16 @@ lvgl:
                   - label: {id: nav_settings_icon, align: center, y: -14, text_font: mdi_36, text_color: 0x3D3D46, text: "\U000F0493"}
                   - label: {align: center, y: 22, styles: nav_label, text: "Settings"}
                 on_click:
-                  - lvgl.page.show: {id: settings_page, animation: FADE_IN, time: 120ms}
+                  - lvgl.page.show: {id: settings_page, animation: OVER_TOP, time: 220ms}
   pages:
     # ---------- ROOM (home) ----------
     - id: room_page
       styles: page_bg
       on_load:
-        - lvgl.widget.update: {id: nav_room_icon, text_color: 0x5DCAA5}
-        - lvgl.widget.update: {id: nav_lights_icon, text_color: 0x55555C}
-        - lvgl.widget.update: {id: nav_climate_icon, text_color: 0x55555C}
-        - lvgl.widget.update: {id: nav_blinds_icon, text_color: 0x55555C}
-        - lvgl.widget.update: {id: nav_settings_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_lights_icon, text_color: 0x3D3D46}
+        - lvgl.widget.update: {id: nav_climate_icon, text_color: 0x3D3D46}
+        - lvgl.widget.update: {id: nav_blinds_icon, text_color: 0x3D3D46}
+        - lvgl.widget.update: {id: nav_settings_icon, text_color: 0x3D3D46}
         - script.execute: refresh_media
       widgets:
         - label: {id: clock_label, align: top_mid, y: 60, text_font: clock_font, text_color: 0xE8E8E4, text: "--:--"}
@@ -756,12 +760,26 @@ lvgl:
     - id: lights_page
       styles: page_bg
       on_load:
-        - lvgl.widget.update: {id: nav_room_icon, text_color: 0x55555C}
         - lvgl.widget.update: {id: nav_lights_icon, text_color: 0x5DCAA5}
-        - lvgl.widget.update: {id: nav_climate_icon, text_color: 0x55555C}
-        - lvgl.widget.update: {id: nav_blinds_icon, text_color: 0x55555C}
-        - lvgl.widget.update: {id: nav_settings_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_climate_icon, text_color: 0x3D3D46}
+        - lvgl.widget.update: {id: nav_blinds_icon, text_color: 0x3D3D46}
+        - lvgl.widget.update: {id: nav_settings_icon, text_color: 0x3D3D46}
       widgets:
+        # Matches the Pi's `.down` control — every sheet closes back to the room,
+        # which is the only way home now that the nav has no Room button.
+        - button:
+            align: top_left
+            x: 24
+            y: 26
+            width: 78
+            height: 70
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            widgets:
+              - label: {align: center, text_font: mdi_36, text_color: 0x6F6F77, text: "\U000F0140"}
+            on_click:
+              - lvgl.page.show: {id: room_page, animation: OUT_BOTTOM, time: 220ms}
         - label: {align: top_mid, y: 44, text_font: montserrat_28, text_color: 0xD8D8DE, text: "Lights"}
         - label: {align: top_left, x: 40, y: 170, text_font: montserrat_26, text_color: 0xB8B8BF, text: "Downlights"}
         - label: {id: dl_pct, align: top_right, x: -40, y: 172, text_font: montserrat_22, text_color: 0x6F6F77, text: "Off"}
@@ -820,17 +838,17 @@ lvgl:
       widgets:
         - button:
             align: top_left
-            x: 20
-            y: 24
-            width: 84
-            height: 72
+            x: 24
+            y: 26
+            width: 78
+            height: 70
             bg_opa: TRANSP
             border_width: 0
             shadow_width: 0
             widgets:
-              - label: {align: center, text_font: mdi_36, text_color: 0x8A8A92, text: "\U000F004D"}
+              - label: {align: center, text_font: mdi_36, text_color: 0x6F6F77, text: "\U000F0140"}
             on_click:
-              - lvgl.page.show: {id: room_page, animation: FADE_IN, time: 120ms}
+              - lvgl.page.show: {id: room_page, animation: OUT_BOTTOM, time: 220ms}
         - label: {align: top_mid, y: 44, text_font: montserrat_28, text_color: 0xD8D8DE, text: "Media"}
         - obj:
             align: top_mid
@@ -978,24 +996,48 @@ lvgl:
     - id: climate_page
       styles: page_bg
       on_load:
-        - lvgl.widget.update: {id: nav_room_icon, text_color: 0x55555C}
-        - lvgl.widget.update: {id: nav_lights_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_lights_icon, text_color: 0x3D3D46}
         - lvgl.widget.update: {id: nav_climate_icon, text_color: 0x5DCAA5}
-        - lvgl.widget.update: {id: nav_blinds_icon, text_color: 0x55555C}
-        - lvgl.widget.update: {id: nav_settings_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_blinds_icon, text_color: 0x3D3D46}
+        - lvgl.widget.update: {id: nav_settings_icon, text_color: 0x3D3D46}
       widgets:
+        - button:
+            align: top_left
+            x: 24
+            y: 26
+            width: 78
+            height: 70
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            widgets:
+              - label: {align: center, text_font: mdi_36, text_color: 0x6F6F77, text: "\U000F0140"}
+            on_click:
+              - lvgl.page.show: {id: room_page, animation: OUT_BOTTOM, time: 220ms}
         - label: {align: center, y: -60, text_font: mdi_36, text_color: 0x55555C, text: "\U000F050F"}
         - label: {align: center, text_font: montserrat_26, text_color: 0x8A8A92, text: "Climate"}
         - label: {align: center, y: 44, text_font: montserrat_22, text_color: 0x55555C, text: "Not set up yet"}
     - id: blinds_page
       styles: page_bg
       on_load:
-        - lvgl.widget.update: {id: nav_room_icon, text_color: 0x55555C}
-        - lvgl.widget.update: {id: nav_lights_icon, text_color: 0x55555C}
-        - lvgl.widget.update: {id: nav_climate_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_lights_icon, text_color: 0x3D3D46}
+        - lvgl.widget.update: {id: nav_climate_icon, text_color: 0x3D3D46}
         - lvgl.widget.update: {id: nav_blinds_icon, text_color: 0x5DCAA5}
-        - lvgl.widget.update: {id: nav_settings_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_settings_icon, text_color: 0x3D3D46}
       widgets:
+        - button:
+            align: top_left
+            x: 24
+            y: 26
+            width: 78
+            height: 70
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            widgets:
+              - label: {align: center, text_font: mdi_36, text_color: 0x6F6F77, text: "\U000F0140"}
+            on_click:
+              - lvgl.page.show: {id: room_page, animation: OUT_BOTTOM, time: 220ms}
         - label: {align: center, y: -60, text_font: mdi_36, text_color: 0x55555C, text: "\U000F00AC"}
         - label: {align: center, text_font: montserrat_26, text_color: 0x8A8A92, text: "Blinds"}
         - label: {align: center, y: 44, text_font: montserrat_22, text_color: 0x55555C, text: "Not set up yet"}
@@ -1004,12 +1046,24 @@ lvgl:
     - id: settings_page
       styles: page_bg
       on_load:
-        - lvgl.widget.update: {id: nav_room_icon, text_color: 0x55555C}
-        - lvgl.widget.update: {id: nav_lights_icon, text_color: 0x55555C}
-        - lvgl.widget.update: {id: nav_climate_icon, text_color: 0x55555C}
-        - lvgl.widget.update: {id: nav_blinds_icon, text_color: 0x55555C}
+        - lvgl.widget.update: {id: nav_lights_icon, text_color: 0x3D3D46}
+        - lvgl.widget.update: {id: nav_climate_icon, text_color: 0x3D3D46}
+        - lvgl.widget.update: {id: nav_blinds_icon, text_color: 0x3D3D46}
         - lvgl.widget.update: {id: nav_settings_icon, text_color: 0x5DCAA5}
       widgets:
+        - button:
+            align: top_left
+            x: 24
+            y: 26
+            width: 78
+            height: 70
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            widgets:
+              - label: {align: center, text_font: mdi_36, text_color: 0x6F6F77, text: "\U000F0140"}
+            on_click:
+              - lvgl.page.show: {id: room_page, animation: OUT_BOTTOM, time: 220ms}
         - label: {align: top_mid, y: 44, text_font: montserrat_28, text_color: 0xD8D8DE, text: "Settings"}
         - label: {align: top_left, x: 40, y: 150, text_font: montserrat_26, text_color: 0xB8B8BF, text: "Backlight"}
         - slider:
