@@ -48,8 +48,19 @@ ask() { # ask VAR "prompt" [silent]
 HOST_NEW="${1:-}"
 [ -n "$HOST_NEW" ] || ask HOST_NEW "Hostname for this panel [$PANEL_ID]: "
 HOST_NEW="${HOST_NEW:-$PANEL_ID}"
+# Lowercase and strip anything not valid in a hostname. Mixed case is legal but
+# sudo and avahi both behave better without it.
+HOST_NEW=$(echo "$HOST_NEW" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | sed 's/^-*//;s/-*$//')
+OLD_HOST=$(hostname)
 echo "==> hostname: $HOST_NEW"
 hostnamectl set-hostname "$HOST_NEW"
+# Without this, every later sudo prints "unable to resolve host".
+if grep -qE "^127\.0\.1\.1" /etc/hosts; then
+  sed -i "s/^127\.0\.1\.1.*/127.0.1.1\t$HOST_NEW/" /etc/hosts
+else
+  printf '127.0.1.1\t%s\n' "$HOST_NEW" >> /etc/hosts
+fi
+[ "$OLD_HOST" = "$HOST_NEW" ] || echo "    (was $OLD_HOST)"
 
 echo "==> dependencies"
 apt-get update -qq
@@ -64,6 +75,17 @@ curl -fsSL "$SERVER/bundle/panel.html"    -o /opt/panel/current/panel.html
 curl -fsSL "$SERVER/bundle/panel-agent.py" -o /usr/local/bin/panel-agent
 curl -fsSL "$SERVER/bundle/backlight.py"   -o /usr/local/bin/panel-backlight
 chmod +x /usr/local/bin/panel-agent /usr/local/bin/panel-backlight
+
+# The bundle is populated by hand, so it can lag the server. An agent without
+# panel-id support ignores the id below and registers under its hostname,
+# which silently creates a second, unclaimed panel instead of filling in this
+# one -- a confusing failure that looks like "the agent never connected".
+if ! grep -q 'panel-id' /usr/local/bin/panel-agent; then
+  echo "ERROR: $SERVER/bundle/panel-agent.py predates server-issued panel ids." >&2
+  echo "       Copy the current agent/panel-agent.py into the server's bundle" >&2
+  echo "       directory and re-run this command." >&2
+  exit 1
+fi
 
 # Identity comes from the server, not the hostname, so renaming this Pi later
 # does not strand its record and create a duplicate.
@@ -127,8 +149,17 @@ for _ in $(seq 1 20); do
   sleep 2
 done
 
+echo >&2
 echo "The agent did not reach $SERVER within 40s." >&2
-echo "Check: journalctl -u panel-agent -n 50" >&2
+echo "Panel id it should be reporting: $PANEL_ID" >&2
+echo >&2
+echo "--- systemctl status panel-agent ---" >&2
+systemctl --no-pager --lines=0 status panel-agent >&2 || true
+echo "--- last 25 log lines ---" >&2
+journalctl -u panel-agent -n 25 --no-pager >&2 || true
+echo >&2
+echo "If the log shows the agent registering under a different id, the fleet" >&2
+echo "now has a stray unclaimed panel -- remove it and re-run this command." >&2
 exit 1
 """
 
