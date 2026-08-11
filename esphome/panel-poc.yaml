@@ -1,3 +1,8 @@
+substitutions:
+  # Panel config server. Set this to your server's address — mDNS names
+  # generally do not resolve here, so use an IP.
+  panel_server: "http://192.168.1.10:8099"
+
 esphome:
   name: panel-poc
   friendly_name: Wall Panel PoC
@@ -99,6 +104,71 @@ globals:
     type: float
     restore_value: false
     initial_value: '0'
+  - id: server_registered
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+
+http_request:
+  id: panel_http
+  useragent: esphome/panel-poc
+  timeout: 5s
+
+# Reports identity and version to the config server so the fleet view can show
+# this panel and flag firmware drift. Deliberately one-way: the panel tells the
+# server what it is and takes no commands back. If the server is unreachable
+# the registration simply keeps retrying and nothing else is affected.
+interval:
+  - interval: 15s
+    then:
+      - if:
+          condition:
+            lambda: 'return !id(server_registered) && !id(eth_ip).state.empty();'
+          then:
+            - http_request.post:
+                url: ${panel_server}/api/register
+                request_headers:
+                  Content-Type: application/json
+                body: !lambda |-
+                  char buf[320];
+                  snprintf(buf, sizeof(buf),
+                    "{\"panel_id\":\"%s\",\"hostname\":\"%s\",\"mac\":\"%s\","
+                    "\"ip\":\"%s\",\"kind\":\"esp\",\"version\":\"%s\"}",
+                    App.get_name().c_str(), App.get_name().c_str(),
+                    get_mac_address_pretty().c_str(), id(eth_ip).state.c_str(),
+                    ESPHOME_VERSION);
+                  return std::string(buf);
+                on_response:
+                  then:
+                    - lambda: |-
+                        if (response->status_code == 200) {
+                          id(server_registered) = true;
+                          ESP_LOGI("panel", "registered with %s", "${panel_server}");
+                        }
+  - interval: 30s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(server_registered);'
+          then:
+            - http_request.post:
+                url: ${panel_server}/api/heartbeat
+                request_headers:
+                  Content-Type: application/json
+                body: !lambda |-
+                  char buf[256];
+                  snprintf(buf, sizeof(buf),
+                    "{\"panel_id\":\"%s\",\"config_version\":0,"
+                    "\"metrics\":{\"ui_version\":\"%s\",\"uptime\":%u}}",
+                    App.get_name().c_str(), ESPHOME_VERSION,
+                    (unsigned) (millis() / 1000));
+                  return std::string(buf);
+                on_response:
+                  then:
+                    - lambda: |-
+                        // A panel removed from the fleet 404s here; re-register
+                        // so it comes back as unclaimed rather than going quiet.
+                        if (response->status_code == 404) id(server_registered) = false;
 
 text_sensor:
   - platform: version
@@ -526,6 +596,9 @@ button:
 lvgl:
   displays: [panel_display]
   touchscreens: [panel_touch]
+  # Full-screen draw buffer in PSRAM: page transitions composite the whole
+  # 720x1280 frame, and a partial buffer means flushing it in several passes.
+  buffer_size: 100%
   on_idle:
     timeout: 45s
     then:
@@ -541,9 +614,10 @@ lvgl:
   # flatter here than on the Pi no matter what these values say.
   style_definitions:
     - id: page_bg
-      bg_color: 0x151522          # --bg-top
-      bg_grad_color: 0x07070B     # --bg-bot
-      bg_grad_dir: VER
+      # Flat, not the Pi's top-to-bottom gradient. A 720x1280 gradient is
+      # redrawn under every frame of a page transition and was measurably
+      # choppy; this sits between --bg-top and --bg-bot.
+      bg_color: 0x101018
       pad_all: 0
     - id: tile
       bg_color: 0x1E1E28
@@ -563,8 +637,11 @@ lvgl:
           align: bottom_mid
           width: 720
           height: 132                 # --nav
-          bg_color: 0x09090E          # rgba(9,9,14,.66)
-          bg_opa: 66%
+          # Opaque on purpose. The Pi's nav is translucent so its backdrop
+          # blur has something to blur; with no blur here that translucency
+          # only bought a full-width alpha blend on every animated frame.
+          bg_color: 0x09090E
+          bg_opa: COVER
           border_width: 1             # 1px top hairline, matches .nav
           border_color: 0x787D96
           border_opa: 14%
@@ -587,7 +664,7 @@ lvgl:
                   - label: {id: nav_lights_icon, align: center, y: -14, text_font: mdi_36, text_color: 0x3D3D46, text: "\U000F0335"}
                   - label: {align: center, y: 22, styles: nav_label, text: "Lights"}
                 on_click:
-                  - lvgl.page.show: {id: lights_page, animation: OVER_TOP, time: 220ms}
+                  - lvgl.page.show: {id: lights_page, animation: OVER_TOP, time: 140ms}
             - button:
                 width: 180
                 height: 124
@@ -601,7 +678,7 @@ lvgl:
                   - label: {id: nav_climate_icon, align: center, y: -12, text_font: montserrat_28, text_color: 0x3D3D46, text: "--°"}
                   - label: {align: center, y: 22, styles: nav_label, text: "Climate"}
                 on_click:
-                  - lvgl.page.show: {id: climate_page, animation: OVER_TOP, time: 220ms}
+                  - lvgl.page.show: {id: climate_page, animation: OVER_TOP, time: 140ms}
             - button:
                 width: 180
                 height: 124
@@ -612,7 +689,7 @@ lvgl:
                   - label: {id: nav_blinds_icon, align: center, y: -14, text_font: mdi_36, text_color: 0x3D3D46, text: "\U000F00AC"}
                   - label: {align: center, y: 22, styles: nav_label, text: "Blinds"}
                 on_click:
-                  - lvgl.page.show: {id: blinds_page, animation: OVER_TOP, time: 220ms}
+                  - lvgl.page.show: {id: blinds_page, animation: OVER_TOP, time: 140ms}
             - button:
                 width: 180
                 height: 124
@@ -623,7 +700,7 @@ lvgl:
                   - label: {id: nav_settings_icon, align: center, y: -14, text_font: mdi_36, text_color: 0x3D3D46, text: "\U000F0493"}
                   - label: {align: center, y: 22, styles: nav_label, text: "Settings"}
                 on_click:
-                  - lvgl.page.show: {id: settings_page, animation: OVER_TOP, time: 220ms}
+                  - lvgl.page.show: {id: settings_page, animation: OVER_TOP, time: 140ms}
   pages:
     # ---------- ROOM (home) ----------
     - id: room_page
@@ -779,7 +856,7 @@ lvgl:
             widgets:
               - label: {align: center, text_font: mdi_36, text_color: 0x6F6F77, text: "\U000F0140"}
             on_click:
-              - lvgl.page.show: {id: room_page, animation: OUT_BOTTOM, time: 220ms}
+              - lvgl.page.show: {id: room_page, animation: OUT_BOTTOM, time: 140ms}
         - label: {align: top_mid, y: 44, text_font: montserrat_28, text_color: 0xD8D8DE, text: "Lights"}
         - label: {align: top_left, x: 40, y: 170, text_font: montserrat_26, text_color: 0xB8B8BF, text: "Downlights"}
         - label: {id: dl_pct, align: top_right, x: -40, y: 172, text_font: montserrat_22, text_color: 0x6F6F77, text: "Off"}
@@ -848,7 +925,7 @@ lvgl:
             widgets:
               - label: {align: center, text_font: mdi_36, text_color: 0x6F6F77, text: "\U000F0140"}
             on_click:
-              - lvgl.page.show: {id: room_page, animation: OUT_BOTTOM, time: 220ms}
+              - lvgl.page.show: {id: room_page, animation: OUT_BOTTOM, time: 140ms}
         - label: {align: top_mid, y: 44, text_font: montserrat_28, text_color: 0xD8D8DE, text: "Media"}
         - obj:
             align: top_mid
@@ -1013,7 +1090,7 @@ lvgl:
             widgets:
               - label: {align: center, text_font: mdi_36, text_color: 0x6F6F77, text: "\U000F0140"}
             on_click:
-              - lvgl.page.show: {id: room_page, animation: OUT_BOTTOM, time: 220ms}
+              - lvgl.page.show: {id: room_page, animation: OUT_BOTTOM, time: 140ms}
         - label: {align: center, y: -60, text_font: mdi_36, text_color: 0x55555C, text: "\U000F050F"}
         - label: {align: center, text_font: montserrat_26, text_color: 0x8A8A92, text: "Climate"}
         - label: {align: center, y: 44, text_font: montserrat_22, text_color: 0x55555C, text: "Not set up yet"}
@@ -1037,7 +1114,7 @@ lvgl:
             widgets:
               - label: {align: center, text_font: mdi_36, text_color: 0x6F6F77, text: "\U000F0140"}
             on_click:
-              - lvgl.page.show: {id: room_page, animation: OUT_BOTTOM, time: 220ms}
+              - lvgl.page.show: {id: room_page, animation: OUT_BOTTOM, time: 140ms}
         - label: {align: center, y: -60, text_font: mdi_36, text_color: 0x55555C, text: "\U000F00AC"}
         - label: {align: center, text_font: montserrat_26, text_color: 0x8A8A92, text: "Blinds"}
         - label: {align: center, y: 44, text_font: montserrat_22, text_color: 0x55555C, text: "Not set up yet"}
@@ -1063,7 +1140,7 @@ lvgl:
             widgets:
               - label: {align: center, text_font: mdi_36, text_color: 0x6F6F77, text: "\U000F0140"}
             on_click:
-              - lvgl.page.show: {id: room_page, animation: OUT_BOTTOM, time: 220ms}
+              - lvgl.page.show: {id: room_page, animation: OUT_BOTTOM, time: 140ms}
         - label: {align: top_mid, y: 44, text_font: montserrat_28, text_color: 0xD8D8DE, text: "Settings"}
         - label: {align: top_left, x: 40, y: 150, text_font: montserrat_26, text_color: 0xB8B8BF, text: "Backlight"}
         - slider:
