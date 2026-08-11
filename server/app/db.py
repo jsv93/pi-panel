@@ -5,6 +5,7 @@ rollback is possible), and reusable templates.
 """
 import json
 import os
+import secrets
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -49,6 +50,15 @@ CREATE TABLE IF NOT EXISTS settings (
     key        TEXT PRIMARY KEY,
     value      TEXT NOT NULL,
     updated_at REAL NOT NULL
+);
+
+-- One-time tokens binding a physical Pi to a panel record created in the GUI
+-- before the hardware exists. Consumed when the bootstrap script is fetched.
+CREATE TABLE IF NOT EXISTS provisioning (
+    token      TEXT PRIMARY KEY,
+    panel_id   TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    used_at    REAL
 );
 """
 
@@ -218,6 +228,69 @@ def merged_config(panel_id):
     own = get_config(panel_id) or {}
     own.pop("_version", None)
     return deep_merge(tpl, own)
+
+
+# ---------------------------------------------------------------- provisioning
+def slug(s):
+    out = "".join(c.lower() if c.isalnum() else "-" for c in (s or ""))
+    while "--" in out:
+        out = out.replace("--", "-")
+    return out.strip("-") or "panel"
+
+
+def create_provisional_panel(room, template, room_label=None):
+    """Create the panel record before the hardware exists.
+
+    The id is issued here rather than taken from the Pi's hostname: hostname
+    identity is why renaming a panel used to orphan its record. The agent
+    writes this id to disk and prefers it forever after.
+    """
+    panel_id = f"{slug(room)}-{secrets.token_hex(2)}"
+    now = time.time()
+    with conn() as c:
+        c.execute(
+            """INSERT INTO panels(id,hostname,kind,claimed,room,template,
+               first_seen,last_seen) VALUES(?,?,?,1,?,?,?,NULL)""",
+            (panel_id, panel_id, "pi", room, template or "default", now),
+        )
+    cfg = merged_config(panel_id)
+    cfg["room_label"] = room_label or room or cfg.get("room_label", "Room")
+    save_config(panel_id, cfg)
+    return panel_id
+
+
+def create_token(panel_id):
+    token = secrets.token_urlsafe(16)
+    with conn() as c:
+        c.execute(
+            "INSERT INTO provisioning(token,panel_id,created_at) VALUES(?,?,?)",
+            (token, panel_id, time.time()),
+        )
+    return token
+
+
+def consume_token(token):
+    """Return the panel_id for an unused token and mark it spent, else None."""
+    with conn() as c:
+        r = c.execute(
+            "SELECT panel_id FROM provisioning WHERE token=? AND used_at IS NULL",
+            (token,),
+        ).fetchone()
+        if not r:
+            return None
+        c.execute("UPDATE provisioning SET used_at=? WHERE token=?", (time.time(), token))
+    return r["panel_id"]
+
+
+def pending_tokens():
+    """Unused tokens, so the GUI can re-show a command for a panel not yet built."""
+    with conn() as c:
+        rows = c.execute(
+            """SELECT p.token, p.panel_id, p.created_at, n.room
+               FROM provisioning p LEFT JOIN panels n ON n.id = p.panel_id
+               WHERE p.used_at IS NULL ORDER BY p.created_at DESC"""
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ---------------------------------------------------------------- settings

@@ -100,6 +100,7 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
         <span class="pill" id="cUnclaimed" style="color:var(--warn);background:rgba(216,166,87,.14)">0 unclaimed</span>
         <span id="haWarn" class="pill" style="color:var(--warn);background:rgba(216,166,87,.14);display:none">HA not configured</span>
         <div style="margin-left:auto;display:flex;gap:8px">
+          <button class="btn" id="addPanelBtn">Add panel</button>
           <button class="btn" id="settingsBtn">Settings</button>
           <button class="btn" id="refreshBtn">Refresh</button>
           <button class="btn primary" id="pushAllBtn">Push all</button>
@@ -315,6 +316,7 @@ function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("on
   setTimeout(()=>t.classList.remove("on"), 2600); }
 function confirmModal(title, html, onOk){
   $("#mTitle").textContent=title; $("#mBody").innerHTML=html;
+  $("#mOk").textContent="Confirm";   // callers may override; reset so it can't leak
   $("#modal").classList.add("on");
   $("#mOk").onclick = async ()=>{ $("#modal").classList.remove("on"); await onOk(); };
 }
@@ -560,6 +562,46 @@ $("#pushAllBtn").onclick = async ()=>{
       toast(`Pushed to ${r.sent.length}, queued for ${r.queued.length}`); loadFleet();
     });
 };
+
+/* ---------------- provisioning ---------------- */
+/* The panel record is created here, before the hardware exists. The token in
+   the command binds the physical Pi to this record on first contact, so it
+   arrives already claimed rather than landing in the unclaimed list. */
+$("#addPanelBtn").onclick = async ()=>{
+  const tpls = await api("/templates");
+  confirmModal("Add a panel",
+    `<div class="lbl">ROOM</div><input id="provRoom" placeholder="e.g. Master Bedroom">
+     <div class="lbl" style="margin-top:12px">ROOM LABEL (shown under the clock)</div>
+     <input id="provLabel" placeholder="defaults to the room name">
+     <div class="lbl" style="margin-top:12px">TEMPLATE</div>
+     <select id="provTpl">${tpls.map(t=>`<option value="${t.name}">${t.name}</option>`).join("")}</select>
+     <p class="muted" style="margin-top:12px;font-size:13px">You will get a one-time
+       command to run on the Pi. It sets the hostname, installs the agent and the
+       panel UI, and asks for the Home Assistant token on the Pi itself.</p>`,
+    async ()=>{
+      const room = $("#provRoom").value.trim();
+      if(!room){ toast("Room is required"); return; }
+      const r = await api("/provision",{method:"POST",body:JSON.stringify({
+        room, room_label:$("#provLabel").value.trim(), template:$("#provTpl").value})});
+      showProvisionCommand(r);
+      loadFleet();
+    });
+};
+function showProvisionCommand(r){
+  confirmModal("Run this on the Pi",
+    `<p class="muted" style="font-size:13px">Panel <b>${r.panel_id}</b> is created and
+      waiting. Run this on a fresh Raspberry Pi OS install:</p>
+     <pre id="provCmd" style="margin-top:12px;padding:14px;border-radius:8px;
+       background:#0d0d12;border:1px solid var(--line2);font-size:13px;
+       white-space:pre-wrap;word-break:break-all">${r.command}</pre>
+     <div class="warn">The token works once. If you lose it, add the panel again —
+       the half-created record can be removed from the fleet.</div>`,
+    async ()=>{
+      try{ await navigator.clipboard.writeText(r.command); toast("Command copied"); }
+      catch(e){ toast("Copy it from the box above"); }
+    });
+  $("#mOk").textContent = "Copy";
+}
 
 /* ---------------- settings ---------------- */
 function showSettings(on){

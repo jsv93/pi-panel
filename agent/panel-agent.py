@@ -36,7 +36,22 @@ POLL_S      = 300
 HEARTBEAT_S = 30
 
 HOSTNAME = socket.gethostname()
-PANEL_ID = HOSTNAME
+
+
+def _panel_id():
+    """Server-issued id, written by the bootstrap script, in preference to the
+    hostname. Identity used to be the hostname, which meant renaming a panel
+    orphaned its record and it came back as a second, unclaimed device."""
+    try:
+        v = (PANEL_DIR / "panel-id").read_text().strip()
+        if v:
+            return v
+    except Exception:
+        pass
+    return HOSTNAME
+
+
+PANEL_ID = _panel_id()
 
 
 def mac():
