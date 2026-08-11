@@ -521,31 +521,41 @@ lvgl:
       - lvgl.widget.hide: navbar
       - lvgl.page.show: {id: idle_page, animation: NONE}
       - light.turn_on: {id: backlight, brightness: 25%}
+  # Tokens below track panel-ui/panel.html so the two panels can be compared
+  # side by side. One thing does not transfer: the Pi's surfaces are
+  # backdrop-filter glass, and LVGL has no backdrop blur. Translucency and the
+  # border hairline are matched; the blur is simply absent, so tiles read
+  # flatter here than on the Pi no matter what these values say.
   style_definitions:
     - id: page_bg
-      bg_color: 0x0F0F16
+      bg_color: 0x151522          # --bg-top
+      bg_grad_color: 0x07070B     # --bg-bot
+      bg_grad_dir: VER
       pad_all: 0
     - id: tile
       bg_color: 0x1E1E28
-      bg_opa: 55%
+      bg_opa: 42%                 # --tile      rgba(30,30,40,.42)
       border_width: 1
-      border_color: 0x3A3A46
-      border_opa: 70%
-      radius: 24
+      border_color: 0x787D96      # --tile-line rgba(120,125,150,.22)
+      border_opa: 22%
+      radius: 24                  # --r
       shadow_width: 0
     - id: nav_label
       text_font: montserrat_18
-      text_color: 0x55555C
+      text_color: 0x3D3D46        # --ink-ghost
   top_layer:
     widgets:
       - obj:
           id: navbar
           align: bottom_mid
           width: 720
-          height: 104
-          bg_color: 0x0B0B10
-          bg_opa: 80%
-          border_width: 0
+          height: 132                 # --nav
+          bg_color: 0x09090E          # rgba(9,9,14,.66)
+          bg_opa: 66%
+          border_width: 1             # 1px top hairline, matches .nav
+          border_color: 0x787D96
+          border_opa: 14%
+          border_side: TOP
           radius: 0
           pad_all: 0
           layout:
@@ -556,57 +566,57 @@ lvgl:
           widgets:
             - button:
                 width: 144
-                height: 96
+                height: 124
                 bg_opa: TRANSP
                 border_width: 0
                 shadow_width: 0
                 widgets:
-                  - label: {id: nav_room_icon, align: top_mid, y: 8, text_font: mdi_36, text_color: 0x55555C, text: "\U000F02DC"}
-                  - label: {align: bottom_mid, y: -6, styles: nav_label, text: "Room"}
+                  - label: {id: nav_room_icon, align: center, y: -14, text_font: mdi_36, text_color: 0x3D3D46, text: "\U000F02DC"}
+                  - label: {align: center, y: 22, styles: nav_label, text: "Room"}
                 on_click:
                   - lvgl.page.show: {id: room_page, animation: FADE_IN, time: 120ms}
             - button:
                 width: 144
-                height: 96
+                height: 124
                 bg_opa: TRANSP
                 border_width: 0
                 shadow_width: 0
                 widgets:
-                  - label: {id: nav_lights_icon, align: top_mid, y: 8, text_font: mdi_36, text_color: 0x55555C, text: "\U000F0335"}
-                  - label: {align: bottom_mid, y: -6, styles: nav_label, text: "Lights"}
+                  - label: {id: nav_lights_icon, align: center, y: -14, text_font: mdi_36, text_color: 0x3D3D46, text: "\U000F0335"}
+                  - label: {align: center, y: 22, styles: nav_label, text: "Lights"}
                 on_click:
                   - lvgl.page.show: {id: lights_page, animation: FADE_IN, time: 120ms}
             - button:
                 width: 144
-                height: 96
+                height: 124
                 bg_opa: TRANSP
                 border_width: 0
                 shadow_width: 0
                 widgets:
-                  - label: {id: nav_climate_icon, align: top_mid, y: 8, text_font: mdi_36, text_color: 0x55555C, text: "\U000F050F"}
-                  - label: {align: bottom_mid, y: -6, styles: nav_label, text: "Climate"}
+                  - label: {id: nav_climate_icon, align: center, y: -14, text_font: mdi_36, text_color: 0x3D3D46, text: "\U000F050F"}
+                  - label: {align: center, y: 22, styles: nav_label, text: "Climate"}
                 on_click:
                   - lvgl.page.show: {id: climate_page, animation: FADE_IN, time: 120ms}
             - button:
                 width: 144
-                height: 96
+                height: 124
                 bg_opa: TRANSP
                 border_width: 0
                 shadow_width: 0
                 widgets:
-                  - label: {id: nav_blinds_icon, align: top_mid, y: 8, text_font: mdi_36, text_color: 0x55555C, text: "\U000F00AC"}
-                  - label: {align: bottom_mid, y: -6, styles: nav_label, text: "Blinds"}
+                  - label: {id: nav_blinds_icon, align: center, y: -14, text_font: mdi_36, text_color: 0x3D3D46, text: "\U000F00AC"}
+                  - label: {align: center, y: 22, styles: nav_label, text: "Blinds"}
                 on_click:
                   - lvgl.page.show: {id: blinds_page, animation: FADE_IN, time: 120ms}
             - button:
                 width: 144
-                height: 96
+                height: 124
                 bg_opa: TRANSP
                 border_width: 0
                 shadow_width: 0
                 widgets:
-                  - label: {id: nav_settings_icon, align: top_mid, y: 8, text_font: mdi_36, text_color: 0x55555C, text: "\U000F0493"}
-                  - label: {align: bottom_mid, y: -6, styles: nav_label, text: "Settings"}
+                  - label: {id: nav_settings_icon, align: center, y: -14, text_font: mdi_36, text_color: 0x3D3D46, text: "\U000F0493"}
+                  - label: {align: center, y: 22, styles: nav_label, text: "Settings"}
                 on_click:
                   - lvgl.page.show: {id: settings_page, animation: FADE_IN, time: 120ms}
   pages:
