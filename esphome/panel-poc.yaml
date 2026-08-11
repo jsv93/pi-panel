@@ -143,8 +143,18 @@ interval:
                     - lambda: |-
                         if (response->status_code == 200) {
                           id(server_registered) = true;
-                          ESP_LOGI("panel", "registered with %s", "${panel_server}");
+                          ESP_LOGI("panel", "registered with ${panel_server}");
+                        } else {
+                          ESP_LOGW("panel", "register to ${panel_server} returned %d",
+                                   response->status_code);
                         }
+            - lambda: |-
+                // Logged unconditionally: if the POST never completes there is
+                // no on_response at all, and silence is indistinguishable from
+                // "not trying". This line proves the interval is firing.
+                if (!id(server_registered))
+                  ESP_LOGI("panel", "register attempt -> ${panel_server}, ip=%s",
+                           id(eth_ip).state.c_str());
   - interval: 30s
     then:
       - if:
