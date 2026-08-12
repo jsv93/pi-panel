@@ -233,7 +233,10 @@ echo "    agent server: $(systemctl show -p Environment --value panel-agent | tr
 
 echo "==> waiting for the agent to reach the server"
 for _ in $(seq 1 20); do
-  if curl -fsS "$SERVER/api/panel_seen/$PANEL_ID" | grep -q '"seen": true'; then
+  # Tolerant of spacing: FastAPI emits {"seen":true} with no space, and an
+  # exact-match pattern here silently never fires -- the agent registers and
+  # the installer still reports failure.
+  if curl -fsS "$SERVER/api/panel_seen/$PANEL_ID" | grep -qE '"seen":[[:space:]]*true'; then
     echo
     echo "Done. $HOST_NEW is registered as $PANEL_ID."
     echo "Point Chromium at http://127.0.0.1:8088/panel.html"
