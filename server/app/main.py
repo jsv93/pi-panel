@@ -167,14 +167,21 @@ LOG="\$HOME/.panel-kiosk.log"
   echo "=== \$(date -Is) starting kiosk ==="
   echo "url: \$URL"
   echo "served: \$(curl -fsS -o /dev/null -w '%{http_code} %{size_download}B' "\$URL" || echo unreachable)"
+  echo "chromium: \$($CHROME --version 2>&1 | head -1)"
+  echo "shm: \$(df -h /dev/shm | tail -1)"
+  echo "profile owner: \$(stat -c '%U' "\$HOME/.config/chromium" 2>/dev/null || echo none)"
 } >> "\$LOG" 2>&1
 
 # Output goes to a file because a wall panel has no keyboard and no console;
 # CLAUDE.md's rule is that this has to be debuggable over SSH at 2am.
 # --password-store=basic: without it Chromium tries to unlock the gnome login
 # keyring and parks a password dialog over the panel on first start.
+# --disable-dev-shm-usage: Chromium puts shared memory in /dev/shm, and when
+# that is too small its network service dies with "Network service crashed or
+# was terminated" and no page ever renders. Falling back to /tmp costs nothing
+# here and removes a whole class of blank-panel failures.
 exec $CHROME --kiosk --noerrdialogs --disable-infobars --no-first-run \\
-  --password-store=basic \\
+  --password-store=basic --disable-dev-shm-usage \\
   --disable-session-crashed-bubble --disable-features=TranslateUI \\
   --autoplay-policy=no-user-gesture-required \\
   --check-for-update-interval=31536000 \\
