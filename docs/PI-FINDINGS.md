@@ -39,13 +39,27 @@ the panel appears never to connect. Always `restart` after `daemon-reload`.
 
 ## Names
 
-`.local` names do not resolve reliably here — not from the Pi to the server,
-and not from inside the server's Docker container to Home Assistant. Use IP
-addresses in `PANEL_SERVER`, `HA_URL`, and the panel's configured HA address.
+The signature to watch for: `curl http://something.local:8099` works, but the
+agent logs `Cannot connect to host something.local [Domain name not found]`
+for the identical host.
 
-An agent pointed at an unresolvable host fails with
-`Cannot connect to host <name> [Domain name not found]` in
-`journalctl -u panel-agent`, which is the fastest way to spot it.
+That is a resolver difference, not a network fault. aiohttp uses the c-ares
+`AsyncResolver` whenever `aiodns` is importable, and Debian's
+`python3-aiohttp` pulls `aiodns` in as a dependency. c-ares speaks plain DNS
+and never consults NSS, so `nss-mdns` — the thing that resolves `.local` — is
+bypassed entirely. `curl` goes through NSS and is unaffected.
+
+Installing aiohttp with `pip` brings no `aiodns`, so the agent used to get
+`ThreadedResolver` (which calls `getaddrinfo`, hence NSS, hence mDNS) purely
+by accident. Moving the bootstrap to `apt` changed the resolver underneath it.
+
+The agent now pins `ThreadedResolver` explicitly, so `.local` works again.
+To check whether a given panel has the c-ares resolver:
+
+    python3 -c "import aiohttp.resolver as r; print(r.DefaultResolver.__name__)"
+
+Prefer IP addresses anyway. Inside the server's Docker container mDNS does not
+work at all, so `HA_URL` in particular must be an IP.
 
 ## Identity
 

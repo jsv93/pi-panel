@@ -248,10 +248,17 @@ async def ws_loop(session):
 
 
 async def main():
-    print(f"[agent] {HOSTNAME} -> {SERVER}")
+    print(f"[agent] {PANEL_ID} ({HOSTNAME}) -> {SERVER}")
     await serve_ui()                      # start serving immediately: the panel
                                           # must come up even with no server
-    async with aiohttp.ClientSession() as session:
+    # ThreadedResolver rather than aiohttp's default. aiohttp switches to the
+    # c-ares AsyncResolver whenever aiodns is importable, and Debian's
+    # python3-aiohttp pulls aiodns in. c-ares does pure DNS and never consults
+    # NSS, so mDNS stops working: curl resolves a .local server fine while the
+    # agent reports "Domain name not found" for the very same host. Installing
+    # aiohttp from pip has no aiodns, which is why this worked before apt.
+    connector = aiohttp.TCPConnector(resolver=aiohttp.ThreadedResolver())
+    async with aiohttp.ClientSession(connector=connector) as session:
         while not await register(session):
             await asyncio.sleep(15)
         await sync(session)
