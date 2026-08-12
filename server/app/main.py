@@ -159,6 +159,20 @@ LOG="\$HOME/.panel-kiosk.log"
 # Dedicated profile: keeps the kiosk from colliding with a Chromium opened by
 # hand over VNC or SSH, which would otherwise take over this one.
 PROFILE="\$HOME/.panel-chromium"
+
+# Exactly one launcher, ever. There are three autostart mechanisms in play
+# (labwc, wayfire, XDG) and only some fire on any given image, so more than
+# one can start. Two supervision loops is the worst case of all: each kills
+# the other's browser and the panel reloads every few seconds forever.
+# Guarded on flock existing: without the check, a missing flock makes the test
+# fail and the launcher exit, i.e. no panel at all rather than a duplicate one.
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"\$HOME/.panel-kiosk.lock"
+  if ! flock -n 9; then
+    echo "=== \$(date -Is) another panel-kiosk holds the lock; exiting ===" >> "\$LOG"
+    exit 0
+  fi
+fi
 {
   echo "=== \$(date -Is) starting kiosk ==="
   echo "url: \$URL"
@@ -245,14 +259,23 @@ X-GNOME-Autostart-enabled=true
 DESK
   chown "$KIOSK_USER:$KIOSK_GROUP" "$USER_HOME/.config/autostart/panel-kiosk.desktop"
 
-  # labwc. A user autostart file replaces the system one outright, so seed it
-  # from /etc/xdg first or the desktop's own components never start.
+  # labwc runs the system autostart AND this one, so it must contain only our
+  # line. Seeding it from /etc/xdg/labwc/autostart starts every desktop
+  # component a second time -- two task bars, two of everything.
   LABWC="$USER_HOME/.config/labwc"
   install -d -o "$KIOSK_USER" -g "$KIOSK_GROUP" "$LABWC"
-  if [ ! -f "$LABWC/autostart" ] && [ -f /etc/xdg/labwc/autostart ]; then
-    cp /etc/xdg/labwc/autostart "$LABWC/autostart"
-  fi
   touch "$LABWC/autostart"
+  # Repair a file an earlier version seeded from /etc/xdg. Anything in here
+  # that also appears in the system autostart runs twice, because labwc runs
+  # the system file regardless -- that is the duplicate task bar. Strip those
+  # lines rather than rewriting the file, so any hand-added entries survive.
+  if [ -f /etc/xdg/labwc/autostart ]; then
+    if grep -qxF -f /etc/xdg/labwc/autostart "$LABWC/autostart" 2>/dev/null; then
+      echo "    removing duplicated desktop entries from labwc autostart"
+      grep -vxF -f /etc/xdg/labwc/autostart "$LABWC/autostart" > "$LABWC/autostart.tmp" || true
+      mv "$LABWC/autostart.tmp" "$LABWC/autostart"
+    fi
+  fi
   grep -q panel-kiosk "$LABWC/autostart" || echo '/usr/local/bin/panel-kiosk &' >> "$LABWC/autostart"
   chown "$KIOSK_USER:$KIOSK_GROUP" "$LABWC/autostart"
 
