@@ -162,7 +162,10 @@ if [ -f "\$PREF" ]; then
   sed -i 's/"exit_type":"[^"]*"/"exit_type":"Normal"/' "\$PREF" || true
 fi
 
+# --password-store=basic: without it Chromium tries to unlock the gnome login
+# keyring and parks a password dialog over the panel on first start.
 exec $CHROME --kiosk --noerrdialogs --disable-infobars --no-first-run \\
+  --password-store=basic \\
   --disable-session-crashed-bubble --disable-features=TranslateUI \\
   --autoplay-policy=no-user-gesture-required \\
   --check-for-update-interval=31536000 \\

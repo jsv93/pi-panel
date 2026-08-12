@@ -391,6 +391,29 @@ body.ng-tiles .tile{backdrop-filter:none!important;-webkit-backdrop-filter:none!
   </div>
   <div class="hint">Tap to wake</div>
 </div>
+<script>
+/* Anything thrown while the module below initialises leaves a white screen on
+   a wall panel with no keyboard and no console — indistinguishable from "the
+   UI never loaded". Put the failure on the glass instead. Registered before
+   the module so it is listening while the module runs; the module uses
+   top-level await, so a rejected promise fires unhandledrejection, not error. */
+(function(){
+  let shown = false;
+  function fail(what, err){
+    if (shown) return; shown = true;
+    const d = document.createElement("div");
+    d.style.cssText = "position:fixed;inset:0;z-index:9999;background:#140d0d;" +
+      "color:#F0997B;font:14px/1.5 ui-monospace,monospace;padding:28px;" +
+      "overflow:auto;white-space:pre-wrap;-webkit-user-select:text;user-select:text";
+    d.textContent = "Panel UI failed to start (" + what + ")\n\n" +
+      ((err && (err.stack || err.message)) || String(err)) +
+      "\n\nThe agent is probably fine — this is the page, not the sync.";
+    (document.body || document.documentElement).appendChild(d);
+  }
+  addEventListener("error", e => fail("error", e.error || e.message));
+  addEventListener("unhandledrejection", e => fail("unhandled rejection", e.reason));
+})();
+</script>
 <script type="module">
 /* ============================================================
    CONFIG
