@@ -155,13 +155,6 @@ for _ in \$(seq 1 60); do
   sleep 1
 done
 
-# After a power cut Chromium offers to restore pages, which parks a dialog on
-# a panel with no keyboard. Clearing exit_type suppresses it.
-PREF="\$HOME/.config/chromium/Default/Preferences"
-if [ -f "\$PREF" ]; then
-  sed -i 's/"exit_type":"[^"]*"/"exit_type":"Normal"/' "\$PREF" || true
-fi
-
 LOG="\$HOME/.panel-kiosk.log"
 {
   echo "=== \$(date -Is) starting kiosk ==="
@@ -176,16 +169,33 @@ LOG="\$HOME/.panel-kiosk.log"
 # CLAUDE.md's rule is that this has to be debuggable over SSH at 2am.
 # --password-store=basic: without it Chromium tries to unlock the gnome login
 # keyring and parks a password dialog over the panel on first start.
-# --disable-dev-shm-usage: Chromium puts shared memory in /dev/shm, and when
-# that is too small its network service dies with "Network service crashed or
-# was terminated" and no page ever renders. Falling back to /tmp costs nothing
-# here and removes a whole class of blank-panel failures.
-exec $CHROME --kiosk --noerrdialogs --disable-infobars --no-first-run \\
-  --password-store=basic --disable-dev-shm-usage \\
-  --disable-session-crashed-bubble --disable-features=TranslateUI \\
-  --autoplay-policy=no-user-gesture-required \\
-  --check-for-update-interval=31536000 \\
-  "\$URL" >> "\$LOG" 2>&1
+# Supervised rather than exec'd. Chromium has been seen losing its Wayland
+# connection outright ("Fatal Wayland communication error: Broken pipe"),
+# which leaves a wall panel dead until someone power-cycles it. Restarting is
+# always the right response here: there is one page and no user state to lose.
+while true; do
+  # Clear the restore-pages prompt each time, not just on first run: after a
+  # crash-restart loop it would otherwise appear on a panel with no keyboard.
+  PREF="\$HOME/.config/chromium/Default/Preferences"
+  if [ -f "\$PREF" ]; then
+    sed -i 's/"exit_type":"[^"]*"/"exit_type":"Normal"/' "\$PREF" || true
+  fi
+
+  # NetworkServiceInProcess: the out-of-process network service has been
+  # crashing about a minute in, leaving a blank page with the browser still
+  # up. /dev/shm and memory were both ruled out, so run networking inside the
+  # browser process -- one page from localhost does not need the isolation.
+  # --disable-dev-shm-usage is belt and braces; it costs nothing.
+  $CHROME --kiosk --noerrdialogs --disable-infobars --no-first-run \\
+    --password-store=basic --disable-dev-shm-usage \\
+    --enable-features=NetworkServiceInProcess \\
+    --disable-session-crashed-bubble --disable-features=TranslateUI \\
+    --autoplay-policy=no-user-gesture-required \\
+    --check-for-update-interval=31536000 \\
+    "\$URL" >> "\$LOG" 2>&1
+  echo "=== \$(date -Is) chromium exited (\$?), restarting in 5s ===" >> "\$LOG"
+  sleep 5
+done
 KIOSK
   chmod +x /usr/local/bin/panel-kiosk
 
