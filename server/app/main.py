@@ -103,6 +103,30 @@ if [ ! -f /opt/panel/current/secrets.json ]; then
   fi
 fi
 
+echo "==> display"
+CONFIG=/boot/firmware/config.txt
+[ -f "$CONFIG" ] || CONFIG=/boot/config.txt
+NEEDS_REBOOT=0
+if [ -f "$CONFIG" ]; then
+  if grep -q 'vc4-kms-dsi-waveshare-panel' "$CONFIG"; then
+    echo "    overlay already present"
+  else
+    cp "$CONFIG" "$CONFIG.panel-backup"
+    grep -q '^dtoverlay=vc4-kms-v3d' "$CONFIG" || printf '\ndtoverlay=vc4-kms-v3d\n' >> "$CONFIG"
+    cat >> "$CONFIG" <<'CFG'
+# Waveshare 5-DSI-TOUCH-A (HX8394), DSI1. Stock Raspberry Pi OS only
+# auto-detects the official Touch Display, so without this the panel never
+# initialises and the Pi shows no signal at all -- not even the desktop.
+# For the DSI0 connector, append ,dsi0 to the line below.
+dtoverlay=vc4-kms-dsi-waveshare-panel-v2,5_0_inch_a
+CFG
+    echo "    overlay added to $CONFIG (backup: $CONFIG.panel-backup)"
+    NEEDS_REBOOT=1
+  fi
+else
+  echo "    WARNING: no config.txt found; set the DSI overlay by hand" >&2
+fi
+
 echo "==> services"
 cat > /etc/systemd/system/panel-agent.service <<UNIT
 [Unit]
@@ -136,7 +160,13 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-systemctl enable --now panel-agent panel-backlight
+systemctl enable panel-agent panel-backlight
+# restart, not `enable --now`: --now does nothing to an already-running unit,
+# so a leftover agent from a previous install keeps its old PANEL_SERVER and
+# the freshly written unit file is silently ignored.
+systemctl restart panel-agent panel-backlight
+
+echo "    agent server: $(systemctl show -p Environment --value panel-agent | tr ' ' '\n' | grep PANEL_SERVER || echo '(unset)')"
 
 echo "==> waiting for the agent to reach the server"
 for _ in $(seq 1 20); do
@@ -144,6 +174,9 @@ for _ in $(seq 1 20); do
     echo
     echo "Done. $HOST_NEW is registered as $PANEL_ID."
     echo "Point Chromium at http://127.0.0.1:8088/panel.html"
+    if [ "$NEEDS_REBOOT" = "1" ]; then
+      echo "Reboot to bring up the display: sudo reboot"
+    fi
     exit 0
   fi
   sleep 2
