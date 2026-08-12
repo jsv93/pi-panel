@@ -166,7 +166,7 @@ PROFILE="\$HOME/.panel-chromium"
   echo "chromium: \$($CHROME --version 2>&1 | head -1)"
   echo "shm: \$(df -h /dev/shm | tail -1)"
   echo "profile: \$PROFILE"
-  echo "stale chromium pids: \$(pgrep -u "\$(id -u)" -f "$CHROME" | tr '\n' ' ' || true)"
+  echo "stale chromium pids: \$(pgrep -u "\$(id -u)" -f chromium | tr '\n' ' ' || true)"
 } >> "\$LOG" 2>&1
 
 # Output goes to a file because a wall panel has no keyboard and no console;
@@ -184,8 +184,18 @@ while true; do
   # but detached from the dead compositor, so it renders nothing and every
   # relaunch silently feeds a URL to a process nobody can see. This is the
   # difference between the kiosk and launching Chromium by hand.
-  pkill -u "\$(id -u)" -f "$CHROME" 2>/dev/null || true
-  sleep 1
+  # Match on the bare name, not the launcher path: /usr/bin/chromium is a
+  # wrapper script and the process that actually holds the profile is
+  # /usr/lib/chromium/chromium, which a path-based pattern misses entirely.
+  if pgrep -u "\$(id -u)" -f chromium >/dev/null 2>&1; then
+    pkill -u "\$(id -u)" -f chromium 2>/dev/null || true
+    for _ in \$(seq 1 10); do
+      pgrep -u "\$(id -u)" -f chromium >/dev/null 2>&1 || break
+      sleep 1
+    done
+    pkill -9 -u "\$(id -u)" -f chromium 2>/dev/null || true
+    sleep 1
+  fi
 
   # Clear the restore-pages prompt each time, not just on first run: after a
   # crash-restart loop it would otherwise appear on a panel with no keyboard.
@@ -220,9 +230,11 @@ done
 KIOSK
   chmod +x /usr/local/bin/panel-kiosk
 
-  # XDG autostart rather than a compositor-specific file: Bookworm ships labwc
-  # or wayfire depending on release, and both honour this. So does X11.
   KIOSK_GROUP=$(id -gn "$KIOSK_USER")
+
+  # Pi OS's Wayland compositors do NOT read ~/.config/autostart. labwc runs its
+  # own autostart script and wayfire an [autostart] section, so the .desktop
+  # file below is only a fallback for an X11 session. Install all three.
   install -d -o "$KIOSK_USER" -g "$KIOSK_GROUP" "$USER_HOME/.config/autostart"
   cat > "$USER_HOME/.config/autostart/panel-kiosk.desktop" <<'DESK'
 [Desktop Entry]
@@ -232,6 +244,28 @@ Exec=/usr/local/bin/panel-kiosk
 X-GNOME-Autostart-enabled=true
 DESK
   chown "$KIOSK_USER:$KIOSK_GROUP" "$USER_HOME/.config/autostart/panel-kiosk.desktop"
+
+  # labwc. A user autostart file replaces the system one outright, so seed it
+  # from /etc/xdg first or the desktop's own components never start.
+  LABWC="$USER_HOME/.config/labwc"
+  install -d -o "$KIOSK_USER" -g "$KIOSK_GROUP" "$LABWC"
+  if [ ! -f "$LABWC/autostart" ] && [ -f /etc/xdg/labwc/autostart ]; then
+    cp /etc/xdg/labwc/autostart "$LABWC/autostart"
+  fi
+  touch "$LABWC/autostart"
+  grep -q panel-kiosk "$LABWC/autostart" || echo '/usr/local/bin/panel-kiosk &' >> "$LABWC/autostart"
+  chown "$KIOSK_USER:$KIOSK_GROUP" "$LABWC/autostart"
+
+  # wayfire, only if this image uses it.
+  WF="$USER_HOME/.config/wayfire.ini"
+  if [ -f "$WF" ] && ! grep -q panel-kiosk "$WF"; then
+    if grep -q '^\[autostart\]' "$WF"; then
+      sed -i 's|^\[autostart\]|[autostart]\npanel = /usr/local/bin/panel-kiosk|' "$WF"
+    else
+      printf '\n[autostart]\npanel = /usr/local/bin/panel-kiosk\n' >> "$WF"
+    fi
+    chown "$KIOSK_USER:$KIOSK_GROUP" "$WF"
+  fi
 
   # Boot straight to the desktop as this user, and stop the screen blanking.
   raspi-config nonint do_boot_behaviour B4 || echo "    (autologin not set)" >&2

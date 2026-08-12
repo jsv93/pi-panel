@@ -24,10 +24,44 @@ import glob, json, os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
-CANDIDATES = sorted(glob.glob("/sys/class/backlight/*/brightness"))
-DEV = CANDIDATES[0] if CANDIDATES else None
-MAXF = DEV.replace("brightness", "max_brightness") if DEV else None
-MAX = int(open(MAXF).read().strip()) if MAXF and os.path.exists(MAXF) else 255
+def find_device():
+    """Resolved per request, not once at import.
+
+    systemd starts this service before the DSI panel has necessarily
+    registered its backlight, and /sys/class/backlight is empty until it does.
+    Resolving once at import meant an early start left DEV as None for the
+    lifetime of the service — the brightness control silently did nothing
+    until someone restarted it.
+    """
+    c = sorted(glob.glob("/sys/class/backlight/*/brightness"))
+    if not c:
+        return None, 255
+    dev = c[0]
+    maxf = dev.replace("brightness", "max_brightness")
+    try:
+        mx = int(open(maxf).read().strip())
+    except Exception:
+        mx = 255
+    return dev, (mx or 255)
+
+
+def unblank(dev):
+    """Clear bl_power before writing brightness.
+
+    While bl_power is non-zero the panel is blanked and a brightness write
+    lands in sysfs but changes nothing on screen. That is why setting the
+    slider appeared not to take until it had been moved a few times: something
+    else (the compositor's idle handling, or systemd-backlight at boot) had
+    blanked it, and only a write that happened to coincide with an unblank
+    was visible.
+    """
+    p = os.path.join(os.path.dirname(dev), "bl_power")
+    try:
+        if os.path.exists(p) and open(p).read().strip() != "0":
+            with open(p, "w") as f:
+                f.write("0")
+    except Exception:
+        pass
 
 
 class H(BaseHTTPRequestHandler):
@@ -52,14 +86,16 @@ class H(BaseHTTPRequestHandler):
             self.send_response(404); self._cors(); self.end_headers(); return
         q = parse_qs(u.query)
         ok, msg = False, "no backlight device found"
-        if DEV:
+        dev, mx = find_device()
+        if dev:
             try:
                 v = int(q.get("v", ["255"])[0])
                 v = max(0, min(255, v))
-                scaled = round(v / 255 * MAX)
-                with open(DEV, "w") as f:
+                scaled = round(v / 255 * mx)
+                unblank(dev)
+                with open(dev, "w") as f:
                     f.write(str(scaled))
-                ok, msg = True, f"{scaled}/{MAX}"
+                ok, msg = True, f"{scaled}/{mx}"
             except Exception as e:
                 msg = str(e)
         self.send_response(200 if ok else 500)
@@ -71,5 +107,6 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"backlight device: {DEV or 'NONE'} (max {MAX})")
+    _dev, _max = find_device()
+    print(f"backlight device: {_dev or 'NONE (will re-check per request)'} (max {_max})")
     HTTPServer(("127.0.0.1", 8081), H).serve_forever()
