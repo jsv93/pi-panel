@@ -30,6 +30,34 @@ Two consequences worth knowing:
   power it. No amount of `config.txt` fixes that one — check the board
   revision before assuming it is software.
 
+## Kiosk
+
+Bookworm on a Pi 5 runs Wayland — labwc or wayfire depending on the release —
+so anything built on `xset`, `unclutter` or X11 autostart quirks is a dead end.
+
+The launcher is installed as an **XDG autostart** entry
+(`~/.config/autostart/panel-kiosk.desktop`) rather than a compositor-specific
+file, because labwc, wayfire and X11 all honour it. That is the only reason it
+is portable across Pi OS releases.
+
+`/usr/local/bin/panel-kiosk` does three things before starting Chromium:
+
+- Waits for `http://127.0.0.1:8088/panel.html` to answer. The desktop session
+  can start before the agent is listening, and Chromium would otherwise load
+  an error page and stay on it.
+- Rewrites `exit_type` in Chromium's `Preferences`. After a power cut Chromium
+  offers to restore pages, and that dialog parks itself on a panel with no
+  keyboard.
+- Points at the agent's localhost server, never `file://` — Chromium blocks
+  `fetch()` on `file://`, so `config.json` and `secrets.json` would never load.
+
+The cursor is hidden by `cursor:none` in panel.html, so `unclutter` is not
+needed.
+
+Screen blanking is disabled through `raspi-config nonint do_blanking`, and
+autologin to the desktop through `do_boot_behaviour B4`. Both are set for the
+user who ran the install (`SUDO_USER`, falling back to uid 1000).
+
 ## systemd
 
 `systemctl enable --now` does **not** restart a unit that is already running.

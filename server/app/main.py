@@ -127,6 +127,69 @@ else
   echo "    WARNING: no config.txt found; set the DSI overlay by hand" >&2
 fi
 
+echo "==> kiosk"
+KIOSK_USER="${SUDO_USER:-}"
+if [ -z "$KIOSK_USER" ] || [ "$KIOSK_USER" = "root" ]; then
+  KIOSK_USER=$(getent passwd 1000 | cut -d: -f1)
+fi
+USER_HOME=$(getent passwd "$KIOSK_USER" | cut -d: -f6)
+if [ -z "$KIOSK_USER" ] || [ ! -d "$USER_HOME" ]; then
+  echo "    WARNING: no desktop user found; skipping kiosk setup" >&2
+else
+  CHROME=$(command -v chromium-browser || command -v chromium || true)
+  if [ -z "$CHROME" ]; then
+    apt-get install -y -qq chromium-browser || apt-get install -y -qq chromium
+    CHROME=$(command -v chromium-browser || command -v chromium)
+  fi
+
+  cat > /usr/local/bin/panel-kiosk <<KIOSK
+#!/usr/bin/env bash
+# The agent serves the UI on localhost; file:// will not work because Chromium
+# blocks fetch() there and config.json would never load.
+URL=http://127.0.0.1:8088/panel.html
+
+# The session can start before the agent is listening. Without this wait
+# Chromium loads an error page and sits there until someone notices.
+for _ in \$(seq 1 60); do
+  curl -fsS -o /dev/null "\$URL" && break
+  sleep 1
+done
+
+# After a power cut Chromium offers to restore pages, which parks a dialog on
+# a panel with no keyboard. Clearing exit_type suppresses it.
+PREF="\$HOME/.config/chromium/Default/Preferences"
+if [ -f "\$PREF" ]; then
+  sed -i 's/"exit_type":"[^"]*"/"exit_type":"Normal"/' "\$PREF" || true
+fi
+
+exec $CHROME --kiosk --noerrdialogs --disable-infobars --no-first-run \\
+  --disable-session-crashed-bubble --disable-features=TranslateUI \\
+  --autoplay-policy=no-user-gesture-required \\
+  --check-for-update-interval=31536000 \\
+  "\$URL"
+KIOSK
+  chmod +x /usr/local/bin/panel-kiosk
+
+  # XDG autostart rather than a compositor-specific file: Bookworm ships labwc
+  # or wayfire depending on release, and both honour this. So does X11.
+  KIOSK_GROUP=$(id -gn "$KIOSK_USER")
+  install -d -o "$KIOSK_USER" -g "$KIOSK_GROUP" "$USER_HOME/.config/autostart"
+  cat > "$USER_HOME/.config/autostart/panel-kiosk.desktop" <<'DESK'
+[Desktop Entry]
+Type=Application
+Name=Panel kiosk
+Exec=/usr/local/bin/panel-kiosk
+X-GNOME-Autostart-enabled=true
+DESK
+  chown "$KIOSK_USER:$KIOSK_GROUP" "$USER_HOME/.config/autostart/panel-kiosk.desktop"
+
+  # Boot straight to the desktop as this user, and stop the screen blanking.
+  raspi-config nonint do_boot_behaviour B4 || echo "    (autologin not set)" >&2
+  raspi-config nonint do_blanking 1 || echo "    (blanking not changed)" >&2
+  echo "    kiosk installed for $KIOSK_USER using $CHROME"
+  NEEDS_REBOOT=1
+fi
+
 echo "==> services"
 cat > /etc/systemd/system/panel-agent.service <<UNIT
 [Unit]
@@ -175,7 +238,7 @@ for _ in $(seq 1 20); do
     echo "Done. $HOST_NEW is registered as $PANEL_ID."
     echo "Point Chromium at http://127.0.0.1:8088/panel.html"
     if [ "$NEEDS_REBOOT" = "1" ]; then
-      echo "Reboot to bring up the display: sudo reboot"
+      echo "Reboot to start the panel: sudo reboot"
     fi
     exit 0
   fi
