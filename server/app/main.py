@@ -156,13 +156,17 @@ for _ in \$(seq 1 60); do
 done
 
 LOG="\$HOME/.panel-kiosk.log"
+# Dedicated profile: keeps the kiosk from colliding with a Chromium opened by
+# hand over VNC or SSH, which would otherwise take over this one.
+PROFILE="\$HOME/.panel-chromium"
 {
   echo "=== \$(date -Is) starting kiosk ==="
   echo "url: \$URL"
   echo "served: \$(curl -fsS -o /dev/null -w '%{http_code} %{size_download}B' "\$URL" || echo unreachable)"
   echo "chromium: \$($CHROME --version 2>&1 | head -1)"
   echo "shm: \$(df -h /dev/shm | tail -1)"
-  echo "profile owner: \$(stat -c '%U' "\$HOME/.config/chromium" 2>/dev/null || echo none)"
+  echo "profile: \$PROFILE"
+  echo "stale chromium pids: \$(pgrep -u "\$(id -u)" -f "$CHROME" | tr '\n' ' ' || true)"
 } >> "\$LOG" 2>&1
 
 # Output goes to a file because a wall panel has no keyboard and no console;
@@ -174,9 +178,18 @@ LOG="\$HOME/.panel-kiosk.log"
 # which leaves a wall panel dead until someone power-cycles it. Restarting is
 # always the right response here: there is one page and no user state to lose.
 while true; do
+  # Kill any Chromium already holding this profile. A second "chromium URL"
+  # invocation does not start a browser -- it hands the URL to the running
+  # instance and exits. After a session restart that instance is still alive
+  # but detached from the dead compositor, so it renders nothing and every
+  # relaunch silently feeds a URL to a process nobody can see. This is the
+  # difference between the kiosk and launching Chromium by hand.
+  pkill -u "\$(id -u)" -f "$CHROME" 2>/dev/null || true
+  sleep 1
+
   # Clear the restore-pages prompt each time, not just on first run: after a
   # crash-restart loop it would otherwise appear on a panel with no keyboard.
-  PREF="\$HOME/.config/chromium/Default/Preferences"
+  PREF="\$PROFILE/Default/Preferences"
   if [ -f "\$PREF" ]; then
     sed -i 's/"exit_type":"[^"]*"/"exit_type":"Normal"/' "\$PREF" || true
   fi
@@ -186,9 +199,17 @@ while true; do
   # up. /dev/shm and memory were both ruled out, so run networking inside the
   # browser process -- one page from localhost does not need the isolation.
   # --disable-dev-shm-usage is belt and braces; it costs nothing.
+  # The DEPRECATED_ENDPOINT spam in the log is Chromium's push-messaging
+  # (GCM) client retrying Google endpoints it can no longer use. A panel
+  # showing one localhost page needs none of that machinery, and it is the
+  # traffic running through the network service that keeps dying.
   $CHROME --kiosk --noerrdialogs --disable-infobars --no-first-run \\
+    --user-data-dir="\$PROFILE" \\
     --password-store=basic --disable-dev-shm-usage \\
     --enable-features=NetworkServiceInProcess \\
+    --disable-background-networking --disable-sync \\
+    --disable-component-update --disable-domain-reliability \\
+    --no-default-browser-check --no-service-autorun \\
     --disable-session-crashed-bubble --disable-features=TranslateUI \\
     --autoplay-policy=no-user-gesture-required \\
     --check-for-update-interval=31536000 \\
