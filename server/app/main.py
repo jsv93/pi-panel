@@ -162,6 +162,15 @@ if [ -f "\$PREF" ]; then
   sed -i 's/"exit_type":"[^"]*"/"exit_type":"Normal"/' "\$PREF" || true
 fi
 
+LOG="\$HOME/.panel-kiosk.log"
+{
+  echo "=== \$(date -Is) starting kiosk ==="
+  echo "url: \$URL"
+  echo "served: \$(curl -fsS -o /dev/null -w '%{http_code} %{size_download}B' "\$URL" || echo unreachable)"
+} >> "\$LOG" 2>&1
+
+# Output goes to a file because a wall panel has no keyboard and no console;
+# CLAUDE.md's rule is that this has to be debuggable over SSH at 2am.
 # --password-store=basic: without it Chromium tries to unlock the gnome login
 # keyring and parks a password dialog over the panel on first start.
 exec $CHROME --kiosk --noerrdialogs --disable-infobars --no-first-run \\
@@ -169,7 +178,7 @@ exec $CHROME --kiosk --noerrdialogs --disable-infobars --no-first-run \\
   --disable-session-crashed-bubble --disable-features=TranslateUI \\
   --autoplay-policy=no-user-gesture-required \\
   --check-for-update-interval=31536000 \\
-  "\$URL"
+  "\$URL" >> "\$LOG" 2>&1
 KIOSK
   chmod +x /usr/local/bin/panel-kiosk
 
