@@ -1,0 +1,10 @@
+# vc4-hdmi-0 and vc4-hdmi-1 are HDMI CEC / jack-detect nodes that the kernel
+# exposes as input devices advertising "keyboard pointer". They never emit any
+# motion, but wlroots sees a pointer and draws a cursor accordingly -- one that
+# nothing on a touch-only panel can ever move or dismiss.
+#
+# The Goodix touchscreen reports "keyboard touch" with no pointer capability,
+# so ignoring these leaves the panel with no pointer devices and no cursor.
+#
+# The panel is DSI, so nothing here needs HDMI input in the first place.
+SUBSYSTEM=="input", ATTRS{name}=="vc4-hdmi*", ENV{LIBINPUT_IGNORE_DEVICE}="1"

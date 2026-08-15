@@ -105,3 +105,32 @@ A panel's identity is the server-issued id in `/opt/panel/panel-id`, not the
 hostname. Renaming the Pi is safe. If that file is missing the agent falls
 back to the hostname, which is the pre-provisioning behaviour and will create
 a second, unclaimed record if the panel was provisioned from the GUI.
+
+## The cursor that would not go away
+
+`libinput list-devices` on this panel:
+
+    Goodix Capacitive TouchScreen   keyboard touch
+    vc4-hdmi-0                      keyboard pointer
+    vc4-hdmi-1                      keyboard pointer
+
+The touchscreen is touch-only, correctly. The **HDMI ports** advertise pointer
+capability — they are CEC / jack-detect nodes the kernel exposes as input
+devices. They never emit motion, but wlroots sees a pointer and draws a cursor,
+which then sits there permanently because nothing can move it.
+
+Two things that look like fixes and are not:
+
+- `cursor:none` in the page. Touch is not pointer input on Wayland, so a
+  touch-only panel never produces a pointer-enter event, chromium is never
+  asked to render a cursor, and the CSS never gets a chance to apply. This is
+  also why it used to vanish on first touch under a desktop session and does
+  not under cage.
+- `XCURSOR_SIZE=1`. Tried, did nothing.
+
+The fix is to stop libinput seeing those devices at all, via
+`pi-os/99-panel-ignore-hdmi-input.rules`:
+
+    SUBSYSTEM=="input", ATTRS{name}=="vc4-hdmi*", ENV{LIBINPUT_IGNORE_DEVICE}="1"
+
+`libinput` itself is in `libinput-tools`, which Lite does not install.

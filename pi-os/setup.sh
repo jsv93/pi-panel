@@ -34,6 +34,10 @@ install -d -o panel -g panel -m 0755 /var/lib/panel-kiosk
 
 install -m 0755 "$SCRIPT_DIR/kiosk-launch.sh" /usr/local/bin/panel-kiosk-launch
 install -m 0644 "$SCRIPT_DIR/cage-kiosk.service" /etc/systemd/system/cage-kiosk.service
+install -m 0644 "$SCRIPT_DIR/99-panel-ignore-hdmi-input.rules" \
+  /etc/udev/rules.d/99-panel-ignore-hdmi-input.rules
+udevadm control --reload-rules || true
+udevadm trigger --subsystem-match=input || true
 
 systemctl daemon-reload
 # getty must release tty1: logind only grants DRM master to the session on the
