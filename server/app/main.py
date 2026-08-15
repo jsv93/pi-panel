@@ -128,174 +128,141 @@ else
 fi
 
 echo "==> kiosk"
-KIOSK_USER="${SUDO_USER:-}"
-if [ -z "$KIOSK_USER" ] || [ "$KIOSK_USER" = "root" ]; then
-  KIOSK_USER=$(getent passwd 1000 | cut -d: -f1)
+# Raspberry Pi OS Lite: no desktop session, no autologin, and no compositor
+# autostart. cage runs chromium fullscreen as its only job, supervised by
+# systemd. The desktop-session approach this replaces had three autostart
+# mechanisms, a session that could restart and orphan the browser, and a
+# singleton handoff that showed a white screen with nothing in any log.
+# See pi-os/README.md and docs/PI-KIOSK-FINDINGS.md.
+apt-get install -y -qq cage
+if ! command -v chromium >/dev/null 2>&1 && ! command -v chromium-browser >/dev/null 2>&1; then
+  apt-get install -y -qq chromium || apt-get install -y -qq chromium-browser
 fi
-USER_HOME=$(getent passwd "$KIOSK_USER" | cut -d: -f6)
-if [ -z "$KIOSK_USER" ] || [ ! -d "$USER_HOME" ]; then
-  echo "    WARNING: no desktop user found; skipping kiosk setup" >&2
-else
-  CHROME=$(command -v chromium-browser || command -v chromium || true)
-  if [ -z "$CHROME" ]; then
-    apt-get install -y -qq chromium-browser || apt-get install -y -qq chromium
-    CHROME=$(command -v chromium-browser || command -v chromium)
+
+# A system user with a real home: chromium needs somewhere writable for its
+# profile, and the unit sets HOME there explicitly rather than trusting the
+# account to have one.
+id -u panel >/dev/null 2>&1 || useradd -r -G video,input,render -d /var/lib/panel-kiosk panel
+install -d -o panel -g panel -m 0755 /var/lib/panel-kiosk
+
+cat > /usr/local/bin/panel-kiosk-launch <<'LAUNCH'
+#!/bin/sh
+# Launched by cage-kiosk.service. Waits for panel-agent's local HTTP server to
+# accept connections -- systemd's After= only guarantees the process started,
+# not that aiohttp has bound the port -- then hands off to cage, which runs
+# chromium as its only window. If chromium exits, cage exits, and the unit's
+# Restart=always brings the pair back.
+set -eu
+
+UI_URL="http://127.0.0.1:8088/panel.html"
+
+CHROME=$(command -v chromium || command -v chromium-browser || true)
+if [ -z "$CHROME" ]; then
+  echo "no chromium on PATH" >&2
+  exit 1
+fi
+
+i=0
+until curl -sf -o /dev/null "$UI_URL"; do
+  i=$((i + 1))
+  if [ "$i" -gt 60 ]; then
+    echo "panel-agent never came up after 30s, launching anyway" >&2
+    break
   fi
-
-  cat > /usr/local/bin/panel-kiosk <<KIOSK
-#!/usr/bin/env bash
-# The agent serves the UI on localhost; file:// will not work because Chromium
-# blocks fetch() there and config.json would never load.
-URL=http://127.0.0.1:8088/panel.html
-
-# The session can start before the agent is listening. Without this wait
-# Chromium loads an error page and sits there until someone notices.
-for _ in \$(seq 1 60); do
-  curl -fsS -o /dev/null "\$URL" && break
-  sleep 1
+  sleep 0.5
 done
 
-LOG="\$HOME/.panel-kiosk.log"
-# Dedicated profile: keeps the kiosk from colliding with a Chromium opened by
-# hand over VNC or SSH, which would otherwise take over this one.
-PROFILE="\$HOME/.panel-chromium"
-
-# Exactly one launcher, ever. There are three autostart mechanisms in play
-# (labwc, wayfire, XDG) and only some fire on any given image, so more than
-# one can start. Two supervision loops is the worst case of all: each kills
-# the other's browser and the panel reloads every few seconds forever.
-# Guarded on flock existing: without the check, a missing flock makes the test
-# fail and the launcher exit, i.e. no panel at all rather than a duplicate one.
-if command -v flock >/dev/null 2>&1; then
-  exec 9>"\$HOME/.panel-kiosk.lock"
-  if ! flock -n 9; then
-    echo "=== \$(date -Is) another panel-kiosk holds the lock; exiting ===" >> "\$LOG"
-    exit 0
-  fi
+# After a power cut chromium offers to restore pages, which parks a dialog on a
+# panel with no keyboard. Cleared on every start, not just the first.
+PREF="$HOME/chromium/Default/Preferences"
+if [ -f "$PREF" ]; then
+  sed -i 's/"exit_type":"[^"]*"/"exit_type":"Normal"/' "$PREF" || true
 fi
-{
-  echo "=== \$(date -Is) starting kiosk ==="
-  echo "url: \$URL"
-  echo "served: \$(curl -fsS -o /dev/null -w '%{http_code} %{size_download}B' "\$URL" || echo unreachable)"
-  echo "chromium: \$($CHROME --version 2>&1 | head -1)"
-  echo "shm: \$(df -h /dev/shm | tail -1)"
-  echo "profile: \$PROFILE"
-  echo "stale chromium pids: \$(pgrep -u "\$(id -u)" -f chromium | tr '\n' ' ' || true)"
-} >> "\$LOG" 2>&1
 
-# Output goes to a file because a wall panel has no keyboard and no console;
-# CLAUDE.md's rule is that this has to be debuggable over SSH at 2am.
-# --password-store=basic: without it Chromium tries to unlock the gnome login
-# keyring and parks a password dialog over the panel on first start.
-# Supervised rather than exec'd. Chromium has been seen losing its Wayland
-# connection outright ("Fatal Wayland communication error: Broken pipe"),
-# which leaves a wall panel dead until someone power-cycles it. Restarting is
-# always the right response here: there is one page and no user state to lose.
-while true; do
-  # Kill any Chromium already holding this profile. A second "chromium URL"
-  # invocation does not start a browser -- it hands the URL to the running
-  # instance and exits. After a session restart that instance is still alive
-  # but detached from the dead compositor, so it renders nothing and every
-  # relaunch silently feeds a URL to a process nobody can see. This is the
-  # difference between the kiosk and launching Chromium by hand.
-  # Match on the bare name, not the launcher path: /usr/bin/chromium is a
-  # wrapper script and the process that actually holds the profile is
-  # /usr/lib/chromium/chromium, which a path-based pattern misses entirely.
-  if pgrep -u "\$(id -u)" -f chromium >/dev/null 2>&1; then
-    pkill -u "\$(id -u)" -f chromium 2>/dev/null || true
-    for _ in \$(seq 1 10); do
-      pgrep -u "\$(id -u)" -f chromium >/dev/null 2>&1 || break
-      sleep 1
-    done
-    pkill -9 -u "\$(id -u)" -f chromium 2>/dev/null || true
-    sleep 1
-  fi
+# Flag notes, all of these earned on hardware:
+#   --ozone-platform=wayland  chromium does not necessarily render natively via
+#     Wayland/DRM without it, and software rendering would not fail visibly --
+#     it would just look like "the lighter compositor made no difference".
+#   NetworkServiceInProcess   the out-of-process network service was crashing
+#     about a minute in on this panel, leaving a blank page with the browser
+#     still running. /dev/shm and memory were both ruled out.
+#   --disable-background-networking and friends remove the push-messaging
+#     client that was retrying dead Google endpoints through that service.
+#   Both features go in ONE --enable-features: a second occurrence replaces the
+#     first rather than adding to it.
+exec cage -- "$CHROME" \
+  --kiosk "$UI_URL" \
+  --ozone-platform=wayland \
+  --enable-features=UseOzonePlatform,NetworkServiceInProcess \
+  --disable-features=TranslateUI \
+  --user-data-dir="$HOME/chromium" \
+  --password-store=basic \
+  --disable-background-networking \
+  --disable-sync \
+  --disable-component-update \
+  --disable-domain-reliability \
+  --no-default-browser-check \
+  --no-service-autorun \
+  --noerrdialogs \
+  --disable-infobars \
+  --disable-session-crashed-bubble \
+  --overscroll-history-navigation=0 \
+  --disable-pinch \
+  --autoplay-policy=no-user-gesture-required \
+  --check-for-update-interval=31536000 \
+  --no-first-run
+LAUNCH
+chmod 0755 /usr/local/bin/panel-kiosk-launch
 
-  # Clear the restore-pages prompt each time, not just on first run: after a
-  # crash-restart loop it would otherwise appear on a panel with no keyboard.
-  PREF="\$PROFILE/Default/Preferences"
-  if [ -f "\$PREF" ]; then
-    sed -i 's/"exit_type":"[^"]*"/"exit_type":"Normal"/' "\$PREF" || true
-  fi
+cat > /etc/systemd/system/cage-kiosk.service <<'CAGEUNIT'
+[Unit]
+Description=Panel kiosk (cage + chromium)
+# panel-agent serves the UI on 127.0.0.1:8088; chromium needs it up first.
+# systemd-logind provides the seat/session cage needs for DRM access.
+#
+# Wants, not Requires: the launch script has its own wait-then-continue
+# fallback, and a panel that comes up showing an error beats one that shows
+# nothing at all because a dependency failed.
+After=panel-agent.service systemd-logind.service network-online.target
+Wants=panel-agent.service
 
-  # NetworkServiceInProcess: the out-of-process network service has been
-  # crashing about a minute in, leaving a blank page with the browser still
-  # up. /dev/shm and memory were both ruled out, so run networking inside the
-  # browser process -- one page from localhost does not need the isolation.
-  # --disable-dev-shm-usage is belt and braces; it costs nothing.
-  # The DEPRECATED_ENDPOINT spam in the log is Chromium's push-messaging
-  # (GCM) client retrying Google endpoints it can no longer use. A panel
-  # showing one localhost page needs none of that machinery, and it is the
-  # traffic running through the network service that keeps dying.
-  $CHROME --kiosk --noerrdialogs --disable-infobars --no-first-run \\
-    --user-data-dir="\$PROFILE" \\
-    --password-store=basic --disable-dev-shm-usage \\
-    --enable-features=NetworkServiceInProcess \\
-    --disable-background-networking --disable-sync \\
-    --disable-component-update --disable-domain-reliability \\
-    --no-default-browser-check --no-service-autorun \\
-    --disable-session-crashed-bubble --disable-features=TranslateUI \\
-    --autoplay-policy=no-user-gesture-required \\
-    --check-for-update-interval=31536000 \\
-    "\$URL" >> "\$LOG" 2>&1
-  echo "=== \$(date -Is) chromium exited (\$?), restarting in 5s ===" >> "\$LOG"
-  sleep 5
+[Service]
+Type=simple
+User=panel
+Group=panel
+# PAMName+TTYPath registers this service as a real login session with
+# systemd-logind, which is what grants cage DRM/input device access without
+# hand-rolled udev rules. tty2 (not tty1) avoids conflicting with the
+# default getty@tty1 unit.
+PAMName=login
+TTYPath=/dev/tty2
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty2
+UtmpMode=user
+# Chromium needs a writable HOME for its profile. Set explicitly rather than
+# relying on the panel user having a home directory.
+Environment=HOME=/var/lib/panel-kiosk
+ExecStart=/usr/local/bin/panel-kiosk-launch
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+CAGEUNIT
+
+# Remove the desktop-session kiosk this replaces, so a panel provisioned by an
+# older version of this script does not end up running both.
+rm -f /usr/local/bin/panel-kiosk
+for U in /home/*/.config/autostart/panel-kiosk.desktop; do
+  [ -e "$U" ] && rm -f "$U"
 done
-KIOSK
-  chmod +x /usr/local/bin/panel-kiosk
-
-  KIOSK_GROUP=$(id -gn "$KIOSK_USER")
-
-  # Pi OS's Wayland compositors do NOT read ~/.config/autostart. labwc runs its
-  # own autostart script and wayfire an [autostart] section, so the .desktop
-  # file below is only a fallback for an X11 session. Install all three.
-  install -d -o "$KIOSK_USER" -g "$KIOSK_GROUP" "$USER_HOME/.config/autostart"
-  cat > "$USER_HOME/.config/autostart/panel-kiosk.desktop" <<'DESK'
-[Desktop Entry]
-Type=Application
-Name=Panel kiosk
-Exec=/usr/local/bin/panel-kiosk
-X-GNOME-Autostart-enabled=true
-DESK
-  chown "$KIOSK_USER:$KIOSK_GROUP" "$USER_HOME/.config/autostart/panel-kiosk.desktop"
-
-  # labwc runs the system autostart AND this one, so it must contain only our
-  # line. Seeding it from /etc/xdg/labwc/autostart starts every desktop
-  # component a second time -- two task bars, two of everything.
-  LABWC="$USER_HOME/.config/labwc"
-  install -d -o "$KIOSK_USER" -g "$KIOSK_GROUP" "$LABWC"
-  touch "$LABWC/autostart"
-  # Repair a file an earlier version seeded from /etc/xdg. Anything in here
-  # that also appears in the system autostart runs twice, because labwc runs
-  # the system file regardless -- that is the duplicate task bar. Strip those
-  # lines rather than rewriting the file, so any hand-added entries survive.
-  if [ -f /etc/xdg/labwc/autostart ]; then
-    if grep -qxF -f /etc/xdg/labwc/autostart "$LABWC/autostart" 2>/dev/null; then
-      echo "    removing duplicated desktop entries from labwc autostart"
-      grep -vxF -f /etc/xdg/labwc/autostart "$LABWC/autostart" > "$LABWC/autostart.tmp" || true
-      mv "$LABWC/autostart.tmp" "$LABWC/autostart"
-    fi
-  fi
-  grep -q panel-kiosk "$LABWC/autostart" || echo '/usr/local/bin/panel-kiosk &' >> "$LABWC/autostart"
-  chown "$KIOSK_USER:$KIOSK_GROUP" "$LABWC/autostart"
-
-  # wayfire, only if this image uses it.
-  WF="$USER_HOME/.config/wayfire.ini"
-  if [ -f "$WF" ] && ! grep -q panel-kiosk "$WF"; then
-    if grep -q '^\[autostart\]' "$WF"; then
-      sed -i 's|^\[autostart\]|[autostart]\npanel = /usr/local/bin/panel-kiosk|' "$WF"
-    else
-      printf '\n[autostart]\npanel = /usr/local/bin/panel-kiosk\n' >> "$WF"
-    fi
-    chown "$KIOSK_USER:$KIOSK_GROUP" "$WF"
-  fi
-
-  # Boot straight to the desktop as this user, and stop the screen blanking.
-  raspi-config nonint do_boot_behaviour B4 || echo "    (autologin not set)" >&2
-  raspi-config nonint do_blanking 1 || echo "    (blanking not changed)" >&2
-  echo "    kiosk installed for $KIOSK_USER using $CHROME"
-  NEEDS_REBOOT=1
-fi
+for A in /home/*/.config/labwc/autostart /home/*/.config/wayfire.ini; do
+  [ -e "$A" ] && sed -i '/panel-kiosk/d' "$A"
+done
+NEEDS_REBOOT=1
+echo "    cage kiosk installed"
 
 echo "==> services"
 cat > /etc/systemd/system/panel-agent.service <<UNIT
@@ -330,11 +297,14 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-systemctl enable panel-agent panel-backlight
+systemctl enable panel-agent panel-backlight cage-kiosk
 # restart, not `enable --now`: --now does nothing to an already-running unit,
 # so a leftover agent from a previous install keeps its old PANEL_SERVER and
 # the freshly written unit file is silently ignored.
 systemctl restart panel-agent panel-backlight
+# cage is deliberately not started here. It wants a seat on tty2 and the DSI
+# overlay may only have just been added, so it starts cleanly on the reboot
+# this script asks for rather than half-working over SSH.
 
 echo "    agent server: $(systemctl show -p Environment --value panel-agent | tr ' ' '\n' | grep PANEL_SERVER || echo '(unset)')"
 

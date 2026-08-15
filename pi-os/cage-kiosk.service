@@ -1,0 +1,35 @@
+[Unit]
+Description=Panel kiosk (cage + chromium)
+# panel-agent serves the UI on 127.0.0.1:8088; chromium needs it up first.
+# systemd-logind provides the seat/session cage needs for DRM access.
+#
+# Wants, not Requires: the launch script has its own wait-then-continue
+# fallback, and a panel that comes up showing an error beats one that shows
+# nothing at all because a dependency failed.
+After=panel-agent.service systemd-logind.service network-online.target
+Wants=panel-agent.service
+
+[Service]
+Type=simple
+User=panel
+Group=panel
+# PAMName+TTYPath registers this service as a real login session with
+# systemd-logind, which is what grants cage DRM/input device access without
+# hand-rolled udev rules. tty2 (not tty1) avoids conflicting with the
+# default getty@tty1 unit.
+PAMName=login
+TTYPath=/dev/tty2
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty2
+UtmpMode=user
+# Chromium needs a writable HOME for its profile. Set explicitly rather than
+# relying on the panel user having a home directory.
+Environment=HOME=/var/lib/panel-kiosk
+ExecStart=/usr/local/bin/panel-kiosk-launch
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

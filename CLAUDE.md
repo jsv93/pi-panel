@@ -26,7 +26,8 @@ Corollaries:
     agent/        Panel-side sync agent; also serves the UI over localhost
     panel-ui/     panel.html — the Pi panel UI (single file, vanilla JS)
                   backlight.py — localhost sysfs brightness helper (systemd)
-    esphome/      ESP32-P4 panel firmware (panel-poc.yaml)
+    pi-os/        Pi OS Lite kiosk boot: cage + systemd, no desktop session
+    esphome/      ESP32-P4 panel firmware (panel-poc.yaml) — retired, see below
     docs/         Architecture decisions and hardware findings
 
 ## Conventions
@@ -84,3 +85,14 @@ The measured position is that the ESP32-P4 panel is *usable* and the Pi 5 panel
 is *better*. Neither is blocked on silicon. Check `docs/P4-FINDINGS.md` before
 suggesting a board change — several plausible-sounding hardware theories were
 tested and disproved.
+
+## ESP32-P4: retired
+
+The fleet is Pi-only. `esphome/` is kept for reference and is not maintained.
+
+The reason was a **feature ceiling in LVGL versus a browser**, not silicon: no
+backdrop blur, no widgets built at runtime from pushed config (so applying a
+config change means a recompile), and no way to parse `browse_media` responses
+into a UI. The panels could not be made to match, and the gap was permanent.
+Do not read this as the P4 being incapable — `docs/P4-FINDINGS.md` says the
+opposite and stands.

@@ -32,31 +32,41 @@ Two consequences worth knowing:
 
 ## Kiosk
 
-Bookworm on a Pi 5 runs Wayland — labwc or wayfire depending on the release —
-so anything built on `xset`, `unclutter` or X11 autostart quirks is a dead end.
+The panel runs **Raspberry Pi OS Lite** with `cage`, not a desktop session.
+See `pi-os/README.md`. What follows is why, kept because the failures are
+instructive and none of them were obvious from the symptom.
 
-The launcher is installed as an **XDG autostart** entry
-(`~/.config/autostart/panel-kiosk.desktop`) rather than a compositor-specific
-file, because labwc, wayfire and X11 all honour it. That is the only reason it
-is portable across Pi OS releases.
+The desktop-session approach (autologin → labwc/wayfire → autostart entry) was
+abandoned after every one of these bit:
 
-`/usr/local/bin/panel-kiosk` does three things before starting Chromium:
+- **Which autostart mechanism fires varies by image.** XDG autostart worked on
+  this one; adding labwc's as a "fix" produced two launchers, which fought over
+  the browser and restarted the panel every five seconds. Seeding labwc's file
+  from `/etc/xdg` also started every desktop component twice — two task bars.
+- **Chromium is a singleton per profile.** After a session restart the previous
+  Chromium was still alive but detached from a dead compositor, so every
+  relaunch handed it the URL and exited. White screen, nothing in any log,
+  indistinguishable from the page failing to load.
+- **`pkill -f /usr/bin/chromium` matches nothing.** That path is a wrapper
+  script; the process holding the profile is `/usr/lib/chromium/chromium`.
+- **The compositor can vanish underneath it** — `Fatal Wayland communication
+  error: Broken pipe` — killing the browser with no supervisor to restart it.
 
-- Waits for `http://127.0.0.1:8088/panel.html` to answer. The desktop session
-  can start before the agent is listening, and Chromium would otherwise load
-  an error page and stay on it.
-- Rewrites `exit_type` in Chromium's `Preferences`. After a power cut Chromium
-  offers to restore pages, and that dialog parks itself on a panel with no
-  keyboard.
-- Points at the agent's localhost server, never `file://` — Chromium blocks
-  `fetch()` on `file://`, so `config.json` and `secrets.json` would never load.
+`cage` removes the category rather than patching it: one app, no session, no
+autologin, systemd supervising directly.
+
+Two things carried over into the cage launcher because they were real and are
+not compositor-specific:
+
+- The out-of-process network service crashed about a minute into every run,
+  leaving a blank page with the browser still up. `/dev/shm` (1.9G, 1% used),
+  memory and profile ownership were all ruled out. Runs in-process now.
+- Chromium's push-messaging client retries dead Google endpoints
+  (`DEPRECATED_ENDPOINT`) through that same service. Background networking is
+  disabled outright.
 
 The cursor is hidden by `cursor:none` in panel.html, so `unclutter` is not
 needed.
-
-Screen blanking is disabled through `raspi-config nonint do_blanking`, and
-autologin to the desktop through `do_boot_behaviour B4`. Both are set for the
-user who ran the install (`SUDO_USER`, falling back to uid 1000).
 
 ## systemd
 
