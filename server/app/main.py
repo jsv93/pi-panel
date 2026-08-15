@@ -252,6 +252,16 @@ UtmpMode=user
 # Chromium needs a writable HOME for its profile. Set explicitly rather than
 # relying on the panel user having a home directory.
 Environment=HOME=/var/lib/panel-kiosk
+# The pointer is drawn by cage, not by the page. A touch-only panel never
+# generates a pointer-enter event, so chromium is never asked for a cursor and
+# panel.html's `cursor:none` never gets the chance to apply -- cage's default
+# cursor just sits wherever it started. wlroots sizes its cursor from
+# XCURSOR_SIZE, so 1 makes it a single pixel.
+#
+# This is a workaround, not a fix: if a pointer device turns out not to exist
+# at all, the cursor should not be drawn in the first place and the answer is
+# elsewhere. Remove this line to see the cursor again while debugging.
+Environment=XCURSOR_SIZE=1
 ExecStart=/usr/local/bin/panel-kiosk-launch
 Restart=always
 RestartSec=2
