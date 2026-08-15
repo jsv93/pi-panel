@@ -225,6 +225,12 @@ Description=Panel kiosk (cage + chromium)
 # nothing at all because a dependency failed.
 After=panel-agent.service systemd-logind.service network-online.target
 Wants=panel-agent.service
+# tty1, and getty must not have it. logind only grants DRM master to the
+# session on the *active* VT, so a kiosk parked on tty2 while tty1 is
+# foreground starts, acquires nothing, and idles forever -- the unit reports
+# active (running) with Tasks: 0 and the console stays on screen.
+Conflicts=getty@tty1.service
+After=getty@tty1.service
 
 [Service]
 Type=simple
@@ -232,14 +238,16 @@ User=panel
 Group=panel
 # PAMName+TTYPath registers this service as a real login session with
 # systemd-logind, which is what grants cage DRM/input device access without
-# hand-rolled udev rules. tty2 (not tty1) avoids conflicting with the
-# default getty@tty1 unit.
+# hand-rolled udev rules.
 PAMName=login
-TTYPath=/dev/tty2
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
 StandardInput=tty
 StandardOutput=journal
 StandardError=journal
-UtmpIdentifier=tty2
+UtmpIdentifier=tty1
 UtmpMode=user
 # Chromium needs a writable HOME for its profile. Set explicitly rather than
 # relying on the panel user having a home directory.
@@ -297,6 +305,11 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
+# getty must release tty1. logind grants DRM master only to the session on the
+# active VT, so a kiosk sitting on tty2 behind a getty starts, acquires
+# nothing, and idles -- systemctl reports active (running) with Tasks: 0 while
+# the console stays on screen.
+systemctl disable --now getty@tty1.service 2>/dev/null || true
 systemctl enable panel-agent panel-backlight cage-kiosk
 # restart, not `enable --now`: --now does nothing to an already-running unit,
 # so a leftover agent from a previous install keeps its old PANEL_SERVER and

@@ -36,6 +36,9 @@ install -m 0755 "$SCRIPT_DIR/kiosk-launch.sh" /usr/local/bin/panel-kiosk-launch
 install -m 0644 "$SCRIPT_DIR/cage-kiosk.service" /etc/systemd/system/cage-kiosk.service
 
 systemctl daemon-reload
+# getty must release tty1: logind only grants DRM master to the session on the
+# active VT, so the kiosk has to own the foreground console, not sit behind it.
+systemctl disable --now getty@tty1.service 2>/dev/null || true
 systemctl enable cage-kiosk
 
 echo
