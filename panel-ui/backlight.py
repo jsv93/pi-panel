@@ -45,6 +45,22 @@ def find_device():
     return dev, (mx or 255)
 
 
+def blank(dev, on):
+    """Drive bl_power directly.
+
+    Writing brightness 0 is not the same as off on this panel -- it still
+    glows enough to be obvious in a dark room. bl_power uses the framebuffer
+    blanking levels: 0 is FB_BLANK_UNBLANK, 4 is FB_BLANK_POWERDOWN.
+    """
+    p = os.path.join(os.path.dirname(dev), "bl_power")
+    try:
+        if os.path.exists(p):
+            with open(p, "w") as f:
+                f.write("4" if on else "0")
+    except Exception:
+        pass
+
+
 def unblank(dev):
     """Clear bl_power before writing brightness.
 
@@ -92,10 +108,12 @@ class H(BaseHTTPRequestHandler):
                 v = int(q.get("v", ["255"])[0])
                 v = max(0, min(255, v))
                 scaled = round(v / 255 * mx)
-                unblank(dev)
                 with open(dev, "w") as f:
                     f.write(str(scaled))
-                ok, msg = True, f"{scaled}/{mx}"
+                # v=0 means off, not dim. Blank after writing so the panel does
+                # not flash at the new brightness on its way down.
+                blank(dev, v == 0)
+                ok, msg = True, ("off" if v == 0 else f"{scaled}/{mx}")
             except Exception as e:
                 msg = str(e)
         self.send_response(200 if ok else 500)

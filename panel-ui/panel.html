@@ -20,6 +20,10 @@ html,body{width:720px;height:1280px;overflow:hidden}
 body{background:linear-gradient(178deg,var(--bg-top) 0%,var(--bg-bot) 78%);
   color:var(--ink);font-family:"Roboto","Helvetica Neue",system-ui,sans-serif;font-weight:300;
   user-select:none;cursor:none}
+/* cursor is inherited, but be explicit: under cage a touch-only panel never
+   generates a pointer-enter event, so anything that reintroduces a cursor
+   never gets a chance to be told to hide it again. */
+*{cursor:none!important}
 /* no filter: a blurred 40px surface under backdrop-filter layers is the single
    most expensive thing on this page. Soft radial gradients look the same. */
 body::before{content:"";position:fixed;inset:0;pointer-events:none;
@@ -216,8 +220,9 @@ body.sheet-open #scrim{opacity:.55}
 #idle .clock{color:#4A4A52;padding:0}
 #idleMedia{margin-top:56px;display:flex;flex-direction:column;align-items:center;gap:14px}
 #idleMedia.hide{display:none}
-#idleMedia .art{width:92px;height:92px;background:#0C0C12;border-color:#1A1A22}
-#idleMedia .art svg{stroke:#2E2E38}
+/* No artwork on standby: it is the brightest thing on an otherwise black
+   screen and serves no purpose at a glance. Title and artist stay. */
+#idleMedia .art{display:none}
 #idleMedia .t{font-size:22px;color:#5A5A63} #idleMedia .a{font-size:19px;color:#3D3D46}
 #idle .hint{position:absolute;bottom:90px;font-size:19px;color:#24242C}
 
@@ -442,9 +447,15 @@ const _media   = CFG.media || {};
 const SPEAKERS = (_media.speakers||[]).map(s=>
   typeof s==="string" ? [s, s.split(".").pop()] : [s.entity_id, s.name || s.entity_id.split(".").pop()]);
 if(_media.default_speaker && !SPEAKERS.some(s=>s[0]===_media.default_speaker))
-  SPEAKERS.unshift([_media.default_speaker, _media.default_speaker.split(".").pop()]);
+  /* Falls back to the entity id's last segment only when nothing is named it.
+     That fallback used to be the only option, which is why panels showed
+     "lounge_room_tv" instead of "Lounge TV". */
+  SPEAKERS.unshift([_media.default_speaker,
+                    _media.default_speaker_name || _media.default_speaker.split(".").pop()]);
 const _disp    = CFG.display || {};
 const IDLE_MS  = (_disp.idle_timeout_s ?? 45) * 1000;
+/* Measured from when the panel goes idle, not from the last touch. 0 = never. */
+const OFF_MS   = (_disp.backlight_off_s ?? 0) * 1000;
 const BL_MIN   = _disp.backlight_min ?? 5;
 const BL_DEF   = _disp.backlight_default ?? 100;
 const GLASS_DEFAULT = _disp.glass_tier ?? 0;
@@ -572,12 +583,32 @@ function applyState(s){
     st.artist  = s.attributes.media_artist || s.attributes.media_series_title || s.attributes.app_name || "";
     if(typeof s.attributes.volume_level==="number") st.vol = Math.round(s.attributes.volume_level*100);
     st.dur = s.attributes.media_duration || 0;
-    /* Re-base on OUR clock every media update. HA's media_position_updated_at
-       is useless if the Pi's clock differs at all, and if the player never
-       reports a position we carry the extrapolated value forward rather than
-       leaving posAt stale (which is what pinned the counter to full length). */
-    const rp = s.attributes.media_position;
-    st.pos   = (typeof rp === "number") ? rp : curPos();
+    /* HA reports media_position as a snapshot taken at
+       media_position_updated_at, NOT as of now, and it only republishes it on
+       state changes. Treating it as current makes the counter lag by however
+       old the snapshot is -- and on the initial get_states that can be most of
+       the track, since the last update may have been when playback started.
+
+       The stamp is absolute, so it is only as good as the two clocks agreeing.
+       A negative or implausible age means they do not; fall back to treating
+       the snapshot as current rather than inventing an offset from bad data.
+       If the player reports no position at all we carry the extrapolated value
+       forward rather than leaving posAt stale. */
+    const rp   = s.attributes.media_position;
+    const rpAt = s.attributes.media_position_updated_at;
+    if(typeof rp === "number"){
+      let age = 0;
+      if(rpAt){
+        const t = Date.parse(rpAt);
+        if(!isNaN(t)){
+          const a = (Date.now() - t) / 1000;
+          if(a >= 0 && a < 86400) age = a;
+        }
+      }
+      st.pos = rp + (st.playing ? age : 0);
+    } else {
+      st.pos = curPos();
+    }
     st.posAt = Date.now();
     st.playlist = s.attributes.media_playlist || s.attributes.media_album_name || "";
     st.shuffle = !!s.attributes.shuffle;
@@ -956,11 +987,18 @@ async function checkLuna(){
 setInterval(checkLuna,30000); checkLuna();
 
 /* ---------- idle ---------- */
-let idleT;
+let idleT, offT;
 function bump(){
-  clearTimeout(idleT);
+  clearTimeout(idleT); clearTimeout(offT);
   if($("#idle").classList.contains("on")){ $("#idle").classList.remove("on"); setBacklight(st.bl); }
-  idleT = setTimeout(()=>{ $("#idle").classList.add("on"); setBacklight(Math.max(10,st.bl*0.25)); }, IDLE_MS);
+  idleT = setTimeout(()=>{
+    $("#idle").classList.add("on");
+    setBacklight(Math.max(10,st.bl*0.25));
+    /* Dimmed is not off: this panel still throws real light at its lowest
+       setting, which is no good on a bedroom wall. 0 blanks the backlight
+       outright rather than just writing a low brightness. */
+    if(OFF_MS > 0) offT = setTimeout(()=>setBacklight(0), OFF_MS);
+  }, IDLE_MS);
 }
 ["pointerdown","touchstart","keydown"].forEach(ev=>window.addEventListener(ev,bump,{passive:true}));
 $("#idle").addEventListener("click",bump);

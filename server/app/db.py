@@ -65,12 +65,15 @@ CREATE TABLE IF NOT EXISTS provisioning (
 DEFAULT_TEMPLATE = {
     "room_label": "Room",
     "lights": [],
-    "media": {"default_speaker": "", "speakers": []},
+    "media": {"default_speaker": "", "default_speaker_name": "", "speakers": []},
     "sensors": {"temperature": "", "humidity": ""},
     "display": {
         "idle_timeout_s": 45,
         "backlight_default": 100,
         "backlight_min": 5,
+        # Seconds after going idle before the backlight is blanked outright.
+        # 0 = never; dimming alone still glows noticeably on this panel.
+        "backlight_off_s": 0,
         "glass_tier": 0,
     },
     "connection": {"ha_url": "http://homeassistant.local:8123"},

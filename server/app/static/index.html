@@ -233,6 +233,8 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
         <div class="sect" data-s="media">
           <h2 style="margin-bottom:14px">Media</h2>
           <div><div class="lbl">DEFAULT SPEAKER</div><select id="fSpeaker"></select></div>
+          <div><div class="lbl">DEFAULT SPEAKER LABEL (shown on the panel)</div>
+            <input id="fSpeakerName" placeholder="defaults to the entity id"></div>
           <div class="lbl" style="margin-top:16px">SELECTABLE SPEAKERS</div>
           <div id="speakerList"></div>
           <button class="btn" style="margin-top:10px;color:var(--ok);border-color:rgba(93,202,165,.35)"
@@ -258,6 +260,8 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
           <div class="f2" style="margin-top:14px">
             <div><div class="lbl">BACKLIGHT DEFAULT %</div><input type="number" id="fBlDef"></div>
             <div><div class="lbl">BACKLIGHT MINIMUM %</div><input type="number" id="fBlMin"></div>
+            <div><div class="lbl">BACKLIGHT OFF AFTER (SECONDS IDLE, 0 = NEVER)</div>
+              <input type="number" id="fBlOff"></div>
           </div>
         </div>
 
@@ -431,11 +435,13 @@ async function openPanel(id){
   $("#fTemp").innerHTML = opts(ENTITIES.sensor, (CFG.sensors||{}).temperature);
   $("#fHum").innerHTML  = opts(ENTITIES.sensor, (CFG.sensors||{}).humidity);
   $("#fSpeaker").innerHTML = opts(ENTITIES.media, (CFG.media||{}).default_speaker);
+  $("#fSpeakerName").value = (CFG.media||{}).default_speaker_name || "";
   const d = CFG.display||{};
   $("#fIdle").value = d.idle_timeout_s ?? 45;
   $("#fGlass").value = d.glass_tier ?? 0;
   $("#fBlDef").value = d.backlight_default ?? 100;
   $("#fBlMin").value = d.backlight_min ?? 5;
+  $("#fBlOff").value = d.backlight_off_s ?? 0;
 
   $("#problems").innerHTML = (CUR.problems||[]).map(p=>
     `<div class="err">⚠ ${p.message}</div>`).join("");
@@ -508,10 +514,12 @@ $("#addSpeaker").onclick=()=>{
 function collect(){
   CFG.room_label = $("#fRoomLabel").value;
   CFG.connection = {...(CFG.connection||{}), ha_url:$("#fHaUrl").value};
-  CFG.media = {...(CFG.media||{}), default_speaker:$("#fSpeaker").value};
+  CFG.media = {...(CFG.media||{}), default_speaker:$("#fSpeaker").value,
+               default_speaker_name:$("#fSpeakerName").value.trim()};
   CFG.sensors = {temperature:$("#fTemp").value, humidity:$("#fHum").value};
   CFG.display = {idle_timeout_s:+$("#fIdle").value, glass_tier:+$("#fGlass").value,
-                 backlight_default:+$("#fBlDef").value, backlight_min:+$("#fBlMin").value};
+                 backlight_default:+$("#fBlDef").value, backlight_min:+$("#fBlMin").value,
+                 backlight_off_s:+$("#fBlOff").value};
   return CFG;
 }
 $("#saveBtn").onclick = async ()=>{
