@@ -65,8 +65,8 @@ not compositor-specific:
   (`DEPRECATED_ENDPOINT`) through that same service. Background networking is
   disabled outright.
 
-The cursor is hidden by `cursor:none` in panel.html, so `unclutter` is not
-needed.
+The cursor is dealt with by a udev rule, not by CSS and not by `unclutter` —
+see "The cursor that would not go away" below.
 
 ## systemd
 
