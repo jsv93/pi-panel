@@ -626,7 +626,6 @@ function showProvisionCommand(r, opts={}){
     async ()=>{
       try{ await navigator.clipboard.writeText(r.command); toast("Command copied"); }
       catch(e){ toast("Copy it from the box above"); }
-      if(opts.thenConfigure) openPanel(r.panel_id);
     });
   $("#mOk").textContent = "Copy";
 }
