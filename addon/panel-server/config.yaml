@@ -1,0 +1,37 @@
+name: Panel Config Server
+slug: panel_server
+version: "0.1.0"
+description: Configure and monitor the wall panel fleet
+url: https://github.com/jsv93/pi-panel
+arch:
+  - amd64
+  - aarch64
+startup: services
+boot: auto
+
+# The GUI appears in Home Assistant's sidebar, behind HA's own auth.
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:tablet-dashboard
+
+# On the LAN rather than behind Docker's bridge, so .local names and multicast
+# behave the same way they do in the standalone deployment. It also means the
+# server answers directly on :8099, which is how panels reach it -- ingress is
+# for the operator only and a panel cannot use it.
+host_network: true
+
+# Removes HA_URL and HA_TOKEN entirely: the Supervisor injects a token and
+# proxies the core API, so there is nothing to configure and nothing to get
+# wrong. Those two settings caused more silent failures than anything else in
+# this project.
+homeassistant_api: true
+
+options:
+  admin_password: ""
+  panel_url: ""
+schema:
+  # Still required despite ingress: host_network means :8099 is reachable
+  # directly on the LAN, bypassing Home Assistant's authentication.
+  admin_password: password?
+  # Only needed if the address panels should use differs from the host's own.
+  panel_url: str?

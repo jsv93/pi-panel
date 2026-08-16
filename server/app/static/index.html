@@ -174,6 +174,24 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
     </div>
 
     <div class="card" style="padding:18px;margin-top:14px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+        <h2>How panels reach this server</h2>
+        <span class="pill" id="sPanelUrlSrc"></span>
+      </div>
+      <p class="muted" style="font-size:13px">
+        Baked into provisioning commands and <code>firstrun.sh</code>, so it has to be
+        an address the <i>panel</i> can fetch. Normally that is whatever address you
+        are using and there is nothing to set. Behind Home Assistant ingress it is
+        not: your browser reaches this through HA, and a panel cannot.
+      </p>
+      <div style="margin-top:12px">
+        <div class="lbl">PANEL-FACING ADDRESS</div>
+        <input id="sPanelUrl" placeholder="leave blank to use the address you are on">
+      </div>
+      <div style="margin-top:12px"><button class="btn primary" id="sSavePanelUrlBtn">Save</button></div>
+    </div>
+
+    <div class="card" style="padding:18px;margin-top:14px">
       <h2 style="margin-bottom:8px">Panel access key</h2>
       <p class="muted" style="font-size:13px">
         Paste this into Raspberry Pi Imager's advanced options when flashing a panel
@@ -322,8 +340,14 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
 
 <script>
 const $ = s => document.querySelector(s);
+/* Everything the admin UI requests is relative to where this page was served
+   from, never absolute. Home Assistant ingress serves the app under
+   /api/hassio_ingress/<token>/, so an absolute /api/... escapes the ingress
+   path and 404s against HA itself. Standalone this resolves to "/" and nothing
+   changes. */
+const BASE = location.pathname.replace(/\/[^/]*$/, "/");
 const api = async (path, opts={}) => {
-  const r = await fetch("/api"+path, {credentials:"same-origin",
+  const r = await fetch(BASE+"api"+path, {credentials:"same-origin",
     headers:{"Content-Type":"application/json"}, ...opts});
   if(r.status===401){ show("#login"); throw new Error("auth"); }
   if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.statusText);
@@ -702,7 +726,7 @@ function showProvisionCommand(r, opts={}){
   $("#mOk").textContent = "Finish";
   $("#provCopyBtn").onclick = ()=>copyText(r.command);
   $("#fbDownloadBtn").onclick = async ()=>{
-    const resp = await fetch(`/api/provision/${r.token}/firstrun`,{
+    const resp = await fetch(`${BASE}api/provision/${r.token}/firstrun`,{
       method:"POST", credentials:"same-origin",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({hostname:$("#fbHostname").value.trim(),
@@ -765,7 +789,7 @@ function showProvisionCommand(r, opts={}){
       /* Read the response as it arrives rather than awaiting the whole thing:
          apt, chromium and cage take minutes, and a dialog showing nothing for
          that long cannot be told apart from one that has hung. */
-      const resp = await fetch(`/api/provision/${r.token}/run`,{
+      const resp = await fetch(`${BASE}api/provision/${r.token}/run`,{
         method:"POST", credentials:"same-origin",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({host, user, hostname:$("#sshHostname").value.trim(),
@@ -838,6 +862,10 @@ async function loadSettings(){
     ? `<div class="warn">The admin password is still the shipped default. Anyone who can
        reach this server can sign in and reconfigure every panel.</div>` : "";
   $("#sSshKey").textContent = s.ssh_public_key || "–";
+  $("#sPanelUrl").value = s.panel_url || "";
+  pill($("#sPanelUrlSrc"),
+       s.panel_url_source==="request" ? "using this address" : srcNote(s.panel_url_source),
+       s.panel_url_source==="request" ? "" : "ok");
   const inf = s.server;
   $("#sServerInfo").innerHTML = `
     <div class="f2">
@@ -856,6 +884,10 @@ async function loadSettings(){
     </div>`;
 }
 $("#sCopyKeyBtn").onclick = ()=>copyText($("#sSshKey").textContent.trim());
+$("#sSavePanelUrlBtn").onclick = async ()=>{
+  await api("/settings",{method:"PUT",body:JSON.stringify({panel_url:$("#sPanelUrl").value})});
+  toast("Saved"); loadSettings();
+};
 $("#sTestBtn").onclick = async ()=>{
   const box = $("#sHaResult");
   box.innerHTML = `<div class="muted" style="margin-top:12px">Testing…</div>`;
@@ -900,7 +932,7 @@ $("#sSavePwBtn").onclick = async ()=>{
 /* ---------------- preview ---------------- */
 $("#previewBtn").onclick = ()=>{
   const f = $("#previewFrame");
-  f.src = `/preview/panel.html?preview=1&panel=${encodeURIComponent(CUR.panel.id)}`;
+  f.src = `${BASE}preview/panel.html?preview=1&panel=${encodeURIComponent(CUR.panel.id)}`;
   $("#previewWrap").classList.add("on");
 };
 $("#pvClose").onclick = ()=>{ $("#previewWrap").classList.remove("on"); $("#previewFrame").src="about:blank"; };

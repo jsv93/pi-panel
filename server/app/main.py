@@ -26,6 +26,9 @@ PBKDF2_ROUNDS = 200_000
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 UI_DIR = os.environ.get("PANEL_UI_DIR", "/data/ui")   # holds panel.html for preview
 BUNDLE_DIR = os.environ.get("PANEL_BUNDLE_DIR", "/data/bundle")  # panel.html, agent, backlight
+# Only needed where the operator reaches the server by a different address than
+# the panels do — in practice, behind Home Assistant ingress.
+PANEL_URL = os.environ.get("PANEL_URL", "").rstrip("/")
 
 # Generated per panel. Markers rather than str.format: the script is full of
 # bash ${...} and heredocs that would fight with brace formatting.
@@ -693,7 +696,18 @@ async def entities(domain: str = "", q: str = ""):
 
 # ---------------------------------------------------------------- provisioning
 def _server_url(request: Request) -> str:
-    return str(request.base_url).rstrip("/")
+    """The address a *panel* uses to reach this server.
+
+    Not the same as the address the operator is using. Under Home Assistant
+    ingress the admin request arrives through HA's proxy, so request.base_url
+    is an ingress URL: it requires HA auth and is internal to HA, so a panel
+    handed it can never fetch anything. PANEL_URL, set from the add-on's
+    options, is that deployment's answer.
+
+    Anywhere else the request's own base URL is right and needs no configuring.
+    """
+    return (db.get_setting("panel_url") or PANEL_URL
+            or str(request.base_url).rstrip("/")).rstrip("/")
 
 
 @app.post("/api/provision", dependencies=[Depends(require_admin)])
@@ -873,6 +887,9 @@ async def get_settings():
             not db.get_setting("admin_password_hash") and ADMIN_PASSWORD in WEAK_DEFAULTS
         ),
         "ssh_public_key": ssh.public_key(),
+        "panel_url": db.get_setting("panel_url") or PANEL_URL,
+        "panel_url_source": ("settings" if db.get_setting("panel_url")
+                             else "env" if PANEL_URL else "request"),
         "server": {
             "db_path": db.DB_PATH,
             "ui_dir": UI_DIR,
@@ -893,6 +910,12 @@ async def put_settings(request: Request):
             db.set_setting("ha_url", v)
         else:
             db.clear_setting("ha_url")
+    if "panel_url" in b:
+        v = (b.get("panel_url") or "").strip().rstrip("/")
+        if v:
+            db.set_setting("panel_url", v)
+        else:
+            db.clear_setting("panel_url")
     if b.get("clear_ha_token"):
         db.clear_setting("ha_token")
     elif (b.get("ha_token") or "").strip():

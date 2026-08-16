@@ -23,21 +23,40 @@ CACHE_S = 30
 _last_error = ""
 
 
+def _supervisor():
+    """Running as a Home Assistant add-on with homeassistant_api: true.
+
+    The Supervisor injects a token and proxies the core API, so there is
+    nothing to configure — which removes the pair of settings responsible for
+    more silent failures on this project than anything else.
+    """
+    return os.environ.get("SUPERVISOR_TOKEN", "")
+
+
 def url():
-    """Stored setting wins; env is the bootstrap default for a fresh deploy."""
-    return (db.get_setting("ha_url") or os.environ.get("HA_URL", "")).rstrip("/")
+    """Stored setting wins; then env; then the Supervisor's proxy."""
+    v = db.get_setting("ha_url") or os.environ.get("HA_URL", "")
+    if not v and _supervisor():
+        v = "http://supervisor/core"
+    return v.rstrip("/")
 
 
 def token():
-    return db.get_setting("ha_token") or os.environ.get("HA_TOKEN", "")
+    return (db.get_setting("ha_token") or os.environ.get("HA_TOKEN", "")
+            or _supervisor())
 
 
 def source():
     """Where each value is coming from, so the GUI can say so."""
-    return {
-        "ha_url": "settings" if db.get_setting("ha_url") else ("env" if os.environ.get("HA_URL") else "unset"),
-        "ha_token": "settings" if db.get_setting("ha_token") else ("env" if os.environ.get("HA_TOKEN") else "unset"),
-    }
+    def where(key, env):
+        if db.get_setting(key):
+            return "settings"
+        if os.environ.get(env):
+            return "env"
+        return "supervisor" if _supervisor() else "unset"
+
+    return {"ha_url": where("ha_url", "HA_URL"),
+            "ha_token": where("ha_token", "HA_TOKEN")}
 
 
 def configured():
