@@ -965,14 +965,32 @@ function paintAll(){
 }
 
 /* ---------- glass tier ---------- */
+/* The on-panel toggle persists so it survives a reload, but a value pushed
+   from the server has to win -- otherwise the first person to touch the toggle
+   locks the setting out of the config forever, which is exactly what happened.
+   Remember which config value the local override was made against: if that has
+   since changed, the server has spoken more recently and the override is
+   stale. */
 let glassTier = GLASS_DEFAULT;
-try{ const v = localStorage.getItem("glassTier"); if(v!==null) glassTier = parseInt(v); }catch(e){}
+try{
+  const v = localStorage.getItem("glassTier");
+  const base = localStorage.getItem("glassBase");
+  if(v !== null && base !== null && parseInt(base) === GLASS_DEFAULT){
+    glassTier = parseInt(v);
+  } else {
+    localStorage.removeItem("glassTier");
+    localStorage.setItem("glassBase", GLASS_DEFAULT);
+  }
+}catch(e){}
 function applyGlass(){
   document.body.classList.remove("ng-sheets","ng-nav","ng-tiles");
   const t = GLASS_TIERS[glassTier % GLASS_TIERS.length];
   if(t.cls) t.cls.split(" ").forEach(c=>document.body.classList.add(c));
   const el = $("#glassV"); if(el) el.textContent = t.name;
-  try{ localStorage.setItem("glassTier", glassTier); }catch(e){}
+  try{
+    localStorage.setItem("glassTier", glassTier);
+    localStorage.setItem("glassBase", GLASS_DEFAULT);
+  }catch(e){}
 }
 const gr = $("#glassRow");
 if(gr) gr.addEventListener("click",()=>{ glassTier = (glassTier+1) % GLASS_TIERS.length; applyGlass(); bump(); });

@@ -186,6 +186,7 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
       <h1 id="dTitle">panel</h1>
       <span class="pill" id="dTemplate" style="color:var(--violet);background:rgba(138,138,240,.13)"></span>
       <div style="margin-left:auto;display:flex;gap:8px">
+        <button class="btn" id="setupCmdBtn" style="display:none">Setup command</button>
         <button class="btn" id="previewBtn">Preview</button>
         <button class="btn" id="revertBtn">Revert</button>
         <button class="btn primary" id="saveBtn">Save &amp; push</button>
@@ -466,6 +467,8 @@ async function openPanel(id){
     await api(`/panels/${CUR.panel.id}/rollback`,{method:"POST",body:JSON.stringify({version:+b.dataset.rb})});
     toast("Rolled back"); openPanel(CUR.panel.id);
   });
+  /* Only meaningful before the hardware has run the command. */
+  $("#setupCmdBtn").style.display = (await pendingTokenFor(id)) ? "" : "none";
 }
 $("#backBtn").onclick=()=>{ $("#detailView").style.display="none"; $("#fleetView").style.display="block"; loadFleet(); };
 document.querySelectorAll("#sectNav div[data-s]").forEach(n=>n.onclick=()=>{
@@ -583,33 +586,49 @@ $("#addPanelBtn").onclick = async ()=>{
      <input id="provLabel" placeholder="defaults to the room name">
      <div class="lbl" style="margin-top:12px">TEMPLATE</div>
      <select id="provTpl">${tpls.map(t=>`<option value="${t.name}">${t.name}</option>`).join("")}</select>
-     <p class="muted" style="margin-top:12px;font-size:13px">You will get a one-time
-       command to run on the Pi. It sets the hostname, installs the agent and the
-       panel UI, and asks for the Home Assistant token on the Pi itself.</p>`,
+     <p class="muted" style="margin-top:12px;font-size:13px">The panel's lights,
+       speakers and sensors are set on the next screen. Finish those before running
+       the command on the Pi and it arrives fully configured — the agent fetches the
+       current config when it first registers, so there is nothing to push afterwards.</p>`,
     async ()=>{
       const room = $("#provRoom").value.trim();
       if(!room){ toast("Room is required"); return; }
       const r = await api("/provision",{method:"POST",body:JSON.stringify({
         room, room_label:$("#provLabel").value.trim(), template:$("#provTpl").value})});
-      showProvisionCommand(r);
+      showProvisionCommand(r, {thenConfigure:true});
       loadFleet();
     });
 };
-function showProvisionCommand(r){
+function showProvisionCommand(r, opts={}){
   confirmModal("Run this on the Pi",
     `<p class="muted" style="font-size:13px">Panel <b>${r.panel_id}</b> is created and
-      waiting. Run this on a fresh Raspberry Pi OS install:</p>
+      waiting. Run this on a fresh Raspberry Pi OS <b>Lite</b> install:</p>
      <pre id="provCmd" style="margin-top:12px;padding:14px;border-radius:8px;
        background:#0d0d12;border:1px solid var(--line2);font-size:13px;
        white-space:pre-wrap;word-break:break-all">${r.command}</pre>
-     <div class="warn">The token works once. If you lose it, add the panel again —
-       the half-created record can be removed from the fleet.</div>`,
+     ${opts.thenConfigure ? `<p class="muted" style="margin-top:12px;font-size:13px">
+       Copying takes you to this panel's configuration. Set it up there first and the
+       Pi will pick it all up on its first sync.</p>` : ""}
+     <div class="warn">The token works once, but stays valid until it is used —
+       reachable again from this panel's <b>Setup command</b> button.</div>`,
     async ()=>{
       try{ await navigator.clipboard.writeText(r.command); toast("Command copied"); }
       catch(e){ toast("Copy it from the box above"); }
+      if(opts.thenConfigure) openPanel(r.panel_id);
     });
   $("#mOk").textContent = "Copy";
 }
+/* Retrievable rather than one-shot: the command is only useful once the room is
+   configured, which is deliberately after the panel record exists. */
+async function pendingTokenFor(id){
+  try{ return (await api("/provision")).find(t=>t.panel_id===id) || null; }
+  catch(e){ return null; }
+}
+$("#setupCmdBtn").onclick = async ()=>{
+  const t = await pendingTokenFor(CUR.panel.id);
+  if(!t){ toast("This panel has already been provisioned"); return; }
+  showProvisionCommand(t);
+};
 
 /* ---------------- settings ---------------- */
 function showSettings(on){
