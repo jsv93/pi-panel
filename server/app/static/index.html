@@ -530,8 +530,17 @@ $("#saveBtn").onclick = async ()=>{
   await api(`/panels/${CUR.panel.id}/claim`,{method:"POST",body:JSON.stringify({
     room:$("#fRoom").value, template:$("#fTemplate").value, room_label:CFG.room_label})});
   const r = await api(`/panels/${CUR.panel.id}/config`,{method:"PUT",body:JSON.stringify(body)});
-  toast(r.pushed ? `Saved v${r.version} — pushed` : `Saved v${r.version} — panel offline, will sync`);
-  openPanel(CUR.panel.id);
+  const id = CUR.panel.id;
+  await openPanel(id);
+  /* The command is offered here, after a save, rather than when the record is
+     created. Handing it over first invites running it first, and a panel that
+     registers before its room is configured needs a second push to catch up. */
+  const pending = await pendingTokenFor(id);
+  if(pending && !CUR.panel.last_seen){
+    showProvisionCommand(pending, {configured:true});
+  } else {
+    toast(r.pushed ? `Saved v${r.version} — pushed` : `Saved v${r.version} — panel offline, will sync`);
+  }
 };
 $("#revertBtn").onclick = ()=>openPanel(CUR.panel.id);
 
@@ -586,17 +595,20 @@ $("#addPanelBtn").onclick = async ()=>{
      <input id="provLabel" placeholder="defaults to the room name">
      <div class="lbl" style="margin-top:12px">TEMPLATE</div>
      <select id="provTpl">${tpls.map(t=>`<option value="${t.name}">${t.name}</option>`).join("")}</select>
-     <p class="muted" style="margin-top:12px;font-size:13px">The panel's lights,
-       speakers and sensors are set on the next screen. Finish those before running
-       the command on the Pi and it arrives fully configured — the agent fetches the
-       current config when it first registers, so there is nothing to push afterwards.</p>`,
+     <p class="muted" style="margin-top:12px;font-size:13px">Next you will configure
+       the room's lights, speakers and sensors. The command to run on the Pi is
+       handed over after you save that — the panel then arrives fully configured
+       rather than needing a second push.</p>`,
     async ()=>{
       const room = $("#provRoom").value.trim();
       if(!room){ toast("Room is required"); return; }
       const r = await api("/provision",{method:"POST",body:JSON.stringify({
         room, room_label:$("#provLabel").value.trim(), template:$("#provTpl").value})});
-      showProvisionCommand(r, {thenConfigure:true});
-      loadFleet();
+      /* Straight into configuration. The command is deliberately not shown yet:
+         it comes after Save & push, so it cannot be run against an unconfigured
+         panel. Setup command re-shows it at any point before the Pi uses it. */
+      toast("Panel created — configure it, then save");
+      openPanel(r.panel_id);
     });
 };
 function showProvisionCommand(r, opts={}){
@@ -606,9 +618,9 @@ function showProvisionCommand(r, opts={}){
      <pre id="provCmd" style="margin-top:12px;padding:14px;border-radius:8px;
        background:#0d0d12;border:1px solid var(--line2);font-size:13px;
        white-space:pre-wrap;word-break:break-all">${r.command}</pre>
-     ${opts.thenConfigure ? `<p class="muted" style="margin-top:12px;font-size:13px">
-       Copying takes you to this panel's configuration. Set it up there first and the
-       Pi will pick it all up on its first sync.</p>` : ""}
+     ${opts.configured ? `<p class="muted" style="margin-top:12px;font-size:13px">
+       This panel's configuration is saved, so the Pi will pick it up on its first
+       sync — nothing to push afterwards.</p>` : ""}
      <div class="warn">The token works once, but stays valid until it is used —
        reachable again from this panel's <b>Setup command</b> button.</div>`,
     async ()=>{
