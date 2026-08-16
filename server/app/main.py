@@ -89,6 +89,17 @@ fi
 
 # Identity comes from the server, not the hostname, so renaming this Pi later
 # does not strand its record and create a duplicate.
+#
+# If the id changed, the config on disk belongs to a different panel record and
+# describes another room's lights and speakers. Drop it: the new record starts
+# at version 1, so an agent comparing versions would otherwise consider the
+# stale config current. secrets.json is kept -- same hardware, same Home
+# Assistant, and the token is not identity-specific.
+OLD_ID=$(cat /opt/panel/panel-id 2>/dev/null || true)
+if [ -n "$OLD_ID" ] && [ "$OLD_ID" != "$PANEL_ID" ]; then
+  rm -f /opt/panel/current/config.json
+  echo "    cleared config left over from $OLD_ID"
+fi
 echo "$PANEL_ID" > /opt/panel/panel-id
 
 if [ ! -f /opt/panel/current/secrets.json ]; then

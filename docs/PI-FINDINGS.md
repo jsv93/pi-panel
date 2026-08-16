@@ -134,3 +134,24 @@ The fix is to stop libinput seeing those devices at all, via
     SUBSYSTEM=="input", ATTRS{name}=="vc4-hdmi*", ENV{LIBINPUT_IGNORE_DEVICE}="1"
 
 `libinput` itself is in `libinput-tools`, which Lite does not install.
+
+## Re-provisioning an existing panel
+
+Re-provisioning issues a **new** panel id, so the server's config for it starts
+again at version 1. The config already on the Pi belongs to the old record and
+is typically at a higher version.
+
+The agent used to skip a sync when the server's version was `<=` the local one,
+which meant a re-provisioned panel kept showing the previous room's lights and
+speakers and ignored every subsequent push — while the GUI correctly showed
+nothing assigned. Nothing logged an error; both halves believed they were right.
+
+Two changes, either of which fixes it, kept together because they fail
+independently:
+
+- The bootstrap deletes `config.json` when the id on disk differs from the id
+  being provisioned. `secrets.json` is kept: same hardware, same Home
+  Assistant, and the token is not identity-specific.
+- The agent compares versions with `!=` rather than `<=`. A lower version on
+  the server does not mean the panel is ahead; it means the record was
+  replaced.

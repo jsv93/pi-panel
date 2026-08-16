@@ -125,7 +125,12 @@ async def sync(client, force=False):
     if not cfg.get("_claimed"):
         print("[agent] not claimed yet")
         return False
-    if not force and cfg.get("_version", 0) <= local_version():
+    # Not `<=`. A lower version on the server does not mean "we are ahead", it
+    # means the record was replaced -- re-provisioning issues a new panel id
+    # whose config starts at version 1, while the config on disk may be at 5.
+    # Treating that as up to date leaves the panel showing the old room's
+    # lights forever and silently ignoring every future push.
+    if not force and cfg.get("_version", 0) == local_version():
         return False
     if await write_config(cfg):
         n = await reload_ui()
