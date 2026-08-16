@@ -3,6 +3,13 @@ slug: panel_server
 version: "0.1.0"
 description: Configure and monitor the wall panel fleet
 url: https://github.com/jsv93/pi-panel
+
+# Prebuilt in CI and pulled, rather than built on the Home Assistant host.
+# Building here would compile cryptography on the HAOS VM on every update.
+# {arch} is substituted by the Supervisor; the tag is the version above, so
+# the two have to be bumped together.
+image: ghcr.io/jsv93/pi-panel-server-{arch}
+
 arch:
   - amd64
   - aarch64
@@ -15,15 +22,14 @@ ingress_port: 8099
 panel_icon: mdi:tablet-dashboard
 
 # On the LAN rather than behind Docker's bridge, so .local names and multicast
-# behave the same way they do in the standalone deployment. It also means the
-# server answers directly on :8099, which is how panels reach it -- ingress is
-# for the operator only and a panel cannot use it.
+# behave as they do standalone. It also means the server answers directly on
+# :8099, which is how panels reach it -- ingress is for the operator only and
+# a panel cannot use it.
 host_network: true
 
 # Removes HA_URL and HA_TOKEN entirely: the Supervisor injects a token and
 # proxies the core API, so there is nothing to configure and nothing to get
-# wrong. Those two settings caused more silent failures than anything else in
-# this project.
+# wrong. Those two caused more silent failures than anything else here.
 homeassistant_api: true
 
 options:
