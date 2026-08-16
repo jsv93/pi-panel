@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from starlette.concurrency import run_in_threadpool
 
-from . import db, ha, ssh
+from . import db, firstboot, ha, ssh
 
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme")
 WEAK_DEFAULTS = {"changeme", "change-me", ""}
@@ -766,6 +766,31 @@ async def provision_run(token: str, request: Request):
 
     return StreamingResponse(pump(), media_type="text/plain; charset=utf-8",
                              headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store"})
+
+
+@app.post("/api/provision/{token}/firstrun", dependencies=[Depends(require_admin)])
+async def provision_firstrun(token: str, request: Request):
+    """The SD-card drop-in for this panel.
+
+    Deliberately does not consume the token: the file is generated before the
+    card is even flashed, and the token is spent when the panel fetches
+    bootstrap.sh on first boot.
+    """
+    b = await request.json()
+    pending = [t for t in db.pending_tokens() if t["token"] == token]
+    if not pending:
+        raise HTTPException(404, "unknown or already-used token")
+    body = firstboot.render(
+        panel_id=pending[0]["panel_id"],
+        hostname=(b.get("hostname") or "").strip(),
+        ssh_user=(b.get("ssh_user") or "").strip(),
+        ssh_key=ssh.public_key(),
+        server=_server_url(request),
+        token=token,
+        ha_token=b.get("ha_token") or "",
+    )
+    return Response(content=body, media_type="text/x-shellscript", headers={
+        "Content-Disposition": 'attachment; filename="firstrun.sh"'})
 
 
 @app.post("/api/scan", dependencies=[Depends(require_admin)])

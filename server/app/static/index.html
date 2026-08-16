@@ -656,6 +656,26 @@ function showProvisionCommand(r, opts={}){
        sync — nothing to push afterwards.</p>` : ""}
      <div class="warn">The token works once, but stays valid until it is used —
        reachable again from this panel's <b>Setup command</b> button.</div>
+     <h2 style="margin-top:22px;font-size:20px">Or set it up from the SD card</h2>
+     <p class="muted" style="font-size:13px;margin-top:6px">
+       Nothing to find and no SSH: the panel provisions itself on first boot. Flash
+       Raspberry Pi OS <b>Lite</b>, then drop this file onto the small boot partition
+       that appears — it sets the hostname, installs the server's key, and installs
+       the panel. Needs Ethernet; the boot-time hook runs before wifi exists.</p>
+     <div class="f2" style="margin-top:12px">
+       <div><div class="lbl">HOSTNAME TO SET</div>
+         <input id="fbHostname" placeholder="${r.panel_id}"></div>
+       <div><div class="lbl">LOGIN USER TO CREATE</div>
+         <input id="fbUser" placeholder="panel-admin"></div>
+     </div>
+     <div class="muted" style="font-size:12px;margin-top:6px">Key-only login, no
+       password — a way in if something goes wrong, without a password on the wall.
+       The Home Assistant token from the SSH section below is included if set.</div>
+     <div style="margin-top:12px;display:flex;gap:8px">
+       <button class="btn primary" id="fbDownloadBtn">Download firstrun.sh</button>
+     </div>
+     <div id="fbNote" style="display:none;margin-top:12px"></div>
+
      <h2 style="margin-top:22px;font-size:20px">Or install it from here</h2>
      <p class="muted" style="font-size:13px;margin-top:6px">Needs the server's SSH key
        on the panel — Settings shows the key to paste into Raspberry Pi Imager.</p>
@@ -681,6 +701,31 @@ function showProvisionCommand(r, opts={}){
     async ()=>{});
   $("#mOk").textContent = "Finish";
   $("#provCopyBtn").onclick = ()=>copyText(r.command);
+  $("#fbDownloadBtn").onclick = async ()=>{
+    const resp = await fetch(`/api/provision/${r.token}/firstrun`,{
+      method:"POST", credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({hostname:$("#fbHostname").value.trim(),
+                           ssh_user:$("#fbUser").value.trim(),
+                           ha_token:$("#sshToken").value})});
+    if(!resp.ok){ toast("Could not generate the file"); return; }
+    const blob = await resp.blob(), a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "firstrun.sh";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+    /* The cmdline.txt caveat only matters for people who skip Imager's
+       customisation entirely, so it is shown after the download rather than
+       cluttering the form for everyone. */
+    $("#fbNote").style.display = "block";
+    $("#fbNote").innerHTML = `<div class="warn">Copy <b>firstrun.sh</b> to the boot
+      partition, then boot the panel. It provisions itself and reboots into the UI;
+      the log lands at <code>/boot/firmware/panel-firstrun.log</code>.<br><br>
+      If you flashed <i>without</i> using Imager's customisation, also append this to
+      the single line in <code>cmdline.txt</code> — Imager normally adds it for you:<br>
+      <code style="word-break:break-all">systemd.run=/boot/firmware/firstrun.sh
+      systemd.run_success_action=reboot systemd.unit=kernel-command-line.target</code></div>`;
+    toast("firstrun.sh downloaded");
+  };
   $("#sshScanBtn").onclick = async ()=>{
     const box = $("#sshScanOut"), btn = $("#sshScanBtn");
     btn.disabled = true; btn.textContent = "Scanning…";

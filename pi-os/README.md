@@ -26,6 +26,28 @@ one app fullscreen, exit when it exits". On Pi OS Lite there is no session to
 restart, no compositor to drop out, and nothing else contesting the display.
 systemd supervises it directly.
 
+## Getting a panel onto the wall
+
+Three routes, in order of least work:
+
+1. **SD-card drop-in.** The GUI generates a `firstrun.sh` for that specific
+   panel; copy it onto the boot partition after flashing. On first boot the
+   panel sets its hostname, installs the server's key, provisions itself and
+   reboots into the UI. Nothing to discover, no SSH, no IP.
+2. **Install over SSH** from the GUI, for a panel already booted and reachable.
+   **Find panels on the network** locates it without going to the router.
+3. **The command by hand**, for when something has gone wrong and you want to
+   watch it happen.
+
+All three run the same bootstrap and consume the same one-time token, so there
+is one provisioning path however it is triggered.
+
+The drop-in needs **Ethernet**: `firstrun.sh` runs under
+`systemd.unit=kernel-command-line.target`, before networking exists, which is
+why it defers the actual provisioning to a oneshot unit that runs after the
+reboot rather than fetching anything itself. Wifi would need to be configured
+by Imager separately.
+
 ## Prerequisites
 
 - Raspberry Pi OS **Lite** (64-bit) — flash this, not the Desktop image
