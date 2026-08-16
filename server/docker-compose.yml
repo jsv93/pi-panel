@@ -3,8 +3,15 @@ services:
     build: .
     container_name: panel-server
     restart: unless-stopped
-    ports:
-      - "8099:8099"
+    # Host networking, so the server sits on the LAN rather than behind Docker's
+    # bridge. That bridge is what stopped .local names resolving — for panels,
+    # and for HA_URL — because multicast does not cross it. The server still
+    # answers on :8099; there is no port mapping because there is no NAT.
+    #
+    # The trade is isolation: the container can now reach anything the host can.
+    # It already holds an SSH key that can root a panel being provisioned and a
+    # Home Assistant token, so keep it off any interface facing the internet.
+    network_mode: host
     volumes:
       - ./data:/data          # panels.db + ui/panel.html for preview
     # Config lives in .env, which is gitignored — this file is tracked, so a

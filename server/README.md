@@ -27,6 +27,21 @@ the env var, and the page says which of the two is in force. Settings has a
 than guessing at an empty dropdown, which is what a bad URL or token looks
 like from the outside.
 
+## Networking
+
+The container runs with `network_mode: host`, so it sits on the LAN rather
+than behind Docker's bridge. That bridge is what stopped `.local` names
+resolving — multicast does not cross it — which affected both `HA_URL` and
+addressing panels by hostname.
+
+Consequences worth knowing:
+
+- No port mapping. The server binds `:8099` on the host directly, so anything
+  else wanting that port will collide.
+- No network isolation. The container can reach whatever the host can. It
+  holds a Home Assistant token and an SSH key that can root a panel during
+  provisioning, so it should not be exposed beyond the LAN.
+
 The env vars are still read at import, so changing *those* needs
 `docker compose up -d` rather than `restart`.
 
