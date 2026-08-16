@@ -133,9 +133,11 @@ def bootstrap_lines(host, user, url, hostname="", ha_token="", port=22, timeout=
     except Exception as e:
         hint = ""
         if isinstance(e, socket.gaierror) or "gaierror" in e.__class__.__name__:
-            hint = ("\n\nThe server runs in a container, where .local names do not "
-                    "resolve — mDNS does not cross that boundary. Use the panel's "
-                    "IP address instead.")
+            hint = ("\n\nUse the panel's IP address. Host networking lets the server "
+                    "reach the LAN, but resolving a .local name also needs an mDNS "
+                    "resolver inside the container, and this image has none — "
+                    "getaddrinfo asks DNS, which knows nothing about .local. "
+                    "Find panels on the network lists addresses to pick from.")
         yield f"Could not reach {user}@{host}: {e.__class__.__name__}: {e}{hint}\n"
         yield DONE + "1 ===\n"
         return
