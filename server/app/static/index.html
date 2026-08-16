@@ -174,6 +174,20 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
     </div>
 
     <div class="card" style="padding:18px;margin-top:14px">
+      <h2 style="margin-bottom:8px">Panel access key</h2>
+      <p class="muted" style="font-size:13px">
+        Paste this into Raspberry Pi Imager's advanced options when flashing a panel
+        and the server can install onto it over SSH — no password anywhere. The
+        server only uses it while provisioning: once a panel is in service, config
+        goes through its agent and this key is not used again.
+      </p>
+      <pre id="sSshKey" style="margin-top:12px;padding:12px;border-radius:8px;
+        background:#0d0d12;border:1px solid var(--line2);font-size:12px;
+        white-space:pre-wrap;word-break:break-all">–</pre>
+      <div style="margin-top:12px"><button class="btn" id="sCopyKeyBtn">Copy key</button></div>
+    </div>
+
+    <div class="card" style="padding:18px;margin-top:14px">
       <h2 style="margin-bottom:12px">Server</h2>
       <div id="sServerInfo"></div>
     </div>
@@ -622,12 +636,48 @@ function showProvisionCommand(r, opts={}){
        This panel's configuration is saved, so the Pi will pick it up on its first
        sync — nothing to push afterwards.</p>` : ""}
      <div class="warn">The token works once, but stays valid until it is used —
-       reachable again from this panel's <b>Setup command</b> button.</div>`,
+       reachable again from this panel's <b>Setup command</b> button.</div>
+     <h2 style="margin-top:22px;font-size:20px">Or install it from here</h2>
+     <p class="muted" style="font-size:13px;margin-top:6px">Needs the server's SSH key
+       on the panel — Settings shows the key to paste into Raspberry Pi Imager.</p>
+     <div class="f2" style="margin-top:12px">
+       <div><div class="lbl">HOST OR IP</div><input id="sshHost" placeholder="192.168.1.50"></div>
+       <div><div class="lbl">SSH USER</div><input id="sshUser" placeholder="joel"></div>
+     </div>
+     <div class="f2" style="margin-top:12px">
+       <div><div class="lbl">HOSTNAME TO SET</div>
+         <input id="sshHostname" placeholder="${r.panel_id}"></div>
+       <div><div class="lbl">HOME ASSISTANT TOKEN (OPTIONAL)</div>
+         <input id="sshToken" type="password" placeholder="leave blank to set on the Pi"></div>
+     </div>
+     <div class="muted" style="font-size:12px;margin-top:6px">The token is passed
+       straight through to the panel and never stored on the server. Leave it blank
+       and the panel runs in demo mode until you write secrets.json yourself.</div>
+     <div style="margin-top:12px"><button class="btn" id="sshRunBtn">Install over SSH</button></div>
+     <pre id="sshOut" style="display:none;margin-top:12px;padding:12px;border-radius:8px;
+       background:#0d0d12;border:1px solid var(--line2);font-size:12px;max-height:240px;
+       overflow:auto;white-space:pre-wrap"></pre>`,
     async ()=>{
       try{ await navigator.clipboard.writeText(r.command); toast("Command copied"); }
       catch(e){ toast("Copy it from the box above"); }
     });
   $("#mOk").textContent = "Copy";
+  $("#sshRunBtn").onclick = async ()=>{
+    const host = $("#sshHost").value.trim(), user = $("#sshUser").value.trim();
+    if(!host || !user){ toast("Host and user are required"); return; }
+    const out = $("#sshOut"), btn = $("#sshRunBtn");
+    out.style.display = "block";
+    out.textContent = `Connecting to ${user}@${host}…\nThis takes a few minutes — apt, chromium and cage all install.`;
+    btn.disabled = true; btn.textContent = "Installing…";
+    try{
+      const res = await api(`/provision/${r.token}/run`,{method:"POST",body:JSON.stringify({
+        host, user, hostname:$("#sshHostname").value.trim(), ha_token:$("#sshToken").value})});
+      out.textContent = res.output || "(no output)";
+      toast(res.ok ? "Installed — reboot the panel" : "Install failed, see the output");
+      if(res.ok){ $("#sshToken").value = ""; loadFleet(); }
+    }catch(e){ out.textContent = "Request failed: " + (e.message || e); }
+    btn.disabled = false; btn.textContent = "Install over SSH";
+  };
 }
 /* Retrievable rather than one-shot: the command is only useful once the room is
    configured, which is deliberately after the panel record exists. */
@@ -679,6 +729,7 @@ async function loadSettings(){
   $("#sPwWarn").innerHTML = s.admin_password_is_default
     ? `<div class="warn">The admin password is still the shipped default. Anyone who can
        reach this server can sign in and reconfigure every panel.</div>` : "";
+  $("#sSshKey").textContent = s.ssh_public_key || "–";
   const inf = s.server;
   $("#sServerInfo").innerHTML = `
     <div class="f2">
@@ -696,6 +747,10 @@ async function loadSettings(){
       the database path would orphan the existing fleet.
     </div>`;
 }
+$("#sCopyKeyBtn").onclick = async ()=>{
+  try{ await navigator.clipboard.writeText($("#sSshKey").textContent.trim()); toast("Key copied"); }
+  catch(e){ toast("Copy it from the box above"); }
+};
 $("#sTestBtn").onclick = async ()=>{
   const box = $("#sHaResult");
   box.innerHTML = `<div class="muted" style="margin-top:12px">Testing…</div>`;

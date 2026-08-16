@@ -17,6 +17,11 @@ software that can be down, it is wrong — say so rather than implementing it.
 
 Corollaries:
 - The config server pushes config, never commands. Panels cache config on disk.
+  **One exception, deliberately narrow:** the server may run the bootstrap over
+  SSH on a panel it is *currently provisioning*. It is gated on an unused
+  provisioning token, so it cannot reach hardware already in service — those
+  take config through their agent and never commands. Key-based only; the key
+  goes on at flash time via Raspberry Pi Imager.
 - The panel UI must boot and function with the config server unreachable.
 - Media control may depend on HA. Lighting may not.
 

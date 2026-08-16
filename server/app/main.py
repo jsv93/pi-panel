@@ -16,7 +16,9 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocke
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import db, ha
+from starlette.concurrency import run_in_threadpool
+
+from . import db, ha, ssh
 
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme")
 WEAK_DEFAULTS = {"changeme", "change-me", ""}
@@ -38,15 +40,27 @@ PANEL_ID="__PANEL_ID__"
 
 # Prompts read from the terminal, not stdin: this script is normally piped
 # into bash, so stdin is the script itself and a bare `read` would eat it.
-if [ -t 0 ] || [ -e /dev/tty ]; then TTY=/dev/tty; else TTY=""; fi
+# Must actually open /dev/tty, not just test that it exists. Run over SSH
+# without a pty the node is present but opening it fails with ENXIO, so an
+# existence check leaves TTY set, the first `read` fails, and set -e kills the
+# install partway through.
+if [ -t 0 ] || { [ -e /dev/tty ] && (: < /dev/tty) 2>/dev/null; }; then
+  TTY=/dev/tty
+else
+  TTY=""
+fi
 ask() { # ask VAR "prompt" [silent]
   local __v=$1 __p=$2 __s=${3:-}
   [ -n "$TTY" ] || { echo "No terminal for prompt: $__p" >&2; exit 1; }
   if [ -n "$__s" ]; then read -rsp "$__p" "$__v" < "$TTY"; echo; else read -rp "$__p" "$__v" < "$TTY"; fi
 }
 
+# Run from the GUI over SSH there is no terminal, so every prompt has to have a
+# non-interactive answer: hostname as $1, and the token in PANEL_HA_TOKEN.
 HOST_NEW="${1:-}"
-[ -n "$HOST_NEW" ] || ask HOST_NEW "Hostname for this panel [$PANEL_ID]: "
+if [ -z "$HOST_NEW" ] && [ -n "$TTY" ]; then
+  ask HOST_NEW "Hostname for this panel [$PANEL_ID]: "
+fi
 HOST_NEW="${HOST_NEW:-$PANEL_ID}"
 # Lowercase and strip anything not valid in a hostname. Mixed case is legal but
 # sudo and avahi both behave better without it.
@@ -103,9 +117,14 @@ fi
 echo "$PANEL_ID" > /opt/panel/panel-id
 
 if [ ! -f /opt/panel/current/secrets.json ]; then
-  # Typed here and never sent to the config server: the panel talks to Home
-  # Assistant directly and this token must not live on the server.
-  ask HA_TOKEN "Home Assistant long-lived token (blank to skip): " silent
+  # Typed on the Pi and never stored by the config server: the panel talks to
+  # Home Assistant directly. Installing from the GUI passes it through the
+  # server's memory for the length of one SSH command -- never to disk, never
+  # to the database -- which is the cost of not having to walk to the panel.
+  HA_TOKEN="${PANEL_HA_TOKEN:-}"
+  if [ -z "$HA_TOKEN" ] && [ -n "$TTY" ]; then
+    ask HA_TOKEN "Home Assistant long-lived token (blank to skip): " silent
+  fi
   if [ -n "${HA_TOKEN:-}" ]; then
     printf '{"ha_token": "%s"}\n' "$HA_TOKEN" > /opt/panel/current/secrets.json
     chmod 600 /opt/panel/current/secrets.json
@@ -697,6 +716,42 @@ async def provision_pending(request: Request):
     ]
 
 
+@app.post("/api/provision/{token}/run", dependencies=[Depends(require_admin)])
+async def provision_run(token: str, request: Request):
+    """Install onto a panel over SSH.
+
+    Gated on the token still being unused, which is the whole security model:
+    the server can only reach hardware it is currently provisioning, never a
+    panel already in service. Config changes for those go through the agent,
+    which is why nothing here needs to touch them.
+    """
+    b = await request.json()
+    host = (b.get("host") or "").strip()
+    user = (b.get("user") or "").strip()
+    if not host or not user:
+        raise HTTPException(400, "host and user are required")
+    # host:port accepted inline, so a panel on a non-default sshd port does not
+    # need its own field in the form.
+    port = int(b.get("port") or 22)
+    if host.count(":") == 1 and not host.startswith("["):
+        host, _, p = host.partition(":")
+        if p.isdigit():
+            port = int(p)
+
+    pending = [t for t in db.pending_tokens() if t["token"] == token]
+    if not pending:
+        raise HTTPException(404, "unknown or already-used token")
+
+    url = f"{_server_url(request)}/bootstrap.sh?t={token}"
+    # Runs the same curl-pipe-bash the GUI hands out for manual installs, so
+    # there is one provisioning path rather than two that can drift. Fetching
+    # that URL is what consumes the token.
+    return await run_in_threadpool(
+        ssh.run_bootstrap, host, user, url,
+        (b.get("hostname") or "").strip(), b.get("ha_token") or "",
+    )
+
+
 @app.get("/api/panel_seen/{panel_id}")
 async def panel_seen(panel_id: str):
     """Unauthenticated by design: the bootstrap script calls this to confirm its
@@ -745,6 +800,7 @@ async def get_settings():
         "admin_password_is_default": (
             not db.get_setting("admin_password_hash") and ADMIN_PASSWORD in WEAK_DEFAULTS
         ),
+        "ssh_public_key": ssh.public_key(),
         "server": {
             "db_path": db.DB_PATH,
             "ui_dir": UI_DIR,
