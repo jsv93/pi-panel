@@ -65,6 +65,51 @@ def _client():
     return c, key
 
 
+async def scan(cidr, port=22, timeout=0.6, concurrency=64):
+    """Find hosts with SSH open on a /24-or-smaller network.
+
+    A TCP sweep rather than mDNS or ARP because the server runs in a container
+    on Docker's bridge: multicast does not cross it and neither does ARP, which
+    is the same boundary that stops .local resolving. Outbound TCP does work.
+
+    Returns the SSH banner too — a Raspberry Pi announces Debian in it, which
+    is usually enough to pick the new panel out of a list of appliances.
+    """
+    import asyncio
+    import ipaddress
+
+    net = ipaddress.ip_network(cidr, strict=False)
+    if net.num_addresses > 256:
+        raise ValueError("network too large — use a /24 or smaller")
+
+    sem = asyncio.Semaphore(concurrency)
+    found = []
+
+    async def probe(ip):
+        async with sem:
+            try:
+                r, w = await asyncio.wait_for(
+                    asyncio.open_connection(str(ip), port), timeout=timeout)
+            except Exception:
+                return
+            banner = ""
+            try:
+                # sshd greets first, so this needs no request -- just a short
+                # wait for the version string.
+                data = await asyncio.wait_for(r.read(128), timeout=timeout)
+                banner = data.decode(errors="replace").strip()
+            except Exception:
+                pass
+            finally:
+                w.close()
+            found.append({"ip": str(ip), "banner": banner,
+                          "likely_pi": "debian" in banner.lower() or "raspbian" in banner.lower()})
+
+    await asyncio.gather(*(probe(ip) for ip in net.hosts()))
+    found.sort(key=lambda h: tuple(int(p) for p in h["ip"].split(".")))
+    return found
+
+
 DONE = "=== finished, exit "
 
 

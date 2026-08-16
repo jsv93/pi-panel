@@ -663,6 +663,8 @@ function showProvisionCommand(r, opts={}){
        <div><div class="lbl">HOST OR IP</div><input id="sshHost" placeholder="192.168.1.50"></div>
        <div><div class="lbl">SSH USER</div><input id="sshUser" placeholder="joel"></div>
      </div>
+     <div style="margin-top:8px"><button class="btn" id="sshScanBtn">Find panels on the network</button></div>
+     <div id="sshScanOut" style="margin-top:10px"></div>
      <div class="f2" style="margin-top:12px">
        <div><div class="lbl">HOSTNAME TO SET</div>
          <input id="sshHostname" placeholder="${r.panel_id}"></div>
@@ -679,6 +681,34 @@ function showProvisionCommand(r, opts={}){
     async ()=>{});
   $("#mOk").textContent = "Finish";
   $("#provCopyBtn").onclick = ()=>copyText(r.command);
+  $("#sshScanBtn").onclick = async ()=>{
+    const box = $("#sshScanOut"), btn = $("#sshScanBtn");
+    btn.disabled = true; btn.textContent = "Scanning…";
+    box.innerHTML = `<span class="muted" style="font-size:13px">Checking for SSH on the local network…</span>`;
+    try{
+      const res = await api("/scan",{method:"POST",body:JSON.stringify({cidr:""})});
+      const hosts = res.hosts||[];
+      if(!hosts.length){
+        box.innerHTML = `<div class="warn">Nothing answering on port 22 across ${res.cidr}.
+          Check the Pi has booted and that SSH was enabled when it was flashed.</div>`;
+      } else {
+        /* A panel already in the fleet is almost certainly not the one being
+           provisioned, so it is labelled rather than hidden — seeing it proves
+           the scan works. */
+        box.innerHTML = `<div class="muted" style="font-size:12px;margin-bottom:6px">${res.cidr}</div>` +
+          hosts.map(h=>`<div style="display:flex;gap:10px;align-items:center;padding:7px 0;
+              border-bottom:1px solid var(--line2);font-size:13px">
+            <span style="width:120px">${h.ip}</span>
+            <span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              ${h.known_panel ? "already in the fleet — "+h.known_panel : (h.banner||"")}</span>
+            ${h.known_panel ? "" : `<button class="btn" data-use="${h.ip}">Use</button>`}</div>`).join("");
+        box.querySelectorAll("[data-use]").forEach(b=>b.onclick=()=>{
+          $("#sshHost").value = b.dataset.use; toast("Host set to "+b.dataset.use);
+        });
+      }
+    }catch(e){ box.innerHTML = `<div class="warn">${e.message||e}</div>`; }
+    btn.disabled = false; btn.textContent = "Find panels on the network";
+  };
   $("#sshRunBtn").onclick = async ()=>{
     const host = $("#sshHost").value.trim(), user = $("#sshUser").value.trim();
     if(!host || !user){ toast("Host and user are required"); return; }

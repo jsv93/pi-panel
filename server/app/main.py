@@ -768,6 +768,37 @@ async def provision_run(token: str, request: Request):
                              headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store"})
 
 
+@app.post("/api/scan", dependencies=[Depends(require_admin)])
+async def scan_network(request: Request):
+    """Look for candidate panels on the LAN.
+
+    Finding a freshly flashed Pi otherwise means logging into the router. The
+    default network is derived from HA_URL, which is already an IP on the same
+    LAN, so in practice there is nothing to type.
+    """
+    b = await request.json()
+    cidr = (b.get("cidr") or "").strip() or _default_cidr()
+    if not cidr:
+        raise HTTPException(400, "no network to scan — set one, or set HA_URL first")
+    try:
+        hosts = await ssh.scan(cidr)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    known = {p.get("ip"): p for p in db.list_panels() if p.get("ip")}
+    for h in hosts:
+        p = known.get(h["ip"])
+        h["known_panel"] = p["hostname"] if p else ""
+    return {"cidr": cidr, "hosts": hosts}
+
+
+def _default_cidr():
+    """HA_URL's host, as a /24. It is on the same LAN as the panels by
+    definition, and is already configured."""
+    import re
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)\.\d+", ha.url())
+    return f"{m.group(1)}.{m.group(2)}.{m.group(3)}.0/24" if m else ""
+
+
 @app.get("/api/panel_seen/{panel_id}")
 async def panel_seen(panel_id: str):
     """Unauthenticated by design: the bootstrap script calls this to confirm its
