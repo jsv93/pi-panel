@@ -331,6 +331,24 @@ const api = async (path, opts={}) => {
 };
 function show(sel){ $("#login").style.display = sel==="#login"?"grid":"none";
                     $("#app").style.display   = sel==="#app"?"block":"none"; }
+/* navigator.clipboard only exists in a secure context, and this server is plain
+   http on a LAN — so the modern API is absent exactly where it is needed and
+   the button silently did nothing. execCommand still works there. */
+async function copyText(text){
+  try{
+    if(navigator.clipboard && window.isSecureContext){
+      await navigator.clipboard.writeText(text); toast("Copied"); return;
+    }
+  }catch(e){}
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.cssText = "position:fixed;top:-1000px;left:0;opacity:0";
+  document.body.appendChild(ta); ta.focus(); ta.select();
+  let ok = false;
+  try{ ok = document.execCommand("copy"); }catch(e){}
+  ta.remove();
+  toast(ok ? "Copied" : "Could not copy — select it and use Ctrl+C");
+}
 function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("on");
   setTimeout(()=>t.classList.remove("on"), 2600); }
 function confirmModal(title, html, onOk){
@@ -632,6 +650,7 @@ function showProvisionCommand(r, opts={}){
      <pre id="provCmd" style="margin-top:12px;padding:14px;border-radius:8px;
        background:#0d0d12;border:1px solid var(--line2);font-size:13px;
        white-space:pre-wrap;word-break:break-all">${r.command}</pre>
+     <div style="margin-top:8px"><button class="btn" id="provCopyBtn">Copy command</button></div>
      ${opts.configured ? `<p class="muted" style="margin-top:12px;font-size:13px">
        This panel's configuration is saved, so the Pi will pick it up on its first
        sync — nothing to push afterwards.</p>` : ""}
@@ -657,25 +676,39 @@ function showProvisionCommand(r, opts={}){
      <pre id="sshOut" style="display:none;margin-top:12px;padding:12px;border-radius:8px;
        background:#0d0d12;border:1px solid var(--line2);font-size:12px;max-height:240px;
        overflow:auto;white-space:pre-wrap"></pre>`,
-    async ()=>{
-      try{ await navigator.clipboard.writeText(r.command); toast("Command copied"); }
-      catch(e){ toast("Copy it from the box above"); }
-    });
-  $("#mOk").textContent = "Copy";
+    async ()=>{});
+  $("#mOk").textContent = "Finish";
+  $("#provCopyBtn").onclick = ()=>copyText(r.command);
   $("#sshRunBtn").onclick = async ()=>{
     const host = $("#sshHost").value.trim(), user = $("#sshUser").value.trim();
     if(!host || !user){ toast("Host and user are required"); return; }
     const out = $("#sshOut"), btn = $("#sshRunBtn");
     out.style.display = "block";
-    out.textContent = `Connecting to ${user}@${host}…\nThis takes a few minutes — apt, chromium and cage all install.`;
+    out.textContent = `Connecting to ${user}@${host}…\n`;
     btn.disabled = true; btn.textContent = "Installing…";
     try{
-      const res = await api(`/provision/${r.token}/run`,{method:"POST",body:JSON.stringify({
-        host, user, hostname:$("#sshHostname").value.trim(), ha_token:$("#sshToken").value})});
-      out.textContent = res.output || "(no output)";
-      toast(res.ok ? "Installed — reboot the panel" : "Install failed, see the output");
-      if(res.ok){ $("#sshToken").value = ""; loadFleet(); }
-    }catch(e){ out.textContent = "Request failed: " + (e.message || e); }
+      /* Read the response as it arrives rather than awaiting the whole thing:
+         apt, chromium and cage take minutes, and a dialog showing nothing for
+         that long cannot be told apart from one that has hung. */
+      const resp = await fetch(`/api/provision/${r.token}/run`,{
+        method:"POST", credentials:"same-origin",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({host, user, hostname:$("#sshHostname").value.trim(),
+                             ha_token:$("#sshToken").value})});
+      if(!resp.ok){ out.textContent += `\nServer refused: ${resp.status} ${resp.statusText}`; }
+      else{
+        const rd = resp.body.getReader(), dec = new TextDecoder();
+        for(;;){
+          const {done, value} = await rd.read();
+          if(done) break;
+          out.textContent += dec.decode(value, {stream:true});
+          out.scrollTop = out.scrollHeight;
+        }
+        const ok = /=== finished, exit 0 ===/.test(out.textContent);
+        toast(ok ? "Installed — the panel reboots itself" : "Install failed, see the output");
+        if(ok){ $("#sshToken").value = ""; loadFleet(); }
+      }
+    }catch(e){ out.textContent += "\nRequest failed: " + (e.message || e); }
     btn.disabled = false; btn.textContent = "Install over SSH";
   };
 }
@@ -747,10 +780,7 @@ async function loadSettings(){
       the database path would orphan the existing fleet.
     </div>`;
 }
-$("#sCopyKeyBtn").onclick = async ()=>{
-  try{ await navigator.clipboard.writeText($("#sSshKey").textContent.trim()); toast("Key copied"); }
-  catch(e){ toast("Copy it from the box above"); }
-};
+$("#sCopyKeyBtn").onclick = ()=>copyText($("#sSshKey").textContent.trim());
 $("#sTestBtn").onclick = async ()=>{
   const box = $("#sHaResult");
   box.innerHTML = `<div class="muted" style="margin-top:12px">Testing…</div>`;

@@ -13,7 +13,7 @@ import secrets
 import time
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from starlette.concurrency import run_in_threadpool
@@ -78,7 +78,7 @@ fi
 
 echo "==> dependencies"
 apt-get update -qq
-apt-get install -y -qq python3-aiohttp curl
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-aiohttp curl
 
 echo "==> panel files"
 install -d -m 755 /opt/panel/current
@@ -164,9 +164,9 @@ echo "==> kiosk"
 # mechanisms, a session that could restart and orphan the browser, and a
 # singleton handoff that showed a white screen with nothing in any log.
 # See pi-os/README.md and docs/PI-KIOSK-FINDINGS.md.
-apt-get install -y -qq cage
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq cage
 if ! command -v chromium >/dev/null 2>&1 && ! command -v chromium-browser >/dev/null 2>&1; then
-  apt-get install -y -qq chromium || apt-get install -y -qq chromium-browser
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq chromium || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq chromium-browser
 fi
 
 # A system user with a real home: chromium needs somewhere writable for its
@@ -378,7 +378,12 @@ for _ in $(seq 1 20); do
     echo "Done. $HOST_NEW is registered as $PANEL_ID."
     echo "Point Chromium at http://127.0.0.1:8088/panel.html"
     if [ "$NEEDS_REBOOT" = "1" ]; then
-      echo "Reboot to start the panel: sudo reboot"
+      # Rebooted for you: until it happens the screen stays blank, so leaving
+      # it to the operator means staring at a dead panel with no way to tell
+      # whether the install finished. Backgrounded so this session returns its
+      # output and exit status first.
+      echo "Rebooting in 5 seconds to start the panel."
+      (sleep 5; systemctl reboot) >/dev/null 2>&1 &
     fi
     exit 0
   fi
@@ -746,10 +751,21 @@ async def provision_run(token: str, request: Request):
     # Runs the same curl-pipe-bash the GUI hands out for manual installs, so
     # there is one provisioning path rather than two that can drift. Fetching
     # that URL is what consumes the token.
-    return await run_in_threadpool(
-        ssh.run_bootstrap, host, user, url,
-        (b.get("hostname") or "").strip(), b.get("ha_token") or "",
-    )
+    #
+    # Streamed as plain text: the install takes minutes and a dialog that shows
+    # nothing until it finishes cannot be told apart from one that has hung.
+    gen = ssh.bootstrap_lines(host, user, url, (b.get("hostname") or "").strip(),
+                              b.get("ha_token") or "", port)
+
+    async def pump():
+        while True:
+            chunk = await run_in_threadpool(lambda: next(gen, None))
+            if chunk is None:
+                return
+            yield chunk
+
+    return StreamingResponse(pump(), media_type="text/plain; charset=utf-8",
+                             headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store"})
 
 
 @app.get("/api/panel_seen/{panel_id}")

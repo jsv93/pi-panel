@@ -11,6 +11,8 @@ there is nowhere a password would need to be typed, stored, or transmitted.
 """
 import os
 import shlex
+import socket
+import time
 
 import paramiko
 from cryptography.hazmat.primitives import serialization
@@ -63,23 +65,35 @@ def _client():
     return c, key
 
 
-def run_bootstrap(host, user, url, hostname="", ha_token="", port=22, timeout=20):
-    """Run the panel's own bootstrap command over SSH and return its output.
+DONE = "=== finished, exit "
 
-    Executes the same curl-pipe-bash the GUI hands out for manual use, so there
-    is one provisioning path rather than two that can drift.
+
+def bootstrap_lines(host, user, url, hostname="", ha_token="", port=22, timeout=20):
+    """Yield the install's output as it happens.
+
+    Streamed rather than returned in one lump: this takes several minutes --
+    apt, chromium, cage -- and a blank dialog for that long is indistinguishable
+    from a hang.
     """
     c, key = _client()
     try:
         c.connect(hostname=host, port=port, username=user, pkey=key, timeout=timeout,
                   allow_agent=False, look_for_keys=False, auth_timeout=timeout)
     except paramiko.AuthenticationException:
-        return {"ok": False, "output":
-                f"{user}@{host} rejected the key.\n\n"
-                "Add the server's public key to the panel — Raspberry Pi Imager's "
-                "advanced options accept it at flash time — and check the username."}
+        yield (f"{user}@{host} rejected the key.\n\n"
+               "Add the server's public key to the panel — Raspberry Pi Imager's "
+               "advanced options accept it at flash time — and check the username.\n")
+        yield DONE + "1 ===\n"
+        return
     except Exception as e:
-        return {"ok": False, "output": f"Could not reach {user}@{host}: {e.__class__.__name__}: {e}"}
+        hint = ""
+        if isinstance(e, socket.gaierror) or "gaierror" in e.__class__.__name__:
+            hint = ("\n\nThe server runs in a container, where .local names do not "
+                    "resolve — mDNS does not cross that boundary. Use the panel's "
+                    "IP address instead.")
+        yield f"Could not reach {user}@{host}: {e.__class__.__name__}: {e}{hint}\n"
+        yield DONE + "1 ===\n"
+        return
 
     try:
         # The bootstrap needs root and there is no terminal here, so sudo must
@@ -87,18 +101,45 @@ def run_bootstrap(host, user, url, hostname="", ha_token="", port=22, timeout=20
         # or an unhelpful "sudo: a password is required" buried in the output.
         _in, _out, _err = c.exec_command("sudo -n true", timeout=timeout)
         if _out.channel.recv_exit_status() != 0:
-            return {"ok": False, "output":
-                    f"{user}@{host} cannot use sudo without a password, which "
-                    "this needs since there is no terminal to prompt on.\n\n"
-                    "Raspberry Pi Imager's default user has passwordless sudo; "
-                    "a hand-created user may not."}
+            yield (f"{user}@{host} cannot use sudo without a password, which this "
+                   "needs since there is no terminal to prompt on.\n\n"
+                   "Raspberry Pi Imager's default user has passwordless sudo; a "
+                   "hand-created user may not.\n")
+            yield DONE + "1 ===\n"
+            return
 
         cmd = "curl -fsSL {} | sudo -n env PANEL_HA_TOKEN={} bash -s -- {}".format(
             shlex.quote(url), shlex.quote(ha_token or ""), shlex.quote(hostname or "")
         )
         _in, out, err = c.exec_command(cmd, timeout=None, get_pty=False)
-        body = out.read().decode(errors="replace") + err.read().decode(errors="replace")
-        status = out.channel.recv_exit_status()
-        return {"ok": status == 0, "exit_status": status, "output": body.strip()}
+        chan = out.channel
+        chan.set_combine_stderr(True)
+        while True:
+            if chan.recv_ready():
+                data = chan.recv(4096)
+                if data:
+                    yield data.decode(errors="replace")
+                    continue
+            if chan.exit_status_ready() and not chan.recv_ready():
+                break
+            time.sleep(0.05)
+        rest = chan.recv(65536) if chan.recv_ready() else b""
+        if rest:
+            yield rest.decode(errors="replace")
+        yield DONE + f"{chan.recv_exit_status()} ===\n"
     finally:
         c.close()
+
+
+def run_bootstrap(host, user, url, hostname="", ha_token="", port=22, timeout=20):
+    """Whole-output form, for callers that do not want a stream."""
+    body = "".join(bootstrap_lines(host, user, url, hostname, ha_token, port, timeout))
+    status = 1
+    if DONE in body:
+        head, _, tail = body.rpartition(DONE)
+        body = head
+        try:
+            status = int(tail.split()[0])
+        except Exception:
+            pass
+    return {"ok": status == 0, "exit_status": status, "output": body.strip()}
