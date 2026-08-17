@@ -860,11 +860,21 @@ async def scan_network(request: Request):
 
 
 def _default_cidr():
-    """HA_URL's host, as a /24. It is on the same LAN as the panels by
-    definition, and is already configured."""
+    """The /24 this server is on, else the one HA_URL points at.
+
+    Own address first because it is always right and never configured. HA_URL
+    used to be the only source, which broke as soon as the add-on started
+    getting Home Assistant through the Supervisor: that URL is
+    http://supervisor/core and contains no address at all, so scanning failed
+    with "set one, or set HA_URL first" on a server that knew perfectly well
+    where it was.
+    """
     import re
-    m = re.search(r"(\d+)\.(\d+)\.(\d+)\.\d+", ha.url())
-    return f"{m.group(1)}.{m.group(2)}.{m.group(3)}.0/24" if m else ""
+    for candidate in (_local_ip(), ha.url()):
+        m = re.search(r"\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.\d{1,3}\b", candidate or "")
+        if m:
+            return f"{m.group(1)}.{m.group(2)}.{m.group(3)}.0/24"
+    return ""
 
 
 @app.get("/api/panel_seen/{panel_id}")
