@@ -1,0 +1,12 @@
+# The build context is the repository root so the panel files can be baked into
+# the image. Everything not needed to build it is excluded, or the context is
+# the whole project including its history.
+.git
+.github
+docs
+esphome
+addon
+server/data
+server/.env
+**/__pycache__
+**/*.pyc

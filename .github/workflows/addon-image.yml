@@ -64,7 +64,10 @@ jobs:
 
       - uses: docker/build-push-action@v6
         with:
-          context: ./server
+          # Repo root: the image bakes in the panel bundle, which lives outside
+          # server/.
+          context: .
+          file: ./server/Dockerfile
           platforms: ${{ matrix.platform }}
           push: true
           tags: |

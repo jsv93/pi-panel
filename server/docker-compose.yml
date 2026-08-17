@@ -1,6 +1,11 @@
 services:
   panel-server:
-    build: .
+    # Context is the repo root so the Dockerfile can bake in panel.html, the
+    # agent and the backlight helper. Run compose from this directory as
+    # before; only what Docker sends as context changes.
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
     container_name: panel-server
     restart: unless-stopped
     # Host networking, so the server sits on the LAN rather than behind Docker's

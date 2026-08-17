@@ -27,6 +27,7 @@ PBKDF2_ROUNDS = 200_000
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 UI_DIR = os.environ.get("PANEL_UI_DIR", "/data/ui")   # holds panel.html for preview
 BUNDLE_DIR = os.environ.get("PANEL_BUNDLE_DIR", "/data/bundle")  # panel.html, agent, backlight
+BUILTIN_BUNDLE = os.environ.get("PANEL_BUILTIN_BUNDLE", "")      # baked into the image
 # Only needed where the operator reaches the server by a different address than
 # the panels do — in practice, behind Home Assistant ingress.
 PANEL_URL = os.environ.get("PANEL_URL", "").rstrip("/")
@@ -89,9 +90,20 @@ install -d -m 755 /opt/panel/current
 if [ -f /opt/panel/current/panel.html ]; then
   cp -a /opt/panel/current "/opt/panel/backup-$(date +%Y%m%d%H%M%S)"
 fi
-curl -fsSL "$SERVER/bundle/panel.html"    -o /opt/panel/current/panel.html
-curl -fsSL "$SERVER/bundle/panel-agent.py" -o /usr/local/bin/panel-agent
-curl -fsSL "$SERVER/bundle/backlight.py"   -o /usr/local/bin/panel-backlight
+# curl's own failure here is "(22) The requested URL returned error: 404" with
+# no mention of which URL or why, which is not enough to act on.
+fetch() {
+  if ! curl -fsSL "$1" -o "$2"; then
+    echo "ERROR: could not fetch $1" >&2
+    echo "       The server has no copy of that file. It normally ships inside" >&2
+    echo "       the image; if the server was updated by hand, check its" >&2
+    echo "       bundle directory." >&2
+    exit 1
+  fi
+}
+fetch "$SERVER/bundle/panel.html"     /opt/panel/current/panel.html
+fetch "$SERVER/bundle/panel-agent.py" /usr/local/bin/panel-agent
+fetch "$SERVER/bundle/backlight.py"   /usr/local/bin/panel-backlight
 chmod +x /usr/local/bin/panel-agent /usr/local/bin/panel-backlight
 
 # The bundle is populated by hand, so it can lag the server. An agent without
@@ -899,13 +911,19 @@ async def bootstrap(request: Request, t: str = ""):
 @app.get("/bundle/{name}")
 async def bundle(name: str):
     """Panel files the bootstrap script pulls. Not secret — panel.html is served
-    to every panel anyway — but path-checked so it can only reach this dir."""
+    to every panel anyway — but path-checked so it can only reach these dirs.
+
+    /data/bundle wins so a panel can be pinned to a hand-edited build, but the
+    copy shipped in the image is the normal source. Hand-populating this was
+    the cause of a stale agent, a stale panel.html and an empty directory on a
+    fresh install, each of which presented as something else entirely.
+    """
     if name not in ("panel.html", "panel-agent.py", "backlight.py"):
         raise HTTPException(404, "unknown bundle file")
-    path = os.path.join(BUNDLE_DIR, name)
-    if not os.path.exists(path):
-        raise HTTPException(404, f"{name} not present in {BUNDLE_DIR}")
-    return FileResponse(path)
+    for d in (BUNDLE_DIR, BUILTIN_BUNDLE):
+        if d and os.path.exists(os.path.join(d, name)):
+            return FileResponse(os.path.join(d, name))
+    raise HTTPException(404, f"{name} is in neither {BUNDLE_DIR} nor the image")
 
 
 # ---------------------------------------------------------------- settings
