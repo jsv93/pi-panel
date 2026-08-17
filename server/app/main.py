@@ -1004,4 +1004,20 @@ async def preview_ui():
     return FileResponse(path)
 
 
+@app.middleware("http")
+async def no_cache_html(request: Request, call_next):
+    """Never let a browser hold on to the admin UI.
+
+    It is one self-contained HTML file, so a cached copy means old JavaScript
+    talking to a new API — which is not an obvious failure. After an update it
+    showed a new field's value as "not set", because the old code did not know
+    that value existed. Nothing about that says "you are looking at a stale
+    page". The file is ~40KB; re-fetching it costs nothing worth having.
+    """
+    response = await call_next(request)
+    if request.url.path in ("/", "/index.html"):
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+    return response
+
+
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
