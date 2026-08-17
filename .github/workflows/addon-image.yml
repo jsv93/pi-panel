@@ -7,6 +7,12 @@ name: Add-on image
 # Tag a release to publish: `git tag v0.1.0 && git push --tags`. The tag must
 # match the `version` in the add-on's config.yaml, or Home Assistant will try
 # to pull an image that does not exist.
+#
+# Uses the docker CLI directly rather than the marketplace actions. Those have
+# to be downloaded from codeload at the start of every run, and repeated 429s
+# there failed builds that had not started -- nothing to do with the build
+# itself, and nothing a retry fixed. docker and buildx are already on the
+# runner, so actions/checkout is the only download left.
 
 on:
   push:
@@ -25,6 +31,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: amd64
@@ -54,24 +61,37 @@ jobs:
             exit 1
           fi
 
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Enable arm64 emulation
+        if: matrix.arch == 'aarch64'
+        # binfmt handlers for cross-building; the image is pulled from Docker
+        # Hub rather than fetched as an action.
+        run: docker run --privileged --rm tonistiigi/binfmt --install arm64
 
-      - uses: docker/build-push-action@v6
-        with:
-          # Repo root: the image bakes in the panel bundle, which lives outside
-          # server/.
-          context: .
-          file: ./server/Dockerfile
-          platforms: ${{ matrix.platform }}
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/pi-panel-server-${{ matrix.arch }}:${{ steps.v.outputs.version }}
-            ghcr.io/${{ github.repository_owner }}/pi-panel-server-${{ matrix.arch }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Set up buildx
+        run: docker buildx create --name panel --use --driver docker-container
+
+      - name: Log in to ghcr.io
+        run: echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+
+      - name: Build and push
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/pi-panel-server-${{ matrix.arch }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          # Context is the repository root: the image bakes in panel.html, the
+          # agent and the backlight helper, which live outside server/.
+          docker buildx build \
+            --platform '${{ matrix.platform }}' \
+            --file ./server/Dockerfile \
+            --tag "$IMAGE:$VERSION" \
+            --tag "$IMAGE:latest" \
+            --push \
+            .
+
+      - name: Confirm it is pullable
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/pi-panel-server-${{ matrix.arch }}
+          VERSION: ${{ steps.v.outputs.version }}
+        # Home Assistant pulls by exact tag, so check that exact tag resolves
+        # rather than trusting the push step's exit code.
+        run: docker buildx imagetools inspect "$IMAGE:$VERSION" > /dev/null
