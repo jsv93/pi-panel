@@ -10,6 +10,7 @@ import hmac
 import json
 import os
 import secrets
+import socket
 import time
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
@@ -695,19 +696,47 @@ async def entities(domain: str = "", q: str = ""):
 
 
 # ---------------------------------------------------------------- provisioning
-def _server_url(request: Request) -> str:
-    """The address a *panel* uses to reach this server.
+def _local_ip() -> str:
+    """This host's address on the LAN.
 
-    Not the same as the address the operator is using. Under Home Assistant
-    ingress the admin request arrives through HA's proxy, so request.base_url
-    is an ingress URL: it requires HA auth and is internal to HA, so a panel
-    handed it can never fetch anything. PANEL_URL, set from the add-on's
-    options, is that deployment's answer.
-
-    Anywhere else the request's own base URL is right and needs no configuring.
+    No packet is sent; the kernel just picks the interface it would route out
+    of. Under the add-on that is the Home Assistant host itself, because
+    host_network puts the container on its network stack.
     """
-    return (db.get_setting("panel_url") or PANEL_URL
-            or str(request.base_url).rstrip("/")).rstrip("/")
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except Exception:
+        return ""
+    finally:
+        s.close()
+
+
+def _panel_url(request: Request) -> tuple[str, str]:
+    """The address a *panel* uses to reach this server, and where it came from.
+
+    Not the address the operator is using. Behind Home Assistant ingress the
+    admin request arrives through HA's proxy, so request.base_url is an ingress
+    URL — it needs HA's auth and is internal to HA, so a panel handed it can
+    never fetch anything. The Supervisor marks those requests with
+    X-Ingress-Path, which is how that case is recognised rather than guessed.
+    """
+    saved = db.get_setting("panel_url")
+    if saved:
+        return saved.rstrip("/"), "settings"
+    if PANEL_URL:
+        return PANEL_URL.rstrip("/"), "env"
+    if request.headers.get("X-Ingress-Path"):
+        ip = _local_ip()
+        if ip:
+            return f"http://{ip}:8099", "host"
+        return "", "unresolved"
+    return str(request.base_url).rstrip("/"), "request"
+
+
+def _server_url(request: Request) -> str:
+    return _panel_url(request)[0]
 
 
 @app.post("/api/provision", dependencies=[Depends(require_admin)])
@@ -871,7 +900,7 @@ async def bundle(name: str):
 
 # ---------------------------------------------------------------- settings
 @app.get("/api/settings", dependencies=[Depends(require_admin)])
-async def get_settings():
+async def get_settings(request: Request):
     """The token is never returned — only whether one is set and its last four
     characters, which is enough to tell two tokens apart."""
     tok = ha.token()
@@ -887,9 +916,11 @@ async def get_settings():
             not db.get_setting("admin_password_hash") and ADMIN_PASSWORD in WEAK_DEFAULTS
         ),
         "ssh_public_key": ssh.public_key(),
+        # The resolved value, not just where it came from. A panel is handed
+        # this exact string, so it is the only thing worth showing.
         "panel_url": db.get_setting("panel_url") or PANEL_URL,
-        "panel_url_source": ("settings" if db.get_setting("panel_url")
-                             else "env" if PANEL_URL else "request"),
+        "panel_url_effective": _panel_url(request)[0],
+        "panel_url_source": _panel_url(request)[1],
         "server": {
             "db_path": db.DB_PATH,
             "ui_dir": UI_DIR,
@@ -921,7 +952,7 @@ async def put_settings(request: Request):
     elif (b.get("ha_token") or "").strip():
         db.set_setting("ha_token", b["ha_token"].strip())
     ha.invalidate()
-    return await get_settings()
+    return await get_settings(request)
 
 
 @app.post("/api/settings/test_ha", dependencies=[Depends(require_admin)])

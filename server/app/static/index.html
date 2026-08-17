@@ -185,8 +185,15 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
         not: your browser reaches this through HA, and a panel cannot.
       </p>
       <div style="margin-top:12px">
-        <div class="lbl">PANEL-FACING ADDRESS</div>
-        <input id="sPanelUrl" placeholder="leave blank to use the address you are on">
+        <div class="lbl">PANELS WILL BE TOLD TO USE</div>
+        <pre id="sPanelUrlEff" style="margin:0;padding:12px;border-radius:8px;
+          background:#0d0d12;border:1px solid var(--line2);font-size:13px;
+          white-space:pre-wrap;word-break:break-all">–</pre>
+        <div id="sPanelUrlWarn"></div>
+      </div>
+      <div style="margin-top:12px">
+        <div class="lbl">OVERRIDE</div>
+        <input id="sPanelUrl" placeholder="leave blank unless the address above is wrong">
       </div>
       <div style="margin-top:12px"><button class="btn primary" id="sSavePanelUrlBtn">Save</button></div>
     </div>
@@ -863,9 +870,19 @@ async function loadSettings(){
        reach this server can sign in and reconfigure every panel.</div>` : "";
   $("#sSshKey").textContent = s.ssh_public_key || "–";
   $("#sPanelUrl").value = s.panel_url || "";
-  pill($("#sPanelUrlSrc"),
-       s.panel_url_source==="request" ? "using this address" : srcNote(s.panel_url_source),
-       s.panel_url_source==="request" ? "" : "ok");
+  $("#sPanelUrlEff").textContent = s.panel_url_effective || "(could not work one out)";
+  const SRC = {settings:["saved here","ok"], env:["from add-on options","ok"],
+               host:["this host's LAN address","ok"],
+               request:["the address you are on","ok"],
+               unresolved:["cannot be determined","bad"]}[s.panel_url_source] || ["",""];
+  pill($("#sPanelUrlSrc"), SRC[0], SRC[1]);
+  /* Ingress URLs are the failure this card exists to catch: they look fine and
+     no panel can fetch them. */
+  const bad = /hassio_ingress/.test(s.panel_url_effective||"") || !s.panel_url_effective;
+  $("#sPanelUrlWarn").innerHTML = bad
+    ? `<div class="warn">That is not an address a panel can reach — it goes through
+        Home Assistant and needs its authentication. Set an override below, normally
+        <code>http://&lt;this host&gt;:8099</code>.</div>` : "";
   const inf = s.server;
   $("#sServerInfo").innerHTML = `
     <div class="f2">
