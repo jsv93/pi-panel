@@ -33,7 +33,11 @@ host_network: true
 homeassistant_api: true
 
 options:
-  admin_password: ""
+  # Spelled out rather than left blank so it is visible and editable on the
+  # Configuration tab. Blank meant falling through to the code's own default,
+  # which is the same string but invisible -- leaving nothing to change and
+  # nothing to guess from.
+  admin_password: "changeme"
   panel_url: ""
 schema:
   # Still required despite ingress: host_network means :8099 is reachable
