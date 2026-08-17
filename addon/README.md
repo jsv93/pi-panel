@@ -13,11 +13,15 @@ The contents here are laid out as the *root* of a separate repository, because
 Home Assistant expects `repository.yaml` at a repo root with each add-on in a
 top-level folder. To publish:
 
-    # once
-    gh repo create jsv93/pi-panel-addon --public
-    cp -r addon/* /path/to/pi-panel-addon/
-    cd /path/to/pi-panel-addon && git init && git add -A
-    git commit -m "Panel Config Server add-on" && git push -u origin main
+Create an empty `pi-panel-addon` repository on github.com — no README,
+.gitignore or licence, since those collide with the first push — then:
+
+    cp -r addon/* ../pi-panel-addon/
+    cd ../pi-panel-addon
+    git init -b main
+    git add -A && git commit -m "Panel Config Server add-on"
+    git remote add origin https://github.com/jsv93/pi-panel-addon.git
+    git push -u origin main
 
 Then in Home Assistant: **Settings → Add-ons → Add-on Store → ⋮ → Repositories**
 and add `https://github.com/jsv93/pi-panel-addon`.
