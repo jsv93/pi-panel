@@ -41,12 +41,14 @@ rather than letting it surface as a broken install:
 2. Copy that file into the add-on repo
 3. Tag the main repo: `git tag v0.1.1 && git push --tags`
 
-## Set a password in Imager too
+## Paste two keys, not one
 
-Paste the server's key into Raspberry Pi Imager, but set a user password as
-well. With only a key configured, a panel accepts public-key auth and nothing
-else — and the private half lives on the server, so there is no way to get a
-shell on that panel from your own machine. During bring-up you will want one.
+Raspberry Pi Imager's authorized_keys box takes one key per line. Put the
+server's key in it, and your own underneath.
+
+With only the server's key, a panel accepts public-key auth and nothing else,
+and the private half lives on the server — so there is no way to get a shell on
+that panel from your own machine, which during bring-up you will want.
 
 ## Two addresses, not one
 

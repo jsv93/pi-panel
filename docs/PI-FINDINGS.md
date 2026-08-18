@@ -92,9 +92,16 @@ server, not on your machine. An SSH client then reports something like "no
 supported authentication methods (server sent: publickey)", which reads as a
 client problem and is not.
 
-Set a password in Imager **as well as** the key. The server still uses its
-key; you get a normal login for the times a panel needs looking at directly,
-which during bring-up is often.
+**Paste two keys, one per line**: the server's, and your own. Imager's
+authorized_keys box takes any number and sshd will accept any of them, so
+provisioning keeps working and you can still get a shell.
+
+    ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519
+
+Adding a password instead also works — sshd allows password and public-key
+auth simultaneously, so it does not displace the server's key — but whether
+Imager still writes the key when password authentication is selected depends
+on its UI, and two keys avoids the question entirely.
 
 If a panel is already in that state, the server's private key can be read from
 the add-on's data directory using Home Assistant's Terminal & SSH add-on:
