@@ -302,6 +302,13 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
             <div><div class="lbl">BACKLIGHT MINIMUM %</div><input type="number" id="fBlMin"></div>
             <div><div class="lbl">BACKLIGHT OFF AFTER (SECONDS IDLE, 0 = NEVER)</div>
               <input type="number" id="fBlOff"></div>
+            <div><div class="lbl">SCREEN</div><select id="fScreen"></select></div>
+            <div><div class="lbl">DTOVERLAY LINE</div>
+              <input id="fDsiOverlay" placeholder="none — official display auto-detects">
+              <div class="muted" style="font-size:12px;margin-top:5px">Written to
+                config.txt when the panel is provisioned. A third-party DSI panel with
+                the wrong line here shows no signal at all, so if your screen is not
+                listed, put its overlay here and tell me what worked.</div></div>
           </div>
         </div>
 
@@ -506,6 +513,7 @@ async function openPanel(id){
   $("#fBlDef").value = d.backlight_default ?? 100;
   $("#fBlMin").value = d.backlight_min ?? 5;
   $("#fBlOff").value = d.backlight_off_s ?? 0;
+  renderScreens(d.dsi_overlay ?? "");
 
   $("#problems").innerHTML = (CUR.problems||[]).map(p=>
     `<div class="err">⚠ ${p.message}</div>`).join("");
@@ -539,6 +547,33 @@ document.querySelectorAll("#sectNav div[data-s]").forEach(n=>n.onclick=()=>{
   document.querySelectorAll(".sect").forEach(s=>s.classList.toggle("on", s.dataset.s===n.dataset.s));
 });
 
+/* Only the 5-inch is confirmed on hardware. The 4.3-inch line follows
+   Waveshare's naming but is unverified, which is why the overlay stays an
+   editable field rather than a closed list — a wrong line here means a panel
+   with no signal, and that is not worth guessing at on someone's behalf. */
+const SCREENS = [
+  {name:"Waveshare 5\" DSI (A) — confirmed", ov:"vc4-kms-dsi-waveshare-panel-v2,5_0_inch_a"},
+  {name:"Waveshare 4.3\" DSI (A) — unverified", ov:"vc4-kms-dsi-waveshare-panel-v2,4_3_inch_a"},
+  {name:"Official Raspberry Pi Touch Display — no overlay", ov:""},
+];
+function renderScreens(current){
+  const known = SCREENS.find(s=>s.ov===current);
+  $("#fScreen").innerHTML = SCREENS.map(s=>
+    `<option value="${s.ov}" ${s.ov===current?"selected":""}>${s.name}</option>`).join("")
+    + `<option value="__custom" ${known?"":"selected"}>Something else</option>`;
+  $("#fDsiOverlay").value = current;
+}
+$("#fScreen").onchange = ()=>{
+  const v = $("#fScreen").value;
+  if(v !== "__custom") $("#fDsiOverlay").value = v;
+  $("#fDsiOverlay").focus();
+};
+/* Typing an overlay by hand flips the picker rather than leaving it claiming
+   a screen that no longer matches the line below it. */
+$("#fDsiOverlay").oninput = ()=>{
+  const v = $("#fDsiOverlay").value.trim();
+  $("#fScreen").value = SCREENS.some(s=>s.ov===v) ? v : "__custom";
+};
 function renderLights(){
   const rows = (CFG.lights||[]).map((l,i)=>`<tr>
     <td><select data-l="${i}" data-k="entity_id">${opts(ENTITIES.light, l.entity_id)}</select></td>
@@ -585,7 +620,8 @@ function collect(){
   CFG.sensors = {temperature:$("#fTemp").value, humidity:$("#fHum").value};
   CFG.display = {idle_timeout_s:+$("#fIdle").value, glass_tier:+$("#fGlass").value,
                  backlight_default:+$("#fBlDef").value, backlight_min:+$("#fBlMin").value,
-                 backlight_off_s:+$("#fBlOff").value};
+                 backlight_off_s:+$("#fBlOff").value,
+                 dsi_overlay:$("#fDsiOverlay").value.trim()};
   return CFG;
 }
 $("#saveBtn").onclick = async ()=>{

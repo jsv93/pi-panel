@@ -75,6 +75,12 @@ DEFAULT_TEMPLATE = {
         # 0 = never; dimming alone still glows noticeably on this panel.
         "backlight_off_s": 0,
         "glass_tier": 0,
+        # dtoverlay line for the panel's DSI display, written to config.txt at
+        # provisioning. Stock Raspberry Pi OS auto-detects only the official
+        # Touch Display, so a third-party panel with the wrong line here gets
+        # no signal at all. Empty means add nothing, which is correct for the
+        # official display.
+        "dsi_overlay": "vc4-kms-dsi-waveshare-panel-v2,5_0_inch_a",
     },
     "connection": {"ha_url": "http://homeassistant.local:8123"},
 }

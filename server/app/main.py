@@ -10,6 +10,7 @@ import hmac
 import json
 import os
 import secrets
+import shlex
 import socket
 import time
 
@@ -150,22 +151,34 @@ if [ ! -f /opt/panel/current/secrets.json ]; then
 fi
 
 echo "==> display"
+DSI_OVERLAY=__DSI_OVERLAY_Q__
 CONFIG=/boot/firmware/config.txt
 [ -f "$CONFIG" ] || CONFIG=/boot/config.txt
 NEEDS_REBOOT=0
-if [ -f "$CONFIG" ]; then
-  if grep -q 'vc4-kms-dsi-waveshare-panel' "$CONFIG"; then
+if [ -z "$DSI_OVERLAY" ]; then
+  echo "    no overlay set — correct for the official Touch Display, which is"
+  echo "    auto-detected. A third-party panel needs one or it shows no signal."
+elif [ -f "$CONFIG" ]; then
+  if grep -qxF "dtoverlay=$DSI_OVERLAY" "$CONFIG"; then
     echo "    overlay already present"
   else
+    # Once, before anything is modified: taking it again later would overwrite
+    # the original with a file this script had already edited.
     cp "$CONFIG" "$CONFIG.panel-backup"
+    # Drop any other DSI panel overlay, so changing a panel's screen type
+    # replaces the line rather than adding a second, conflicting one.
+    if grep -qE '^dtoverlay=vc4-kms-dsi-' "$CONFIG"; then
+      sed -i '/^dtoverlay=vc4-kms-dsi-/d' "$CONFIG"
+      echo "    replaced a different DSI overlay"
+    fi
     grep -q '^dtoverlay=vc4-kms-v3d' "$CONFIG" || printf '\ndtoverlay=vc4-kms-v3d\n' >> "$CONFIG"
-    cat >> "$CONFIG" <<'CFG'
-# Waveshare 5-DSI-TOUCH-A (HX8394), DSI1. Stock Raspberry Pi OS only
-# auto-detects the official Touch Display, so without this the panel never
-# initialises and the Pi shows no signal at all -- not even the desktop.
-# For the DSI0 connector, append ,dsi0 to the line below.
-dtoverlay=vc4-kms-dsi-waveshare-panel-v2,5_0_inch_a
-CFG
+    {
+      echo "# Set from this panel's Display configuration. Stock Raspberry Pi OS"
+      echo "# auto-detects only the official Touch Display, so a third-party"
+      echo "# panel with no line here shows no signal at all -- not a blank"
+      echo "# desktop, nothing. Append ,dsi0 for the DSI0 connector."
+      echo "dtoverlay=$DSI_OVERLAY"
+    } >> "$CONFIG"
     echo "    overlay added to $CONFIG (backup: $CONFIG.panel-backup)"
     NEEDS_REBOOT=1
   fi
@@ -904,7 +917,13 @@ async def bootstrap(request: Request, t: str = ""):
     pid = db.consume_token(t)
     if not pid:
         raise HTTPException(404, "unknown or already-used token")
-    body = BOOTSTRAP.replace("__SERVER__", _server_url(request)).replace("__PANEL_ID__", pid)
+    # The DSI overlay is per panel: a 5-inch and a 4.3-inch Waveshare need
+    # different lines, and the official display needs none at all.
+    overlay = (db.merged_config(pid).get("display") or {}).get("dsi_overlay", "")
+    body = (BOOTSTRAP
+            .replace("__SERVER__", _server_url(request))
+            .replace("__PANEL_ID__", pid)
+            .replace("__DSI_OVERLAY_Q__", shlex.quote(overlay or "")))
     return Response(content=body, media_type="text/x-shellscript")
 
 
