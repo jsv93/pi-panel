@@ -83,6 +83,27 @@ not compositor-specific:
 The cursor is dealt with by a udev rule, not by CSS and not by `unclutter` —
 see "The cursor that would not go away" below.
 
+## Getting a shell on a panel
+
+Provisioning tells you to paste the *server's* public key into Raspberry Pi
+Imager. If that is the only authentication configured, the panel accepts
+public-key auth and nothing else — and the matching private key is on the
+server, not on your machine. An SSH client then reports something like "no
+supported authentication methods (server sent: publickey)", which reads as a
+client problem and is not.
+
+Set a password in Imager **as well as** the key. The server still uses its
+key; you get a normal login for the times a panel needs looking at directly,
+which during bring-up is often.
+
+If a panel is already in that state, the server's private key can be read from
+the add-on's data directory using Home Assistant's Terminal & SSH add-on:
+
+    cat /mnt/data/supervisor/addons/data/*panel_server/ssh/id_ed25519
+
+Windows has an OpenSSH client built in and reads that file as-is; PuTTY needs
+it converted with PuTTYgen first.
+
 ## systemd
 
 `systemctl enable --now` does **not** restart a unit that is already running.
