@@ -547,13 +547,17 @@ document.querySelectorAll("#sectNav div[data-s]").forEach(n=>n.onclick=()=>{
   document.querySelectorAll(".sect").forEach(s=>s.classList.toggle("on", s.dataset.s===n.dataset.s));
 });
 
-/* Only the 5-inch is confirmed on hardware. The 4.3-inch line follows
-   Waveshare's naming but is unverified, which is why the overlay stays an
-   editable field rather than a closed list — a wrong line here means a panel
-   with no signal, and that is not worth guessing at on someone's behalf. */
+/* Only the 5-inch is confirmed on hardware; the 4-inch line is the one
+   Waveshare's own wiki documents. An earlier 4_3_inch_a entry here was
+   invented by pattern-matching from the 5-inch and is gone: an unrecognised
+   parameter is silently ignored, and the panel then comes up with the wrong
+   timings — backlight and touch working, picture garbage — which reads as
+   broken hardware rather than a bad config line.
+   `dtoverlay -h vc4-kms-dsi-waveshare-panel-v2` on the Pi lists what the
+   installed overlay actually accepts, which beats guessing from here. */
 const SCREENS = [
   {name:"Waveshare 5\" DSI (A) — confirmed", ov:"vc4-kms-dsi-waveshare-panel-v2,5_0_inch_a"},
-  {name:"Waveshare 4.3\" DSI (A) — unverified", ov:"vc4-kms-dsi-waveshare-panel-v2,4_3_inch_a"},
+  {name:"Waveshare 4\" DSI (A) — per Waveshare's wiki", ov:"vc4-kms-dsi-waveshare-panel-v2,4_0_inch_a"},
   {name:"Official Raspberry Pi Touch Display — no overlay", ov:""},
 ];
 function renderScreens(current){

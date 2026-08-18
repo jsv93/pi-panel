@@ -20,6 +20,21 @@ In `/boot/firmware/config.txt`:
 Append `,dsi0` to the second line if the ribbon is on the DSI0 connector.
 Requires a reboot.
 
+The size parameter is per panel and is set from the panel's Display
+configuration. **An unrecognised parameter is silently ignored**, and the panel
+then initialises with the wrong timings: backlight on, touch responding, and a
+picture of white lines fading in and out as the input changes. That reads as
+broken hardware and is not — it is a bad config line.
+
+To see what the installed overlay actually accepts, rather than guessing from
+the model name:
+
+    dtoverlay -h vc4-kms-dsi-waveshare-panel-v2
+
+Waveshare's wiki documents `4_0_inch_a` for the 4-inch. There is no evidence a
+`4_3_inch_a` exists; an entry for it here was invented by pattern-matching from
+the 5-inch and produced exactly the failure above.
+
 Two consequences worth knowing:
 
 - `/sys/class/backlight/` is empty until the overlay works, so `backlight.py`
