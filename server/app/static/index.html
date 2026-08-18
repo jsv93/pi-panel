@@ -710,6 +710,26 @@ $("#addPanelBtn").onclick = async ()=>{
       openPanel(r.panel_id);
     });
 };
+/* The bootstrap announces each phase as "==> name", so progress comes from
+   the script's own output rather than a second thing to keep in step with it.
+   An unrecognised phase still shows; it just does not move the bar. */
+const STAGES = ["hostname","dependencies","panel files","display","kiosk","services","waiting"];
+function setStage(n, label){
+  const pct = n == null ? 100 : Math.round(n / STAGES.length * 100);
+  $("#sshBar").style.width = pct + "%";
+  $("#sshBar").style.background = label === "failed" ? "var(--bad)" : "var(--accent)";
+  $("#sshStage").textContent = n == null || n >= STAGES.length
+    ? label : `${n + 1} of ${STAGES.length} — ${label}`;
+}
+function trackStage(lines){
+  for(const ln of lines){
+    const m = /^==>\s+(.+)$/.exec(ln.trim());
+    if(!m) continue;
+    const name = m[1].trim();
+    const i = STAGES.findIndex(s=>name.startsWith(s));
+    setStage(i < 0 ? 0 : i, name);
+  }
+}
 function showProvisionCommand(r, opts={}){
   confirmModal("Run this on the Pi",
     `<p class="muted" style="font-size:13px">Panel <b>${r.panel_id}</b> is created and
@@ -762,9 +782,20 @@ function showProvisionCommand(r, opts={}){
        straight through to the panel and never stored on the server. Leave it blank
        and the panel runs in demo mode until you write secrets.json yourself.</div>
      <div style="margin-top:12px"><button class="btn" id="sshRunBtn">Install over SSH</button></div>
-     <pre id="sshOut" style="display:none;margin-top:12px;padding:12px;border-radius:8px;
-       background:#0d0d12;border:1px solid var(--line2);font-size:12px;max-height:240px;
-       overflow:auto;white-space:pre-wrap"></pre>`,
+     <div id="sshProg" style="display:none;margin-top:14px">
+       <div style="display:flex;align-items:center;gap:12px">
+         <div style="flex:1;height:6px;border-radius:3px;background:#16161d;overflow:hidden">
+           <i id="sshBar" style="display:block;height:100%;width:0;background:var(--accent);
+             transition:width .4s var(--ease)"></i></div>
+         <span id="sshStage" class="muted" style="font-size:13px;white-space:nowrap">starting…</span>
+       </div>
+       <details style="margin-top:10px">
+         <summary class="muted" style="font-size:13px;cursor:pointer;user-select:none">Details</summary>
+         <pre id="sshOut" style="margin-top:8px;padding:12px;border-radius:8px;
+           background:#0d0d12;border:1px solid var(--line2);font-size:12px;max-height:260px;
+           overflow:auto;white-space:pre-wrap"></pre>
+       </details>
+     </div>`,
     async ()=>{});
   $("#mOk").textContent = "Finish";
   $("#provCopyBtn").onclick = ()=>copyText(r.command);
@@ -826,31 +857,31 @@ function showProvisionCommand(r, opts={}){
     if(!host || !user){ toast("Host and user are required"); return; }
     const out = $("#sshOut"), btn = $("#sshRunBtn");
     out.style.display = "block";
+    $("#sshProg").style.display = "block";
     out.textContent = `Connecting to ${user}@${host}…\n`;
+    setStage(0, "connecting");
     btn.disabled = true; btn.textContent = "Installing…";
     try{
-      /* Read the response as it arrives rather than awaiting the whole thing:
-         apt, chromium and cage take minutes, and a dialog showing nothing for
-         that long cannot be told apart from one that has hung. */
-      const resp = await fetch(`${BASE}api/provision/${r.token}/run`,{
-        method:"POST", credentials:"same-origin",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({host, user, hostname:$("#sshHostname").value.trim(),
-                             ha_token:$("#sshToken").value})});
-      if(!resp.ok){ out.textContent += `\nServer refused: ${resp.status} ${resp.statusText}`; }
-      else{
-        const rd = resp.body.getReader(), dec = new TextDecoder();
-        for(;;){
-          const {done, value} = await rd.read();
-          if(done) break;
-          out.textContent += dec.decode(value, {stream:true});
+      const {job} = await api(`/provision/${r.token}/run`,{method:"POST",body:JSON.stringify({
+        host, user, hostname:$("#sshHostname").value.trim(), ha_token:$("#sshToken").value})});
+      /* Polled, not streamed. A streamed response arrives in one lump behind
+         Home Assistant's ingress proxy, so the install looked hung for minutes. */
+      let offset = 0, ok = false;
+      for(;;){
+        const s = await api(`/provision/run/${job}?offset=${offset}`);
+        offset = s.offset;
+        if(s.lines.length){
+          out.textContent += s.lines.join("\n") + "\n";
           out.scrollTop = out.scrollHeight;
+          trackStage(s.lines);
         }
-        const ok = /=== finished, exit 0 ===/.test(out.textContent);
-        toast(ok ? "Installed — the panel reboots itself" : "Install failed, see the output");
-        if(ok){ $("#sshToken").value = ""; loadFleet(); }
+        if(s.done){ ok = s.ok; break; }
+        await new Promise(f=>setTimeout(f, 1000));
       }
-    }catch(e){ out.textContent += "\nRequest failed: " + (e.message || e); }
+      setStage(ok ? STAGES.length : null, ok ? "done" : "failed");
+      toast(ok ? "Installed — the panel reboots itself" : "Install failed, see Details");
+      if(ok){ $("#sshToken").value = ""; loadFleet(); }
+    }catch(e){ out.textContent += "\nRequest failed: " + (e.message || e); setStage(null,"failed"); }
     btn.disabled = false; btn.textContent = "Install over SSH";
   };
 }

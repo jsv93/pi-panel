@@ -12,13 +12,13 @@ import os
 import secrets
 import shlex
 import socket
+import threading
 import time
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from starlette.concurrency import run_in_threadpool
 
 from . import db, firstboot, ha, ssh
 
@@ -436,6 +436,25 @@ exit 1
 app = FastAPI(title="Panel Config Server")
 db.init()
 
+# Installs in progress, polled by the browser. In memory on purpose: an install
+# is a one-off someone is watching, and a server restart mid-install means
+# starting over regardless, so there is nothing worth persisting.
+INSTALL_JOBS: dict[str, dict] = {}
+INSTALL_JOBS_MAX = 8
+
+
+def _run_install(job_id, host, user, url, hostname, ha_token, port):
+    job = INSTALL_JOBS[job_id]
+    try:
+        for chunk in ssh.bootstrap_lines(host, user, url, hostname, ha_token, port):
+            job["lines"].extend(chunk.splitlines())
+    except Exception as e:
+        job["lines"].append(f"install failed: {e.__class__.__name__}: {e}")
+    finally:
+        job["ok"] = any(ssh.DONE + "0 ===" in ln for ln in job["lines"])
+        job["done"] = True
+
+
 # panel_id -> WebSocket
 LIVE: dict[str, WebSocket] = {}
 # session token -> expiry
@@ -820,20 +839,31 @@ async def provision_run(token: str, request: Request):
     # there is one provisioning path rather than two that can drift. Fetching
     # that URL is what consumes the token.
     #
-    # Streamed as plain text: the install takes minutes and a dialog that shows
-    # nothing until it finishes cannot be told apart from one that has hung.
-    gen = ssh.bootstrap_lines(host, user, url, (b.get("hostname") or "").strip(),
-                              b.get("ha_token") or "", port)
+    # Run as a background job the browser polls, rather than streamed. A
+    # streamed response arrived in one lump behind Home Assistant's ingress
+    # proxy, which buffers -- so the install looked hung for several minutes,
+    # the exact problem streaming was added to solve. Polling cannot be
+    # buffered into uselessness by anything in between.
+    job_id = secrets.token_urlsafe(8)
+    INSTALL_JOBS[job_id] = {"lines": [], "done": False, "ok": False, "at": time.time()}
+    for old in sorted(INSTALL_JOBS, key=lambda k: INSTALL_JOBS[k]["at"])[:-INSTALL_JOBS_MAX]:
+        INSTALL_JOBS.pop(old, None)
+    threading.Thread(
+        target=_run_install, daemon=True,
+        args=(job_id, host, user, url, (b.get("hostname") or "").strip(),
+              b.get("ha_token") or "", port),
+    ).start()
+    return {"job": job_id}
 
-    async def pump():
-        while True:
-            chunk = await run_in_threadpool(lambda: next(gen, None))
-            if chunk is None:
-                return
-            yield chunk
 
-    return StreamingResponse(pump(), media_type="text/plain; charset=utf-8",
-                             headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store"})
+@app.get("/api/provision/run/{job_id}", dependencies=[Depends(require_admin)])
+async def provision_run_status(job_id: str, offset: int = 0):
+    """Lines since `offset`, so a poll only carries what is new."""
+    job = INSTALL_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "unknown or expired install")
+    return {"lines": job["lines"][offset:], "offset": len(job["lines"]),
+            "done": job["done"], "ok": job["ok"]}
 
 
 @app.post("/api/provision/{token}/firstrun", dependencies=[Depends(require_admin)])
