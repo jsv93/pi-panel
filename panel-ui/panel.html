@@ -1028,7 +1028,13 @@ setInterval(checkLuna,30000); checkLuna();
    roughly three times that. */
 const MIN_LAYOUT_H = 1000;
 function fitStage(){
-  const w = window.innerWidth, h = window.innerHeight;
+  /* clientWidth, not innerWidth. innerWidth includes any scrollbar gutter the
+     browser reserves, so the scale comes out fractionally too large and the
+     whole overflow lands on the right — left edge perfect, right edge past the
+     screen by roughly the page padding. clientWidth is the usable area. */
+  const el = document.documentElement;
+  const w = el.clientWidth || window.innerWidth;
+  const h = el.clientHeight || window.innerHeight;
   const s = Math.min(w / 720, h / MIN_LAYOUT_H);
   /* Height in layout pixels, so the design occupies the real screen exactly:
      a short panel gets fewer than 1280 and the room area, anchored between the
