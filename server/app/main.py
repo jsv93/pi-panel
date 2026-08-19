@@ -359,6 +359,12 @@ Wants=network-online.target
 Type=simple
 Environment=PANEL_SERVER=$SERVER
 Environment=PANEL_DIR=/opt/panel
+# Python buffers stdout in 8KB blocks when it is a pipe, and the journal is a
+# pipe. Without this the agent's output only appears once enough of it has
+# accumulated -- so a panel that is working quietly logs nothing at all, while
+# one failing in a retry loop logs fine. That difference cost several rounds of
+# chasing a bug by its silence.
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/usr/local/bin/panel-agent
 Restart=always
 RestartSec=10
@@ -373,6 +379,7 @@ cat > /etc/systemd/system/panel-backlight.service <<UNIT
 Description=Panel backlight helper
 
 [Service]
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/usr/local/bin/panel-backlight
 Restart=always
 
