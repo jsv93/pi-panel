@@ -302,7 +302,25 @@ async def serve_ui():
     blocks fetch() on file:// URLs, so config.json would never load."""
     root = PANEL_DIR / "current"
     root.mkdir(parents=True, exist_ok=True)
-    app = web.Application()
+
+    @web.middleware
+    async def no_cache(request, handler):
+        """Nothing served here may be cached.
+
+        With no cache headers the browser applies heuristic freshness and stops
+        revalidating entirely — so a replaced panel.html or a freshly synced
+        config.json is simply not fetched, and the panel goes on showing the
+        old one with nothing to indicate why. Chromium here has a persistent
+        profile, so that cache survives restarts and reboots too.
+        """
+        resp = await handler(request)
+        try:
+            resp.headers["Cache-Control"] = "no-store, must-revalidate"
+        except Exception:
+            pass          # websocket responses are already sent
+        return resp
+
+    app = web.Application(middlewares=[no_cache])
     app.router.add_get("/agent", page_ws)
     # Before the static catch-all, which would otherwise swallow these.
     app.router.add_get("/wifi", wifi_get)
