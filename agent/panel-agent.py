@@ -251,6 +251,10 @@ async def page_ws(request):
                 continue
             if data.get("type") == "ha":
                 UI_STATE["ha_connected"] = bool(data.get("connected"))
+            elif data.get("type") == "viewport":
+                # A panel has no console, so what the page measured is only
+                # visible if it says so somewhere readable over SSH.
+                print(f"[agent] viewport {json.dumps({k: v for k, v in data.items() if k != 'type'})}")
     finally:
         PAGES.discard(ws)
         print(f"[agent] page gone ({len(PAGES)} open)")

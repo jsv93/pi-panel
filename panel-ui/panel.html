@@ -1049,6 +1049,22 @@ function fitStage(){
   root.setProperty("--scale", s);
   root.setProperty("--stage-h", stageH + "px");
   root.setProperty("--stage-x", offset + "px");
+  reportViewport(w, h, s, stageH, offset);
+}
+/* Sent to the agent, which logs it, because a wall panel has no console and
+   guessing at why a layout is a few pixels out has already cost a round trip.
+   `journalctl -u panel-agent | grep viewport` says what the page actually
+   measured and what the body ended up occupying. */
+function reportViewport(w, h, s, stageH, offset){
+  setTimeout(()=>{
+    let box = null;
+    try{ const r = document.body.getBoundingClientRect(); box = [Math.round(r.left), Math.round(r.right), Math.round(r.width)]; }catch(e){}
+    const info = {type:"viewport", client:[w,h], inner:[innerWidth,innerHeight],
+                  dpr:devicePixelRatio, scale:+s.toFixed(4), stageH, offset,
+                  bodyLeftRightWidth:box,
+                  scroll:[document.documentElement.scrollWidth, document.body.scrollWidth]};
+    try{ if(agentWS && agentWS.readyState===1) agentWS.send(JSON.stringify(info)); }catch(e){}
+  }, 300);
 }
 fitStage();
 /* Panels do not resize, but the preview iframe in the server GUI does, and so
