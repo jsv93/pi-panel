@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=720, initial-scale=1, user-scalable=no">
+<!-- device-width, not a fixed 720: the layout is authored at 720 and scaled by
+     script to whatever the panel is. Pinning the viewport to 720 would make
+     innerWidth report 720 on every screen, so the scale would always compute
+     as 1 and nothing would fit. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <title>Wall Panel</title>
 <style>
 
@@ -16,8 +20,20 @@
   --ease:cubic-bezier(.22,.61,.36,1); --sheet-ease:cubic-bezier(.16,.84,.32,1);
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-html,body{width:720px;height:1280px;overflow:hidden}
-body{background:linear-gradient(178deg,var(--bg-top) 0%,var(--bg-bot) 78%);
+/* The layout is authored at 720 CSS px wide and scaled to whatever the panel
+   actually is. Scaling by width alone, rather than fitting the whole
+   1280-tall design, means no letterbox bars: the body is given however many
+   CSS pixels of height the real screen works out to, and the layout absorbs
+   the difference because it is anchored top and bottom rather than sized to
+   1280. A 480x800 panel becomes 720x1200 of layout at 0.667 scale.
+
+   transform, not zoom or rewritten units: compositor-only, applied once, and
+   it leaves every measurement in the rest of this file meaning what it says.
+   --stage-h and --scale are set by fitStage() at the bottom. */
+html{width:100%;height:100%;overflow:hidden;background:var(--bg-bot)}
+body{width:720px;height:var(--stage-h,1280px);overflow:hidden;position:relative;
+  transform:translateX(var(--stage-x,0)) scale(var(--scale,1));transform-origin:top left;
+  background:linear-gradient(178deg,var(--bg-top) 0%,var(--bg-bot) 78%);
   color:var(--ink);font-family:"Roboto","Helvetica Neue",system-ui,sans-serif;font-weight:300;
   user-select:none;cursor:none}
 /* cursor is inherited, but be explicit: under cage a touch-only panel never
@@ -1003,6 +1019,35 @@ async function checkLuna(){
   catch(e){ setDot("#stLuna","bad","unreachable"); }
 }
 setInterval(checkLuna,30000); checkLuna();
+
+/* ---------- fit the 720-wide layout to this screen ---------- */
+/* Least layout height the design tolerates. Below this the clock, presets and
+   now-playing strip stop fitting above the nav, so a screen too short to give
+   it is letterboxed instead — narrower, but not broken. Scaling on width
+   alone would hand a 1024x600 panel 421px of layout for a design that needs
+   roughly three times that. */
+const MIN_LAYOUT_H = 1000;
+function fitStage(){
+  const w = window.innerWidth, h = window.innerHeight;
+  const s = Math.min(w / 720, h / MIN_LAYOUT_H);
+  /* Height in layout pixels, so the design occupies the real screen exactly:
+     a short panel gets fewer than 1280 and the room area, anchored between the
+     top and the nav rather than given a height, absorbs the difference.
+     Rounded down so a fractional pixel cannot expose a strip of page
+     background under the nav. */
+  const stageH = Math.floor(h / s);
+  /* Only ever non-zero on a screen wider than the layout can use — the
+     letterbox case above. Portrait panels fill edge to edge. */
+  const offset = Math.round((w - 720 * s) / 2);
+  const root = document.documentElement.style;
+  root.setProperty("--scale", s);
+  root.setProperty("--stage-h", stageH + "px");
+  root.setProperty("--stage-x", offset + "px");
+}
+fitStage();
+/* Panels do not resize, but the preview iframe in the server GUI does, and so
+   does a browser opened on this URL to debug it. */
+addEventListener("resize", fitStage);
 
 /* ---------- idle ---------- */
 let idleT, offT;
