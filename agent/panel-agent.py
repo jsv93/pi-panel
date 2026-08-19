@@ -77,8 +77,85 @@ def local_version():
         return 0
 
 
+async def nmcli(*args, timeout=20):
+    """Run nmcli and return (ok, stdout). Never raises: a panel without
+    NetworkManager, or on Ethernet, should degrade to "no wifi" rather than
+    taking the agent down with it."""
+    try:
+        p = await asyncio.create_subprocess_exec(
+            "nmcli", *args,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        out, _ = await asyncio.wait_for(p.communicate(), timeout=timeout)
+        return p.returncode == 0, out.decode(errors="replace").strip()
+    except Exception as e:
+        return False, f"{e.__class__.__name__}: {e}"
+
+
+def _unescape(field):
+    r"""nmcli -t escapes colons inside values as \: — undo that, or an SSID
+    containing one is silently truncated at the wrong place."""
+    return field.replace("\\:", ":").replace("\\\\", "\\")
+
+
+def _split_terse(line):
+    """Split an nmcli -t line on unescaped colons."""
+    out, cur, esc = [], "", False
+    for ch in line:
+        if esc:
+            cur += "\\" + ch
+            esc = False
+        elif ch == "\\":
+            esc = True
+        elif ch == ":":
+            out.append(_unescape(cur))
+            cur = ""
+        else:
+            cur += ch
+    out.append(_unescape(cur))
+    return out
+
+
+async def wifi_status():
+    """Current SSID and signal, or empty when not on wifi."""
+    ok, out = await nmcli("-t", "-f", "ACTIVE,SSID,SIGNAL", "device", "wifi")
+    if not ok:
+        return {"available": False}
+    for line in out.splitlines():
+        f = _split_terse(line)
+        if len(f) >= 3 and f[0] == "yes":
+            return {"available": True, "ssid": f[1], "signal": _int(f[2])}
+    return {"available": True, "ssid": "", "signal": 0}
+
+
+def _int(v):
+    try:
+        return int(v)
+    except Exception:
+        return 0
+
+
+async def wifi_scan():
+    """Visible networks, strongest first, one entry per SSID."""
+    ok, out = await nmcli("-t", "-f", "SSID,SIGNAL,SECURITY", "device", "wifi",
+                          "list", "--rescan", "yes", timeout=30)
+    if not ok:
+        return []
+    best = {}
+    for line in out.splitlines():
+        f = _split_terse(line)
+        if len(f) < 3 or not f[0]:
+            continue
+        ssid, sig = f[0], _int(f[1])
+        # An SSID appears once per AP; a panel between two of them should see
+        # one network, at the better signal.
+        if ssid not in best or sig > best[ssid]["signal"]:
+            best[ssid] = {"ssid": ssid, "signal": sig, "secure": bool(f[2].strip())}
+    return sorted(best.values(), key=lambda n: -n["signal"])
+
+
 def metrics():
     m = {"ui_version": AGENT_VER}
+    m.update(UI_STATE.get("wifi") or {})
     try:
         t = Path("/sys/class/thermal/thermal_zone0/temp").read_text().strip()
         m["cpu_temp"] = round(int(t) / 1000)
@@ -180,6 +257,42 @@ async def page_ws(request):
     return ws
 
 
+async def wifi_get(request):
+    """Status plus, if asked, a scan. Scanning takes seconds, so the panel's
+    settings sheet asks for it only when someone opens the wifi list."""
+    body = {"status": await wifi_status()}
+    if request.query.get("scan") == "1":
+        body["networks"] = await wifi_scan()
+    return web.json_response(body)
+
+
+async def wifi_connect(request):
+    """Join a network.
+
+    Deliberately here and not on the config server: a panel with broken wifi
+    is exactly the panel the server cannot reach, so server-side wifi config
+    would only work when it was not needed. It also keeps network credentials
+    off the server, and means whoever changes a setting that can cut the panel
+    off is standing in front of it.
+    """
+    try:
+        b = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "bad request"}, status=400)
+    ssid = (b.get("ssid") or "").strip()
+    if not ssid:
+        return web.json_response({"ok": False, "error": "ssid required"}, status=400)
+    psk = b.get("psk") or ""
+    args = ["device", "wifi", "connect", ssid]
+    if psk:
+        args += ["password", psk]
+    ok, out = await nmcli(*args, timeout=45)
+    # nmcli reports a wrong key as a plain failure; pass its own words through
+    # rather than inventing a friendlier message that says less.
+    return web.json_response({"ok": ok, "message": out,
+                              "status": await wifi_status()})
+
+
 async def serve_ui():
     """Static server for /opt/panel/current. Required, not optional: Chromium
     blocks fetch() on file:// URLs, so config.json would never load."""
@@ -187,6 +300,9 @@ async def serve_ui():
     root.mkdir(parents=True, exist_ok=True)
     app = web.Application()
     app.router.add_get("/agent", page_ws)
+    # Before the static catch-all, which would otherwise swallow these.
+    app.router.add_get("/wifi", wifi_get)
+    app.router.add_post("/wifi/connect", wifi_connect)
     app.router.add_static("/", str(root), show_index=True)
     runner = web.AppRunner(app)
     await runner.setup()
@@ -213,6 +329,15 @@ async def register(session):
 
 async def heartbeat_loop(session):
     while True:
+        # Refreshed here rather than inside metrics(), which is synchronous and
+        # called from places that must not block on a subprocess.
+        try:
+            st = await wifi_status()
+            UI_STATE["wifi"] = ({"wifi_ssid": st.get("ssid", ""),
+                                 "wifi_signal": st.get("signal", 0)}
+                                if st.get("available") and st.get("ssid") else {})
+        except Exception:
+            pass
         try:
             async with session.post(f"{SERVER}/api/heartbeat", timeout=10, json={
                     "panel_id": PANEL_ID, "metrics": metrics(),
