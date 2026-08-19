@@ -81,6 +81,12 @@ DEFAULT_TEMPLATE = {
         # no signal at all. Empty means add nothing, which is correct for the
         # official display.
         "dsi_overlay": "vc4-kms-dsi-waveshare-panel-v2,5_0_inch_a",
+        # Only needed where the browser misreports the panel's size. Chromium
+        # will not report a viewport narrower than ~500px, so a 480-wide panel
+        # is told it is 500 and anything scaled to that overflows. 0 = trust
+        # the browser.
+        "screen_width": 0,
+        "screen_height": 0,
     },
     "connection": {"ha_url": "http://homeassistant.local:8123"},
 }

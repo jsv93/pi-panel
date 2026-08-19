@@ -303,6 +303,16 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
             <div><div class="lbl">BACKLIGHT OFF AFTER (SECONDS IDLE, 0 = NEVER)</div>
               <input type="number" id="fBlOff"></div>
             <div><div class="lbl">SCREEN</div><select id="fScreen"></select></div>
+            <div><div class="lbl">SCREEN SIZE IN PIXELS (0 = ASK THE BROWSER)</div>
+              <div style="display:flex;gap:10px;align-items:center">
+                <input type="number" id="fScreenW" style="flex:1" placeholder="width">
+                <span class="muted">×</span>
+                <input type="number" id="fScreenH" style="flex:1" placeholder="height">
+              </div>
+              <div class="muted" style="font-size:12px;margin-top:5px">Filled in from
+                the screen above. Needed because Chromium refuses to report a viewport
+                narrower than about 500px, so a 480-wide panel is told it is 500 and
+                the UI overflows the right edge by 20px.</div></div>
             <div><div class="lbl">DTOVERLAY LINE</div>
               <input id="fDsiOverlay" placeholder="none — official display auto-detects">
               <div class="muted" style="font-size:12px;margin-top:5px">Written to
@@ -515,6 +525,8 @@ async function openPanel(id){
   $("#fBlMin").value = d.backlight_min ?? 5;
   $("#fBlOff").value = d.backlight_off_s ?? 0;
   renderScreens(d.dsi_overlay ?? "");
+  $("#fScreenW").value = d.screen_width ?? 0;
+  $("#fScreenH").value = d.screen_height ?? 0;
 
   $("#problems").innerHTML = (CUR.problems||[]).map(p=>
     `<div class="err">⚠ ${p.message}</div>`).join("");
@@ -557,26 +569,26 @@ document.querySelectorAll("#sectNav div[data-s]").forEach(n=>n.onclick=()=>{
    connector use the default. */
 const WS = "vc4-kms-dsi-waveshare-panel-v2,";
 const SCREENS = [
-  {name:"Official Raspberry Pi Touch Display — no overlay", ov:""},
-  {name:"Waveshare 3.4\" 800x800",            ov:WS+"3_4_inch_c"},
-  {name:"Waveshare 4.0\" (A) 480x800",        ov:WS+"4_0_inch_a"},
-  {name:"Waveshare 4.0\" (C) 720x720",        ov:WS+"4_0_inch_c"},
-  {name:"Waveshare 4.3\" (A) 480x800",        ov:WS+"4_3_inch_a"},
-  {name:"Waveshare 5.0\" (A) 720x1280",       ov:WS+"5_0_inch_a"},
-  {name:"Waveshare 5.5\" (A) 720x1280",       ov:WS+"5_5_inch_a"},
-  {name:"Waveshare 7.0\" (A) 720x1280",       ov:WS+"7_0_inch_a"},
-  {name:"Waveshare 7.0\" (B) 720x1280",       ov:WS+"7_0_inch_b"},
-  {name:"Waveshare 7.0\" (C) 1024x600",       ov:WS+"7_0_inch_c"},
-  {name:"Waveshare 8.0\" (A) 800x1280",       ov:WS+"8_0_inch_a"},
-  {name:"Waveshare 8.0\" (A) 800x1280 4-lane", ov:WS+"8_0_inch_a_4lane"},
-  {name:"Waveshare 8.8\" (A) 480x1920",       ov:WS+"8_8_inch_a"},
-  {name:"Waveshare 9.0\" (B) 720x1280",       ov:WS+"9_0_inch_b"},
-  {name:"Waveshare 9.0\" (B) 720x1280 4-lane", ov:WS+"9_0_inch_b_4lane"},
-  {name:"Waveshare 10.1\" (A) 800x1280",      ov:WS+"10_1_inch_a"},
-  {name:"Waveshare 10.1\" (A) 800x1280 4-lane", ov:WS+"10_1_inch_a_4lane"},
-  {name:"Waveshare 10.1\" (B) 720x1280",      ov:WS+"10_1_inch_b"},
-  {name:"Waveshare 10.1\" (B) 720x1280 4-lane", ov:WS+"10_1_inch_b_4lane"},
-  {name:"Waveshare 12.3\" (A) 720x1920 4-lane", ov:WS+"12_3_inch_a_4lane"},
+  {name:"Official Raspberry Pi Touch Display — no overlay", ov:"", px:null},
+  {name:"Waveshare 3.4\" 800x800",            ov:WS+"3_4_inch_c", px:[800,800]},
+  {name:"Waveshare 4.0\" (A) 480x800",        ov:WS+"4_0_inch_a", px:[480,800]},
+  {name:"Waveshare 4.0\" (C) 720x720",        ov:WS+"4_0_inch_c", px:[720,720]},
+  {name:"Waveshare 4.3\" (A) 480x800",        ov:WS+"4_3_inch_a", px:[480,800]},
+  {name:"Waveshare 5.0\" (A) 720x1280",       ov:WS+"5_0_inch_a", px:[720,1280]},
+  {name:"Waveshare 5.5\" (A) 720x1280",       ov:WS+"5_5_inch_a", px:[720,1280]},
+  {name:"Waveshare 7.0\" (A) 720x1280",       ov:WS+"7_0_inch_a", px:[720,1280]},
+  {name:"Waveshare 7.0\" (B) 720x1280",       ov:WS+"7_0_inch_b", px:[720,1280]},
+  {name:"Waveshare 7.0\" (C) 1024x600",       ov:WS+"7_0_inch_c", px:[1024,600]},
+  {name:"Waveshare 8.0\" (A) 800x1280",       ov:WS+"8_0_inch_a", px:[800,1280]},
+  {name:"Waveshare 8.0\" (A) 800x1280 4-lane", ov:WS+"8_0_inch_a_4lane", px:[800,1280]},
+  {name:"Waveshare 8.8\" (A) 480x1920",       ov:WS+"8_8_inch_a", px:[480,1920]},
+  {name:"Waveshare 9.0\" (B) 720x1280",       ov:WS+"9_0_inch_b", px:[720,1280]},
+  {name:"Waveshare 9.0\" (B) 720x1280 4-lane", ov:WS+"9_0_inch_b_4lane", px:[720,1280]},
+  {name:"Waveshare 10.1\" (A) 800x1280",      ov:WS+"10_1_inch_a", px:[800,1280]},
+  {name:"Waveshare 10.1\" (A) 800x1280 4-lane", ov:WS+"10_1_inch_a_4lane", px:[800,1280]},
+  {name:"Waveshare 10.1\" (B) 720x1280",      ov:WS+"10_1_inch_b", px:[720,1280]},
+  {name:"Waveshare 10.1\" (B) 720x1280 4-lane", ov:WS+"10_1_inch_b_4lane", px:[720,1280]},
+  {name:"Waveshare 12.3\" (A) 720x1920 4-lane", ov:WS+"12_3_inch_a_4lane", px:[720,1920]},
 ];
 function renderScreens(current){
   const known = SCREENS.find(s=>s.ov===current);
@@ -587,7 +599,15 @@ function renderScreens(current){
 }
 $("#fScreen").onchange = ()=>{
   const v = $("#fScreen").value;
-  if(v !== "__custom") $("#fDsiOverlay").value = v;
+  if(v !== "__custom"){
+    $("#fDsiOverlay").value = v;
+    /* Fill the pixel size from the chosen screen. The panel's real resolution
+       is known here and the browser's is not trustworthy, so the known value
+       wins by default; clear the fields to go back to asking the browser. */
+    const s = SCREENS.find(x=>x.ov===v);
+    $("#fScreenW").value = s && s.px ? s.px[0] : 0;
+    $("#fScreenH").value = s && s.px ? s.px[1] : 0;
+  }
   $("#fDsiOverlay").focus();
 };
 /* Typing an overlay by hand flips the picker rather than leaving it claiming
@@ -643,7 +663,9 @@ function collect(){
   CFG.display = {idle_timeout_s:+$("#fIdle").value, glass_tier:+$("#fGlass").value,
                  backlight_default:+$("#fBlDef").value, backlight_min:+$("#fBlMin").value,
                  backlight_off_s:+$("#fBlOff").value,
-                 dsi_overlay:$("#fDsiOverlay").value.trim()};
+                 dsi_overlay:$("#fDsiOverlay").value.trim(),
+                 screen_width:+$("#fScreenW").value || 0,
+                 screen_height:+$("#fScreenH").value || 0};
   return CFG;
 }
 $("#saveBtn").onclick = async ()=>{

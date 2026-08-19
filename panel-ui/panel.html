@@ -472,6 +472,10 @@ const _disp    = CFG.display || {};
 const IDLE_MS  = (_disp.idle_timeout_s ?? 45) * 1000;
 /* Measured from when the panel goes idle, not from the last touch. 0 = never. */
 const OFF_MS   = (_disp.backlight_off_s ?? 0) * 1000;
+/* Set only when the browser will not report this panel's real size — see
+   fitStage. 0 means trust what it reports. */
+const SCREEN_W = +(_disp.screen_width  ?? 0) || 0;
+const SCREEN_H = +(_disp.screen_height ?? 0) || 0;
 const BL_MIN   = _disp.backlight_min ?? 5;
 const BL_DEF   = _disp.backlight_default ?? 100;
 const GLASS_DEFAULT = _disp.glass_tier ?? 0;
@@ -1028,13 +1032,17 @@ setInterval(checkLuna,30000); checkLuna();
    roughly three times that. */
 const MIN_LAYOUT_H = 1000;
 function fitStage(){
-  /* clientWidth, not innerWidth. innerWidth includes any scrollbar gutter the
-     browser reserves, so the scale comes out fractionally too large and the
-     whole overflow lands on the right — left edge perfect, right edge past the
-     screen by roughly the page padding. clientWidth is the usable area. */
+  /* Chromium will not report a viewport narrower than about 500px however
+     small the surface actually is, so on a 480-wide panel it claims 500 and
+     everything scaled to that overflows the right edge by 20px. DRM has the
+     mode right; the clamp happens above it and nothing in CSS can see past it.
+     screen.width sometimes escapes the clamp, so take the smaller, and let a
+     panel override both when neither is honest. */
   const el = document.documentElement;
-  const w = el.clientWidth || window.innerWidth;
-  const h = el.clientHeight || window.innerHeight;
+  const measured = Math.min(el.clientWidth || 1e9, screen.width || 1e9,
+                            window.innerWidth || 1e9);
+  const w = SCREEN_W || (isFinite(measured) ? measured : 720);
+  const h = SCREEN_H || el.clientHeight || window.innerHeight;
   const s = Math.min(w / 720, h / MIN_LAYOUT_H);
   /* Height in layout pixels, so the design occupies the real screen exactly:
      a short panel gets fewer than 1280 and the room area, anchored between the
@@ -1059,7 +1067,11 @@ function reportViewport(w, h, s, stageH, offset){
   setTimeout(()=>{
     let box = null;
     try{ const r = document.body.getBoundingClientRect(); box = [Math.round(r.left), Math.round(r.right), Math.round(r.width)]; }catch(e){}
-    const info = {type:"viewport", client:[w,h], inner:[innerWidth,innerHeight],
+    const info = {type:"viewport", used:[w,h], client:[document.documentElement.clientWidth,
+                  document.documentElement.clientHeight], inner:[innerWidth,innerHeight],
+                  screen:[screen.width, screen.height],
+                  avail:[screen.availWidth, screen.availHeight],
+                  configured:[SCREEN_W, SCREEN_H],
                   dpr:devicePixelRatio, scale:+s.toFixed(4), stageH, offset,
                   bodyLeftRightWidth:box,
                   scroll:[document.documentElement.scrollWidth, document.body.scrollWidth]};
