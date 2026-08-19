@@ -26,14 +26,22 @@ then initialises with the wrong timings: backlight on, touch responding, and a
 picture of white lines fading in and out as the input changes. That reads as
 broken hardware and is not — it is a bad config line.
 
-To see what the installed overlay actually accepts, rather than guessing from
-the model name:
+To see what the installed overlay accepts, rather than guessing from the model
+name — a Waveshare wiki page for a neighbouring product will happily give you
+a parameter for the wrong panel:
 
     dtoverlay -h vc4-kms-dsi-waveshare-panel-v2
 
-Waveshare's wiki documents `4_0_inch_a` for the 4-inch. There is no evidence a
-`4_3_inch_a` exists; an entry for it here was invented by pattern-matching from
-the 5-inch and produced exactly the failure above.
+The screen picker's list is taken from that output. Sizes run 3.4" to 12.3",
+several have A/B/C variants at different resolutions, and the larger ones have
+2-lane and 4-lane forms — so the model name alone does not determine the
+parameter.
+
+**Two DSI overlay lines is worse than none.** Provisioning replaces any
+existing one, but a panel set up before that behaviour existed, or edited by
+hand, can end up with two drivers contending for one DSI link — white lines
+fading in and out as the input changes, with backlight and touch both working.
+Check with `grep dtoverlay /boot/firmware/config.txt`.
 
 Two consequences worth knowing:
 

@@ -306,9 +306,10 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
             <div><div class="lbl">DTOVERLAY LINE</div>
               <input id="fDsiOverlay" placeholder="none — official display auto-detects">
               <div class="muted" style="font-size:12px;margin-top:5px">Written to
-                config.txt when the panel is provisioned. A third-party DSI panel with
-                the wrong line here shows no signal at all, so if your screen is not
-                listed, put its overlay here and tell me what worked.</div></div>
+                config.txt when the panel is provisioned, replacing any DSI overlay
+                already there. Append <code>,dsi0</code> for the second connector on a
+                Pi 5 or CM. <code>dtoverlay -h vc4-kms-dsi-waveshare-panel-v2</code> on
+                a panel lists what its firmware supports.</div></div>
           </div>
         </div>
 
@@ -547,18 +548,35 @@ document.querySelectorAll("#sectNav div[data-s]").forEach(n=>n.onclick=()=>{
   document.querySelectorAll(".sect").forEach(s=>s.classList.toggle("on", s.dataset.s===n.dataset.s));
 });
 
-/* Only the 5-inch is confirmed on hardware; the 4-inch line is the one
-   Waveshare's own wiki documents. An earlier 4_3_inch_a entry here was
-   invented by pattern-matching from the 5-inch and is gone: an unrecognised
-   parameter is silently ignored, and the panel then comes up with the wrong
-   timings — backlight and touch working, picture garbage — which reads as
-   broken hardware rather than a bad config line.
-   `dtoverlay -h vc4-kms-dsi-waveshare-panel-v2` on the Pi lists what the
-   installed overlay actually accepts, which beats guessing from here. */
+/* Taken verbatim from `dtoverlay -h vc4-kms-dsi-waveshare-panel-v2` on a panel,
+   not from product names — an earlier entry here was pattern-matched from the
+   5-inch and happened to be right, which is luck rather than method. An
+   unrecognised parameter is silently ignored and the panel then comes up with
+   the wrong timings, so a wrong entry reads as broken hardware.
+   Append ,dsi0 for the second DSI connector on a Pi 5 or CM; boards with one
+   connector use the default. */
+const WS = "vc4-kms-dsi-waveshare-panel-v2,";
 const SCREENS = [
-  {name:"Waveshare 5\" DSI (A) — confirmed", ov:"vc4-kms-dsi-waveshare-panel-v2,5_0_inch_a"},
-  {name:"Waveshare 4\" DSI (A) — per Waveshare's wiki", ov:"vc4-kms-dsi-waveshare-panel-v2,4_0_inch_a"},
   {name:"Official Raspberry Pi Touch Display — no overlay", ov:""},
+  {name:"Waveshare 3.4\" 800x800",            ov:WS+"3_4_inch_c"},
+  {name:"Waveshare 4.0\" (A) 480x800",        ov:WS+"4_0_inch_a"},
+  {name:"Waveshare 4.0\" (C) 720x720",        ov:WS+"4_0_inch_c"},
+  {name:"Waveshare 4.3\" (A) 480x800",        ov:WS+"4_3_inch_a"},
+  {name:"Waveshare 5.0\" (A) 720x1280",       ov:WS+"5_0_inch_a"},
+  {name:"Waveshare 5.5\" (A) 720x1280",       ov:WS+"5_5_inch_a"},
+  {name:"Waveshare 7.0\" (A) 720x1280",       ov:WS+"7_0_inch_a"},
+  {name:"Waveshare 7.0\" (B) 720x1280",       ov:WS+"7_0_inch_b"},
+  {name:"Waveshare 7.0\" (C) 1024x600",       ov:WS+"7_0_inch_c"},
+  {name:"Waveshare 8.0\" (A) 800x1280",       ov:WS+"8_0_inch_a"},
+  {name:"Waveshare 8.0\" (A) 800x1280 4-lane", ov:WS+"8_0_inch_a_4lane"},
+  {name:"Waveshare 8.8\" (A) 480x1920",       ov:WS+"8_8_inch_a"},
+  {name:"Waveshare 9.0\" (B) 720x1280",       ov:WS+"9_0_inch_b"},
+  {name:"Waveshare 9.0\" (B) 720x1280 4-lane", ov:WS+"9_0_inch_b_4lane"},
+  {name:"Waveshare 10.1\" (A) 800x1280",      ov:WS+"10_1_inch_a"},
+  {name:"Waveshare 10.1\" (A) 800x1280 4-lane", ov:WS+"10_1_inch_a_4lane"},
+  {name:"Waveshare 10.1\" (B) 720x1280",      ov:WS+"10_1_inch_b"},
+  {name:"Waveshare 10.1\" (B) 720x1280 4-lane", ov:WS+"10_1_inch_b_4lane"},
+  {name:"Waveshare 12.3\" (A) 720x1920 4-lane", ov:WS+"12_3_inch_a_4lane"},
 ];
 function renderScreens(current){
   const known = SCREENS.find(s=>s.ov===current);
