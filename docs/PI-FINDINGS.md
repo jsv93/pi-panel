@@ -206,3 +206,25 @@ independently:
 - The agent compares versions with `!=` rather than `<=`. A lower version on
   the server does not mean the panel is ahead; it means the record was
   replaced.
+
+## Updating a panel that is already installed
+
+`panel.html`, the agent and the backlight helper are fetched **once**, during
+provisioning. A panel does not pick up new ones on its own, so a server update
+alone changes nothing on the wall.
+
+Use **Reinstall** on the panel's page. It issues a fresh token against the
+*existing* panel id, so the bootstrap leaves `config.json` alone and the panel
+comes back as itself — same room, entities and version history — with the
+current files. It reboots at the end.
+
+Creating a new panel record instead would hand out a new id and abandon the
+room's configuration, which is what the id-change branch in the bootstrap is
+there to detect.
+
+For a one-file change while iterating, copying it straight over is faster than
+a reinstall:
+
+    scp panel-ui/panel.html joel@<panel>:/tmp/
+    ssh joel@<panel> "sudo mv /tmp/panel.html /opt/panel/current/panel.html \
+      && sudo systemctl restart cage-kiosk"

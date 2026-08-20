@@ -806,6 +806,29 @@ async def provision(request: Request):
     }
 
 
+@app.post("/api/panels/{panel_id}/reprovision", dependencies=[Depends(require_admin)])
+async def reprovision(panel_id: str, request: Request):
+    """Issue a fresh token for a panel that already exists.
+
+    Re-running the installer used to mean creating a second panel record, which
+    hands out a new id and abandons the room's config and history. This keeps
+    the id, so the bootstrap leaves config.json alone and the panel comes back
+    as itself — same room, same entities, same version history.
+
+    Reinstalling is how a panel picks up a new panel.html or agent, since those
+    are fetched once at provisioning and not after.
+    """
+    if not db.get_panel(panel_id):
+        raise HTTPException(404, "unknown panel")
+    db.clear_tokens(panel_id)
+    token = db.create_token(panel_id)
+    return {
+        "panel_id": panel_id,
+        "token": token,
+        "command": f"curl -fsSL {_server_url(request)}/bootstrap.sh?t={token} | sudo bash",
+    }
+
+
 @app.get("/api/provision", dependencies=[Depends(require_admin)])
 async def provision_pending(request: Request):
     base = _server_url(request)

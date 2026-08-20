@@ -226,6 +226,7 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
       <span class="pill" id="dTemplate" style="color:var(--violet);background:rgba(138,138,240,.13)"></span>
       <div style="margin-left:auto;display:flex;gap:8px">
         <button class="btn" id="setupCmdBtn" style="display:none">Setup command</button>
+        <button class="btn" id="reinstallBtn" style="display:none">Reinstall</button>
         <button class="btn" id="previewBtn">Preview</button>
         <button class="btn" id="revertBtn">Revert</button>
         <button class="btn primary" id="saveBtn">Save &amp; push</button>
@@ -551,8 +552,11 @@ async function openPanel(id){
     await api(`/panels/${CUR.panel.id}/rollback`,{method:"POST",body:JSON.stringify({version:+b.dataset.rb})});
     toast("Rolled back"); openPanel(CUR.panel.id);
   });
-  /* Only meaningful before the hardware has run the command. */
-  $("#setupCmdBtn").style.display = (await pendingTokenFor(id)) ? "" : "none";
+  /* Setup command is for a panel that has never checked in; Reinstall is for
+     one that has. Never both, so there is no question which to use. */
+  const pending = await pendingTokenFor(id);
+  $("#setupCmdBtn").style.display = pending ? "" : "none";
+  $("#reinstallBtn").style.display = pending ? "none" : "";
 }
 $("#backBtn").onclick=()=>{ $("#detailView").style.display="none"; $("#fleetView").style.display="block"; loadFleet(); };
 document.querySelectorAll("#sectNav div[data-s]").forEach(n=>n.onclick=()=>{
@@ -935,6 +939,18 @@ async function pendingTokenFor(id){
   try{ return (await api("/provision")).find(t=>t.panel_id===id) || null; }
   catch(e){ return null; }
 }
+$("#reinstallBtn").onclick = ()=>{
+  confirmModal("Reinstall this panel",
+    `<p>Re-run the installer on <b>${CUR.panel.hostname}</b>, keeping its id, room and
+      configuration. This is how a panel picks up a new panel UI or agent, since both
+      are fetched at install and not after.</p>
+     <p class="muted" style="margin-top:10px;font-size:13px">The panel reboots at the
+      end. Its config is left alone because the id does not change.</p>`,
+    async ()=>{
+      const r = await api(`/panels/${CUR.panel.id}/reprovision`,{method:"POST"});
+      showProvisionCommand(r, {configured:true});
+    });
+};
 $("#setupCmdBtn").onclick = async ()=>{
   const t = await pendingTokenFor(CUR.panel.id);
   if(!t){ toast("This panel has already been provisioned"); return; }

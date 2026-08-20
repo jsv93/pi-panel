@@ -284,6 +284,17 @@ def create_token(panel_id):
     return token
 
 
+def clear_tokens(panel_id):
+    """Drop a panel's unused tokens.
+
+    Issuing a second one without this leaves both valid, and whichever the GUI
+    happened to show first is not necessarily the one someone runs.
+    """
+    with conn() as c:
+        c.execute("DELETE FROM provisioning WHERE panel_id=? AND used_at IS NULL",
+                  (panel_id,))
+
+
 def consume_token(token):
     """Return the panel_id for an unused token and mark it spent, else None."""
     with conn() as c:
