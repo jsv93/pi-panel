@@ -14,11 +14,13 @@ Install:
   sudo systemctl enable --now panel-agent
 """
 import asyncio
+import hashlib
 import json
 import os
 import shutil
 import socket
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -190,6 +192,140 @@ def metrics():
     m["ha_connected"] = UI_STATE["ha_connected"]
     m["pages_open"] = len(PAGES)
     return m
+
+
+# Where each bundle file lives on a panel, and what to do once it changes.
+BUNDLE_TARGETS = {
+    "panel.html":     Path("/opt/panel/current/panel.html"),
+    "panel-agent.py": Path("/usr/local/bin/panel-agent"),
+    "backlight.py":   Path("/usr/local/bin/panel-backlight"),
+}
+SELF = "panel-agent.py"
+PREV = Path("/usr/local/bin/panel-agent.prev")
+PENDING = PANEL_DIR / "update-pending"
+
+
+def sha256(path):
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return ""
+
+
+async def fetch_bundle(session, name, digest):
+    """Download one file, verify it, and put it in place atomically.
+
+    Verified against the manifest before it replaces anything: a truncated
+    download that still parses would otherwise be installed and, in the agent's
+    case, restarted into.
+    """
+    target = BUNDLE_TARGETS[name]
+    try:
+        async with session.get(f"{SERVER}/bundle/{name}", timeout=60) as r:
+            if r.status != 200:
+                return False
+            data = await r.read()
+    except Exception as e:
+        print(f"[agent] update {name}: fetch failed: {e}")
+        return False
+
+    if hashlib.sha256(data).hexdigest() != digest:
+        print(f"[agent] update {name}: hash mismatch, ignoring")
+        return False
+
+    tmp = target.with_suffix(target.suffix + ".new")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_bytes(data)
+        if name.endswith(".py"):
+            # A syntax error here would restart-loop the agent forever, and on
+            # a wall panel that is not something to discover later.
+            r = subprocess.run([sys.executable, "-m", "py_compile", str(tmp)],
+                               capture_output=True)
+            if r.returncode != 0:
+                print(f"[agent] update {name}: does not compile, ignoring")
+                tmp.unlink(missing_ok=True)
+                return False
+            tmp.chmod(0o755)
+        if name == SELF and target.exists():
+            shutil.copy2(target, PREV)     # something to fall back to
+        os.replace(tmp, target)
+        print(f"[agent] update {name}: installed")
+        return True
+    except Exception as e:
+        print(f"[agent] update {name}: install failed: {e}")
+        tmp.unlink(missing_ok=True)
+        return False
+
+
+async def check_bundle(session):
+    """Pull any bundle file whose hash differs from the server's.
+
+    This is what makes a server update reach a panel at all: these files are
+    fetched once during provisioning and never again otherwise.
+    """
+    try:
+        async with session.get(f"{SERVER}/bundle/manifest", timeout=15) as r:
+            if r.status != 200:
+                return
+            manifest = await r.json()
+    except Exception:
+        return
+
+    changed, self_changed = [], False
+    for name, info in manifest.items():
+        target = BUNDLE_TARGETS.get(name)
+        if not target or sha256(target) == info.get("sha256"):
+            continue
+        if await fetch_bundle(session, name, info["sha256"]):
+            changed.append(name)
+            self_changed = self_changed or name == SELF
+
+    if not changed:
+        return
+    if "panel.html" in changed:
+        await reload_ui()
+    if "backlight.py" in changed:
+        subprocess.run(["systemctl", "restart", "panel-backlight"], check=False)
+    if self_changed:
+        # Leave a marker and exit; systemd restarts us. The replacement checks
+        # for the marker and rolls back if it cannot reach the server, so a bad
+        # agent cannot strand a panel.
+        try:
+            PENDING.write_text(str(time.time()))
+        except Exception:
+            pass
+        print("[agent] update: restarting into the new agent")
+        os._exit(0)
+
+
+async def confirm_update(session):
+    """Called once after a self-update, from the new agent.
+
+    Registering is the test: it exercises config, network and the server, which
+    is everything the agent is for. Failing that, put the old one back rather
+    than leaving a panel that cannot be managed.
+    """
+    if not PENDING.exists():
+        PREV.unlink(missing_ok=True)
+        return
+    for _ in range(12):
+        if await register(session):
+            print("[agent] update: confirmed")
+            PENDING.unlink(missing_ok=True)
+            PREV.unlink(missing_ok=True)
+            return
+        await asyncio.sleep(5)
+    if PREV.exists():
+        print("[agent] update: could not reach the server, rolling back")
+        shutil.copy2(PREV, BUNDLE_TARGETS[SELF])
+        PREV.unlink(missing_ok=True)
+    PENDING.unlink(missing_ok=True)
+    os._exit(0)
 
 
 async def write_config(cfg: dict) -> bool:
@@ -395,6 +531,9 @@ async def poll_loop(session):
     while True:
         await asyncio.sleep(POLL_S)
         await sync(session)
+        # Same cadence as config: a panel that has been up for weeks should not
+        # need anyone to remember it exists.
+        await check_bundle(session)
 
 
 async def ws_loop(session):
@@ -432,9 +571,13 @@ async def main():
     # aiohttp from pip has no aiodns, which is why this worked before apt.
     connector = aiohttp.TCPConnector(resolver=aiohttp.ThreadedResolver())
     async with aiohttp.ClientSession(connector=connector) as session:
+        # Before anything else: if this process is a just-installed agent,
+        # prove it works or put the old one back.
+        await confirm_update(session)
         while not await register(session):
             await asyncio.sleep(15)
         await sync(session)
+        await check_bundle(session)
         await asyncio.gather(ws_loop(session), heartbeat_loop(session), poll_loop(session))
 
 

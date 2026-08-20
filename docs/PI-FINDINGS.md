@@ -228,3 +228,29 @@ a reinstall:
     scp panel-ui/panel.html joel@<panel>:/tmp/
     ssh joel@<panel> "sudo mv /tmp/panel.html /opt/panel/current/panel.html \
       && sudo systemctl restart cage-kiosk"
+
+## Bundle self-update
+
+Panels keep their own `panel.html`, agent and backlight helper current. The
+agent compares each file's sha256 against `/bundle/manifest` on every config
+poll and pulls only what differs.
+
+Hashes rather than a version number: nothing to remember to bump, and a file
+edited by hand at either end is noticed.
+
+What happens after each file lands:
+
+- `panel.html` — the page is told to reload
+- `backlight.py` — its service is restarted
+- the agent — replaced, then it exits so systemd starts the new one
+
+Replacing the agent with itself running is the risky one, so it is guarded at
+three points. The download must match the manifest hash. A `.py` file must
+compile, because a syntax error would restart-loop the agent forever. And the
+previous binary is kept: the replacement writes a marker, and if it cannot
+register within a minute it restores the old one and exits. A panel cannot be
+stranded by a bad agent.
+
+**This does not replace Reinstall.** It covers the three files fetched at
+provisioning. Anything install-time — apt packages, cage and chromium, the
+systemd units, the DSI overlay, the udev rule — still needs a reinstall.

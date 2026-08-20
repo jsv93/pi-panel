@@ -987,6 +987,38 @@ async def bootstrap(request: Request, t: str = ""):
     return Response(content=body, media_type="text/x-shellscript")
 
 
+BUNDLE_FILES = ("panel.html", "panel-agent.py", "backlight.py")
+
+
+def _bundle_path(name):
+    """Operator copy wins, then the copy shipped in the image."""
+    for d in (BUNDLE_DIR, BUILTIN_BUNDLE):
+        if d and os.path.exists(os.path.join(d, name)):
+            return os.path.join(d, name)
+    return None
+
+
+@app.get("/bundle/manifest")
+async def bundle_manifest():
+    """Hashes of the panel files, so an agent can tell whether it is current.
+
+    Hashes rather than a version number: nothing to remember to bump, and it
+    notices a file edited by hand on either end. Unauthenticated like the rest
+    of /bundle — it describes files any panel may already fetch.
+    """
+    out = {}
+    for name in BUNDLE_FILES:
+        path = _bundle_path(name)
+        if not path:
+            continue
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        out[name] = {"sha256": h.hexdigest(), "size": os.path.getsize(path)}
+    return out
+
+
 @app.get("/bundle/{name}")
 async def bundle(name: str):
     """Panel files the bootstrap script pulls. Not secret — panel.html is served
@@ -997,12 +1029,12 @@ async def bundle(name: str):
     the cause of a stale agent, a stale panel.html and an empty directory on a
     fresh install, each of which presented as something else entirely.
     """
-    if name not in ("panel.html", "panel-agent.py", "backlight.py"):
+    if name not in BUNDLE_FILES:
         raise HTTPException(404, "unknown bundle file")
-    for d in (BUNDLE_DIR, BUILTIN_BUNDLE):
-        if d and os.path.exists(os.path.join(d, name)):
-            return FileResponse(os.path.join(d, name))
-    raise HTTPException(404, f"{name} is in neither {BUNDLE_DIR} nor the image")
+    path = _bundle_path(name)
+    if not path:
+        raise HTTPException(404, f"{name} is in neither {BUNDLE_DIR} nor the image")
+    return FileResponse(path)
 
 
 # ---------------------------------------------------------------- settings
