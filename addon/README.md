@@ -33,13 +33,23 @@ every update.
 
 ## Releasing a new version
 
-The image tag and the add-on version have to match, or Home Assistant tries to
-pull something that does not exist. The workflow checks this and fails early
-rather than letting it surface as a broken install:
-
 1. Bump `version:` in `panel-server/config.yaml`
-2. Copy that file into the add-on repo
-3. Tag the main repo: `git tag v0.1.1 && git push --tags`
+2. Tag the main repo: `git tag v0.2.3 && git push --tags`
+
+That is the whole release. CI builds the images and then pushes this directory
+to the add-on repository itself, so the version Home Assistant sees cannot
+appear before the image it names. Doing those two steps by hand went wrong in
+all three possible ways: the manifest behind the image, a tag pushed against a
+stale manifest, and the manifest ahead of an image that was never built. The
+last one gives "manifest unknown" on every install attempt.
+
+Automatic publishing needs a **`ADDON_REPO_TOKEN`** secret on the `pi-panel`
+repository — a fine-grained personal access token with *Contents: read and
+write* on `pi-panel-addon`. `GITHUB_TOKEN` cannot be used, as it only grants
+access to the repository the workflow runs in.
+
+Without that secret the workflow says so and does nothing else; run
+`addon/sync.sh` and push this repository by hand as before.
 
 ## Paste two keys, not one
 

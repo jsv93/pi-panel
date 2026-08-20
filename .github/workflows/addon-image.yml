@@ -89,9 +89,58 @@ jobs:
             .
 
       - name: Confirm it is pullable
+        id: confirm
         env:
           IMAGE: ghcr.io/${{ github.repository_owner }}/pi-panel-server-${{ matrix.arch }}
           VERSION: ${{ steps.v.outputs.version }}
         # Home Assistant pulls by exact tag, so check that exact tag resolves
         # rather than trusting the push step's exit code.
         run: docker buildx imagetools inspect "$IMAGE:$VERSION" > /dev/null
+
+  # Only after every architecture has published. A release is two repositories,
+  # and doing them by hand has gone wrong in both directions: the manifest
+  # behind the image, a tag pushed against a stale manifest, and the manifest
+  # ahead of an image that was never built. Home Assistant reads the version
+  # from the add-on repo, so announcing one before its image exists gives
+  # "manifest unknown" on every install attempt.
+  publish-manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out the version
+        id: v
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push the add-on repository
+        env:
+          TOKEN: ${{ secrets.ADDON_REPO_TOKEN }}
+          VERSION: ${{ steps.v.outputs.version }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          if [ -z "${TOKEN:-}" ]; then
+            echo "ADDON_REPO_TOKEN is not set, so the add-on repository was not"
+            echo "updated. Run addon/sync.sh and push it by hand, or add the"
+            echo "secret to automate this — see addon/README.md."
+            exit 0
+          fi
+          git clone --depth 1 \
+            "https://x-access-token:${TOKEN}@github.com/${OWNER}/pi-panel-addon.git" out
+          cp -r addon/repository.yaml addon/panel-server addon/README.md out/
+          cd out
+          git config user.name  "pi-panel ci"
+          git config user.email "ci@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Add-on repository already matches $VERSION."
+            exit 0
+          fi
+          git commit -m "Panel Config Server $VERSION"
+          git push
+          echo "Add-on repository updated to $VERSION."

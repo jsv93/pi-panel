@@ -345,6 +345,14 @@ done
 for A in /home/*/.config/labwc/autostart /home/*/.config/wayfire.ini; do
   [ -e "$A" ] && sed -i '/panel-kiosk/d' "$A"
 done
+# Drop the browser cache. A panel installed before the agent began sending
+# no-store has entries stored under heuristic freshness, which Chromium can
+# serve without revalidating — so a reinstall replaces panel.html on disk and
+# the panel goes on showing the old one, which reads as the reinstall having
+# done nothing at all.
+rm -rf /var/lib/panel-kiosk/chromium/Default/Cache \
+       "/var/lib/panel-kiosk/chromium/Default/Code Cache" 2>/dev/null || true
+
 NEEDS_REBOOT=1
 echo "    cage kiosk installed"
 
