@@ -241,6 +241,14 @@ body.sheet-open #scrim{opacity:.55}
 .row .k{color:var(--ink-quiet)}
 .dot{display:inline-block;width:10px;height:10px;border-radius:5px;margin-right:10px;vertical-align:middle}
 .dot.ok{background:var(--accent)} .dot.bad{background:var(--bad)} .dot.wait{background:var(--ink-ghost)}
+/* Controls, kept visually apart from the status rows above: a chevron and a
+   full-height tile read as "this does something", a table row does not. */
+.acts{display:flex;flex-direction:column;gap:12px;margin-top:22px}
+.act{display:flex;align-items:center;gap:16px;height:88px;padding:0 26px;font-size:24px}
+.act .t{flex:1}
+.act .v{color:var(--ink-quiet);font-size:21px;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;max-width:45%}
+.act .ch{width:22px;height:22px;stroke:var(--ink-ghost);fill:none;stroke-width:2;flex:none}
 .restart{margin-top:22px;height:92px;display:grid;place-items:center;font-size:24px;color:var(--warm)}
 
 .empty{height:60%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:var(--ink-ghost)}
@@ -339,9 +347,20 @@ body.ng-tiles .tile{backdrop-filter:none!important;-webkit-backdrop-filter:none!
     <div class="row"><span class="k">Home Assistant</span><span id="stHA"><span class="dot wait"></span>–</span></div>
     <div class="row"><span class="k">LunaControl</span><span id="stLuna"><span class="dot wait"></span>–</span></div>
     <div class="row"><span class="k">Backlight service</span><span id="stBL"><span class="dot wait"></span>–</span></div>
-    <div class="row press" id="wifiRow"><span class="k">Wi-Fi</span><span id="wifiV">–</span></div>
-    <div class="row press" id="glassRow"><span class="k">Glass</span><span id="glassV">Full</span></div>
+    <div class="row"><span class="k">Network</span><span id="stNet">–</span></div>
+    <div class="row"><span class="k">Glass</span><span id="stGlass">–</span></div>
     <div class="row"><span class="k">Uptime</span><span id="sUp">–</span></div>
+  </div>
+  <!-- Anything that changes something lives here, not among the status rows.
+       Mixed together there was no way to tell which lines did something when
+       touched. -->
+  <div class="acts">
+    <div class="act tile press" id="wifiRow">
+      <span class="t">Wi-Fi setup</span><span class="v" id="wifiV">–</span>
+      <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="act tile press" id="glassRow">
+      <span class="t">Change glass</span><span class="v" id="glassV">Full</span>
+      <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
   </div>
   <div class="restart tile press" id="reload">Reload panel</div>
 </section>
@@ -1047,6 +1066,7 @@ function applyGlass(){
   const t = GLASS_TIERS[glassTier % GLASS_TIERS.length];
   if(t.cls) t.cls.split(" ").forEach(c=>document.body.classList.add(c));
   const el = $("#glassV"); if(el) el.textContent = t.name;
+  const st = $("#stGlass"); if(st) st.textContent = t.name;
   try{
     localStorage.setItem("glassTier", glassTier);
     localStorage.setItem("glassBase", GLASS_DEFAULT);
@@ -1076,7 +1096,14 @@ async function wifiRefresh(scan){
     const r = await fetch(`/wifi${scan ? "?scan=1" : ""}`, {cache:"no-store"});
     const d = await r.json();
     const st = d.status || {};
-    const label = !st.available ? "unavailable" : (st.ssid || "not connected");
+    /* Two different questions. The status row answers "how is this panel on
+       the network", which for a PoE panel is Ethernet and has no SSID. The
+       control answers "which wifi would setup change". */
+    $("#stNet").textContent =
+      st.type === "ethernet" ? "Ethernet"
+      : st.ssid ? `${st.ssid} · ${st.signal}%`
+      : st.available ? "not connected" : "unavailable";
+    const label = !st.available ? "no wifi adapter" : (st.ssid || "not connected");
     $("#wifiV").textContent = label;
     $("#wifiNow").textContent = st.ssid ? `${st.ssid} · ${st.signal}%` : label;
     if(d.networks) paintNets(d.networks, st.ssid || "");

@@ -116,15 +116,36 @@ def _split_terse(line):
 
 
 async def wifi_status():
-    """Current SSID and signal, or empty when not on wifi."""
+    """How this panel is on the network, and on which wifi if any.
+
+    Reports ethernet as well, because "Network" on the settings page should say
+    what is actually carrying traffic. A panel on PoE has no SSID and is not
+    disconnected, and showing it as "not connected" would be wrong.
+    """
+    st = {"available": False, "type": "none", "ssid": "", "signal": 0}
+
+    ok, out = await nmcli("-t", "-f", "DEVICE,TYPE,STATE", "device", "status")
+    if ok:
+        for line in out.splitlines():
+            f = _split_terse(line)
+            if len(f) >= 3 and f[2] == "connected":
+                if f[1] == "ethernet":
+                    st["type"] = "ethernet"
+                    break
+                if f[1] == "wifi" and st["type"] == "none":
+                    st["type"] = "wifi"
+        st["available"] = any(_split_terse(l)[1:2] == ["wifi"]
+                              for l in out.splitlines() if _split_terse(l))
+
     ok, out = await nmcli("-t", "-f", "ACTIVE,SSID,SIGNAL", "device", "wifi")
-    if not ok:
-        return {"available": False}
-    for line in out.splitlines():
-        f = _split_terse(line)
-        if len(f) >= 3 and f[0] == "yes":
-            return {"available": True, "ssid": f[1], "signal": _int(f[2])}
-    return {"available": True, "ssid": "", "signal": 0}
+    if ok:
+        st["available"] = True
+        for line in out.splitlines():
+            f = _split_terse(line)
+            if len(f) >= 3 and f[0] == "yes":
+                st["ssid"], st["signal"] = f[1], _int(f[2])
+                break
+    return st
 
 
 def _int(v):

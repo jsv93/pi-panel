@@ -1,6 +1,6 @@
 name: Panel Config Server
 slug: panel_server
-version: "0.1.12"
+version: "0.1.13"
 description: Configure and monitor the wall panel fleet
 url: https://github.com/jsv93/pi-panel
 
