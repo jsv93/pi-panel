@@ -215,6 +215,25 @@ body.sheet-open #scrim{opacity:.55}
 .bgo{width:26px;height:26px;flex:none;stroke:var(--ink-ghost);fill:none;stroke-width:1.5}
 .hint2{text-align:center;color:var(--ink-ghost);font-size:19px;margin-top:40px}
 
+/* ---------- wifi ---------- */
+.wnet{display:flex;align-items:center;gap:16px;padding:18px 14px;border-radius:16px;
+  font-size:22px;background:rgba(28,28,38,.72);margin-bottom:10px}
+.wnet .s{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wnet .g{font-size:18px;color:var(--ink-quiet);font-variant-numeric:tabular-nums}
+.wnet.on{background:rgba(29,158,117,.16);color:#9FE1CB}
+.wnet .lock{width:18px;height:18px;stroke:var(--ink-quiet);fill:none;stroke-width:1.8}
+/* A wall panel has no keyboard, so a WPA passphrase cannot be typed without
+   one on screen. Keys are sized for a finger at this panel's smallest scale. */
+.pw{height:64px;border-radius:14px;background:rgba(22,22,30,.75);border:1px solid var(--tile-line);
+  display:flex;align-items:center;padding:0 20px;font-size:26px;letter-spacing:3px;
+  overflow:hidden;white-space:nowrap;direction:rtl;text-align:left}
+.keys{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.keys div{flex:1 0 8%;min-width:56px;height:62px;display:grid;place-items:center;
+  border-radius:12px;background:rgba(28,28,38,.85);font-size:22px}
+.keys div.wide{flex:1 0 22%}
+.keys div:active{background:rgba(29,158,117,.25)}
+.hide{display:none}
+
 .rows{margin-top:26px;padding:6px 26px}
 .row{display:flex;justify-content:space-between;align-items:center;padding:22px 0;font-size:22px;
   border-bottom:1px solid rgba(120,125,150,.10)}
@@ -320,6 +339,7 @@ body.ng-tiles .tile{backdrop-filter:none!important;-webkit-backdrop-filter:none!
     <div class="row"><span class="k">Home Assistant</span><span id="stHA"><span class="dot wait"></span>–</span></div>
     <div class="row"><span class="k">LunaControl</span><span id="stLuna"><span class="dot wait"></span>–</span></div>
     <div class="row"><span class="k">Backlight service</span><span id="stBL"><span class="dot wait"></span>–</span></div>
+    <div class="row press" id="wifiRow"><span class="k">Wi-Fi</span><span id="wifiV">–</span></div>
     <div class="row press" id="glassRow"><span class="k">Glass</span><span id="glassV">Full</span></div>
     <div class="row"><span class="k">Uptime</span><span id="sUp">–</span></div>
   </div>
@@ -384,6 +404,26 @@ body.ng-tiles .tile{backdrop-filter:none!important;-webkit-backdrop-filter:none!
 </nav>
 
 <!-- device picker -->
+<!-- wifi -->
+<div class="ov" id="ovWifi">
+  <div class="ov-bg" data-ovclose></div>
+  <div class="ov-card">
+    <div class="grip"></div>
+    <h2>Wi-Fi</h2>
+    <p class="note" id="wifiNow">–</p>
+    <div id="wifiList"></div>
+    <div id="wifiJoin" class="hide">
+      <div class="slabel"><span class="n" id="wifiJoinSsid"></span><span class="v" id="wifiJoinMsg"></span></div>
+      <div class="pw" id="wifiPw"></div>
+      <div class="keys" id="wifiKeys"></div>
+      <div style="display:flex;gap:14px;margin-top:16px">
+        <div class="restart tile press" style="flex:1;margin:0;color:var(--ink-dim)" id="wifiCancel">Cancel</div>
+        <div class="restart tile press" style="flex:1;margin:0;color:var(--accent)" id="wifiGo">Connect</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="ov" id="ovSpk">
   <div class="ov-bg" data-ovclose></div>
   <div class="ov-card">
@@ -1023,6 +1063,108 @@ async function checkLuna(){
   catch(e){ setDot("#stLuna","bad","unreachable"); }
 }
 setInterval(checkLuna,30000); checkLuna();
+
+/* ---------- wifi ----------
+   Handled here rather than from the config server, because a panel with broken
+   wifi is exactly the panel the server cannot reach. The agent does the work;
+   this is the part someone standing in front of the panel can use. */
+const BARS = n => n >= 75 ? "▂▄▆█" : n >= 50 ? "▂▄▆" : n >= 25 ? "▂▄" : "▂";
+let wifiSel = null;
+
+async function wifiRefresh(scan){
+  try{
+    const r = await fetch(`/wifi${scan ? "?scan=1" : ""}`, {cache:"no-store"});
+    const d = await r.json();
+    const st = d.status || {};
+    const label = !st.available ? "unavailable" : (st.ssid || "not connected");
+    $("#wifiV").textContent = label;
+    $("#wifiNow").textContent = st.ssid ? `${st.ssid} · ${st.signal}%` : label;
+    if(d.networks) paintNets(d.networks, st.ssid || "");
+    return st;
+  }catch(e){
+    /* The agent serves this page, so if it cannot be reached the page would
+       not be here — say so plainly rather than showing a stale network. */
+    $("#wifiV").textContent = "agent unreachable";
+    return {};
+  }
+}
+function paintNets(nets, current){
+  $("#wifiList").innerHTML = nets.length ? nets.map((n,i)=>
+    `<div class="wnet press${n.ssid===current?" on":""}" data-n="${i}">
+       <span class="s">${n.ssid}</span>
+       ${n.secure ? `<svg class="lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>` : ""}
+       <span class="g">${BARS(n.signal)} ${n.signal}%</span></div>`).join("")
+    : `<p class="note">No networks found</p>`;
+  document.querySelectorAll("#wifiList [data-n]").forEach(el=>el.addEventListener("click",()=>{
+    wifiSel = nets[+el.dataset.n]; openJoin(); bump();
+  }));
+}
+function openJoin(){
+  $("#wifiJoinSsid").textContent = wifiSel.ssid;
+  $("#wifiJoinMsg").textContent = wifiSel.secure ? "" : "open network";
+  $("#wifiPw").textContent = "";
+  $("#wifiPw").dataset.v = "";
+  $("#wifiJoin").classList.remove("hide");
+  $("#wifiList").classList.add("hide");
+  buildKeys(false);
+}
+function closeJoin(){
+  $("#wifiJoin").classList.add("hide");
+  $("#wifiList").classList.remove("hide");
+  wifiSel = null;
+}
+const KEYS_LOWER = "1234567890qwertyuiopasdfghjklzxcvbnm";
+const KEYS_UPPER = "!@#$%^&*()QWERTYUIOPASDFGHJKLZXCVBNM";
+function buildKeys(shift){
+  const set = shift ? KEYS_UPPER : KEYS_LOWER;
+  $("#wifiKeys").innerHTML = set.split("").map(c=>`<div data-k="${c}">${c}</div>`).join("")
+    + `<div class="wide" data-k="__shift">${shift ? "abc" : "ABC"}</div>`
+    + `<div class="wide" data-k="__space">space</div>`
+    + `<div class="wide" data-k="__del">⌫</div>`;
+  document.querySelectorAll("#wifiKeys [data-k]").forEach(el=>el.addEventListener("click",()=>{
+    const k = el.dataset.k, pw = $("#wifiPw");
+    if(k === "__shift") return buildKeys(!shift);
+    let v = pw.dataset.v || "";
+    if(k === "__del") v = v.slice(0,-1);
+    else if(k === "__space") v += " ";
+    else v += k;
+    pw.dataset.v = v;
+    /* Masked, but the last character stays readable for a moment — typing a
+       long passphrase blind on a touchscreen is otherwise unforgiving. */
+    pw.textContent = "•".repeat(Math.max(0, v.length - 1)) + (v.slice(-1) || "");
+    bump();
+  }));
+}
+$("#wifiRow").addEventListener("click", async ()=>{
+  ovOpen("#ovWifi"); closeJoin();
+  $("#wifiList").innerHTML = `<p class="note">Scanning…</p>`;
+  await wifiRefresh(true);
+});
+$("#wifiCancel").addEventListener("click", ()=>{ closeJoin(); bump(); });
+$("#wifiGo").addEventListener("click", async ()=>{
+  if(!wifiSel) return;
+  const msg = $("#wifiJoinMsg");
+  msg.textContent = "connecting…";
+  bump();
+  try{
+    const r = await fetch("/wifi/connect", {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({ssid:wifiSel.ssid, psk:$("#wifiPw").dataset.v || ""})});
+    const d = await r.json();
+    if(d.ok){
+      msg.textContent = "connected";
+      closeJoin();
+      await wifiRefresh(true);
+    } else {
+      /* nmcli's own words. A wrong passphrase and an out-of-range network are
+         different problems and it already distinguishes them. */
+      msg.textContent = (d.message || "failed").split("\n")[0].slice(0, 60);
+    }
+  }catch(e){ msg.textContent = "agent unreachable"; }
+  bump();
+});
+wifiRefresh(false);
+setInterval(()=>{ if(!$("#ovWifi").classList.contains("on")) wifiRefresh(false); }, 30000);
 
 /* ---------- fit the 720-wide layout to this screen ---------- */
 /* Least layout height the design tolerates. Below this the clock, presets and
