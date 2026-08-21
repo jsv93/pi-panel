@@ -303,6 +303,9 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
             <div><div class="lbl">BACKLIGHT MINIMUM %</div><input type="number" id="fBlMin"></div>
             <div><div class="lbl">BACKLIGHT OFF AFTER (SECONDS IDLE, 0 = NEVER)</div>
               <input type="number" id="fBlOff"></div>
+            <div><div class="lbl">DIAGNOSTICS ON THE PANEL</div><select id="fDiag">
+              <option value="0">Off</option><option value="1">Connection status and fps</option>
+            </select></div>
             <div><div class="lbl">SCREEN</div><select id="fScreen"></select></div>
             <div><div class="lbl">SCREEN SIZE IN PIXELS (0 = ASK THE BROWSER)</div>
               <div style="display:flex;gap:10px;align-items:center">
@@ -526,6 +529,7 @@ async function openPanel(id){
   $("#fBlMin").value = d.backlight_min ?? 5;
   $("#fBlOff").value = d.backlight_off_s ?? 0;
   renderScreens(d.dsi_overlay ?? "");
+  $("#fDiag").value = d.diagnostics ? "1" : "0";
   $("#fScreenW").value = d.screen_width ?? 0;
   $("#fScreenH").value = d.screen_height ?? 0;
 
@@ -668,6 +672,7 @@ function collect(){
                  backlight_default:+$("#fBlDef").value, backlight_min:+$("#fBlMin").value,
                  backlight_off_s:+$("#fBlOff").value,
                  dsi_overlay:$("#fDsiOverlay").value.trim(),
+                 diagnostics:$("#fDiag").value === "1",
                  screen_width:+$("#fScreenW").value || 0,
                  screen_height:+$("#fScreenH").value || 0};
   return CFG;

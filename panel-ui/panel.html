@@ -123,8 +123,10 @@ body.sheet-open #scrim{opacity:.55}
 .sheet.on{transform:translateY(0);opacity:1;pointer-events:auto}
 .grip{width:56px;height:5px;border-radius:3px;background:rgba(150,155,180,.25);margin:14px auto 0}
 .sheet h1{font-size:34px;font-weight:300;letter-spacing:.5px;text-align:center;padding:16px 0 4px}
-.down{position:absolute;top:26px;left:24px;width:78px;height:70px;display:grid;place-items:center;z-index:2}
-.down svg{width:30px;height:30px;stroke:var(--ink-quiet);fill:none;stroke-width:1.6}
+/* Sized for a finger, not a cursor. At 78x70 it was fiddly on a 5" panel and
+   worse on a 4.3" one, where everything is scaled to two thirds. */
+.down{position:absolute;top:18px;left:16px;width:112px;height:100px;display:grid;place-items:center;z-index:2}
+.down svg{width:40px;height:40px;stroke:var(--ink-quiet);fill:none;stroke-width:1.8}
 
 .fx{display:flex;flex-wrap:wrap;gap:12px;margin-top:24px}
 .fx div{padding:14px 22px;border-radius:20px;font-size:20px;color:var(--ink-quiet);
@@ -282,6 +284,9 @@ body.ng-tiles .tile{backdrop-filter:none!important;-webkit-backdrop-filter:none!
 #conn{position:absolute;top:8px;left:12px;font-size:15px;z-index:99;letter-spacing:.4px}
 #conn.ok{color:#2E7F68} #conn.bad{color:var(--bad)} #conn.wait{color:var(--ink-quiet)}
 #fps{position:absolute;top:8px;right:12px;font-size:15px;color:#2E7F68;z-index:99;font-variant-numeric:tabular-nums}
+/* Off unless a panel asks for them. They are for bring-up, and a finished
+   panel on a wall should not be showing a frame counter. */
+body:not(.diag) #conn, body:not(.diag) #fps{display:none}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -537,6 +542,9 @@ const OFF_MS   = (_disp.backlight_off_s ?? 0) * 1000;
    fitStage. 0 means trust what it reports. */
 const SCREEN_W = +(_disp.screen_width  ?? 0) || 0;
 const SCREEN_H = +(_disp.screen_height ?? 0) || 0;
+/* Connection status and frame counter. Bring-up tools, off by default. */
+const DIAG = !!(_disp.diagnostics ?? false);
+if(DIAG) document.body.classList.add("diag");
 const BL_MIN   = _disp.backlight_min ?? 5;
 const BL_DEF   = _disp.backlight_default ?? 100;
 const GLASS_DEFAULT = _disp.glass_tier ?? 0;
@@ -826,6 +834,9 @@ async function setBacklight(pct){
 /* ---------- presets ---------- */
 document.querySelectorAll(".preset").forEach(p=>p.addEventListener("click",()=>{
   const which = p.dataset.preset;                    // "soft" | "bright"
+  /* Highlight immediately so the press feels instant; paintPresets reconciles
+     it against the real levels as soon as Home Assistant reports them, which
+     also un-highlights it if the lights did not actually end up there. */
   document.querySelectorAll(".preset").forEach(x=>x.classList.toggle("active",x===p));
   LIGHTS.forEach((l,i)=>{
     const pct = (which==="bright" ? l.bright : l.soft) ?? (which==="bright"?100:30);
@@ -1017,7 +1028,27 @@ function paintArt(){
     if(badge) big.appendChild(badge);
   }
 }
+/* Which preset the room is actually in, worked out from the lights rather than
+   from which button someone last pressed here.
+
+   That is what makes two panels agree: press Bright in the study on one and
+   the other sees the light levels change over its own Home Assistant socket
+   and reaches the same conclusion. No panel talks to another, and nothing has
+   to hold shared UI state — the lights are the shared state, and both panels
+   are already watching them.
+
+   Tolerance because brightness is stored 0-255 and set as a percentage, so a
+   round trip rarely returns the exact number that was sent. */
+function paintPresets(){
+  const matches = which => LIGHTS.length && LIGHTS.every((l, i) => {
+    const want = (which === "bright" ? l.bright : l.soft) ?? (which === "bright" ? 100 : 30);
+    return Math.abs((LSTATE[i] ? LSTATE[i].level : 0) - want) <= 2;
+  });
+  document.querySelectorAll(".preset").forEach(p =>
+    p.classList.toggle("active", matches(p.dataset.preset)));
+}
 function paintAll(){
+  paintPresets();
   LIGHTS.forEach((l,i)=>{
     if(lampSliders[i]) lampSliders[i].paint(LSTATE[i].level);
     const v=$("#lv"+i); if(v) v.textContent = LSTATE[i].level ? LSTATE[i].level+"%" : "Off";
@@ -1275,10 +1306,15 @@ $("#idle").addEventListener("click",bump);
 const t0=Date.now();
 setInterval(()=>{ const s=(Date.now()-t0)/1000;
   $("#sUp").textContent = s<3600 ? Math.floor(s/60)+"m" : Math.floor(s/3600)+"h "+Math.floor(s%3600/60)+"m"; },1000);
-let frames=0,last=performance.now();
-(function loop(now){ frames++;
-  if(now-last>=1000){ $("#fps").textContent=frames+" fps"; frames=0; last=now; }
-  requestAnimationFrame(loop); })(performance.now());
+/* Only when diagnostics are on. Counting frames means a requestAnimationFrame
+   callback every frame forever, which on a panel that spends most of its life
+   idle is work for a number nobody is reading. */
+if(DIAG){
+  let frames=0,last=performance.now();
+  (function loop(now){ frames++;
+    if(now-last>=1000){ $("#fps").textContent=frames+" fps"; frames=0; last=now; }
+    requestAnimationFrame(loop); })(performance.now());
+}
 
 connect(); paintAll(); bump(); setBacklight(st.bl);
 </script>

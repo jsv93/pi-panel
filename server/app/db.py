@@ -81,6 +81,9 @@ DEFAULT_TEMPLATE = {
         # no signal at all. Empty means add nothing, which is correct for the
         # official display.
         "dsi_overlay": "vc4-kms-dsi-waveshare-panel-v2,5_0_inch_a",
+        # Connection status and frame counter on the panel. Bring-up tools; a
+        # finished panel on a wall should not be showing a frame counter.
+        "diagnostics": False,
         # Only needed where the browser misreports the panel's size. Chromium
         # will not report a viewport narrower than ~500px, so a 480-wide panel
         # is told it is 500 and anything scaled to that overflows. 0 = trust
