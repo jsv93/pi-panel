@@ -56,7 +56,14 @@ if ! id -u "$SSH_USER" >/dev/null 2>&1; then
 fi
 HOME_DIR=$(getent passwd "$SSH_USER" | cut -d: -f6)
 install -d -m 700 -o "$SSH_USER" -g "$SSH_USER" "$HOME_DIR/.ssh"
-printf '%s\n' "$SSH_KEY" > "$HOME_DIR/.ssh/authorized_keys"
+# Added to the file, not written over it. This used to be `>`, which discarded
+# any key Raspberry Pi Imager had put there -- so a panel imaged with your own
+# key came up accepting only the server's, whose private half is on the server.
+# The symptom is "Permission denied (publickey)" from a machine that could log
+# in yesterday, which reads as a client problem and is not one.
+touch "$HOME_DIR/.ssh/authorized_keys"
+grep -qxF "$SSH_KEY" "$HOME_DIR/.ssh/authorized_keys" \
+  || printf '%s\n' "$SSH_KEY" >> "$HOME_DIR/.ssh/authorized_keys"
 chown "$SSH_USER:$SSH_USER" "$HOME_DIR/.ssh/authorized_keys"
 chmod 600 "$HOME_DIR/.ssh/authorized_keys"
 printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$SSH_USER" > /etc/sudoers.d/010-panel

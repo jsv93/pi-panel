@@ -552,6 +552,13 @@ async function openPanel(id){
     ["Backlight", m.backlight||"—"], ["UI version", m.ui_version||"—"],
     ["Running config", "v"+(CUR.panel.config_version||0)],
     ["Socket", CUR.live?"live":"polling"],
+    /* Shown separately from the launcher on disk on purpose. Equal is the
+       answer; "off, pending restart" means the update arrived and chromium has
+       not been restarted into it yet, which is otherwise indistinguishable
+       from a flag that does not work. */
+    ["GPU raster", m.gpu_raster_running === undefined ? "—"
+      : m.gpu_raster_running ? "on"
+      : m.gpu_raster_on_disk ? "off, pending restart" : "off"],
   ].map(([k,v])=>`<span>${k} <span style="color:var(--dim)">${v}</span></span>`).join("");
   $("#diagBody").innerHTML = `<div class="f2">
     <div><div class="lbl">IP</div>${CUR.panel.ip||"—"}</div>

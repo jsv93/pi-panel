@@ -176,8 +176,45 @@ async def wifi_scan():
     return sorted(best.values(), key=lambda n: -n["signal"])
 
 
+GPU_FLAG = "--enable-gpu-rasterization"
+
+
+def kiosk_gpu():
+    """Whether chromium is *running* with GPU rasterisation, and whether the
+    launcher on disk asks for it.
+
+    Two answers because they can disagree, and the disagreement is the useful
+    part: the launcher is read once, at exec, so an updated launcher and an old
+    browser process means the update landed and nothing has restarted yet.
+    Reported because the alternative is a shell on a wall panel, and needing one
+    to find out whether a flag took is how a release of flags went unnoticed on
+    two panels for a week.
+    """
+    disk = running = False
+    try:
+        disk = GPU_FLAG in Path("/usr/local/bin/panel-kiosk-launch").read_text()
+    except Exception:
+        pass
+    try:
+        for p in Path("/proc").iterdir():
+            if not p.name.isdigit():
+                continue
+            try:
+                cmd = (p / "cmdline").read_bytes().decode("utf-8", "replace")
+            except Exception:
+                continue
+            if "chromium" not in cmd or "--type=" in cmd:
+                continue          # skip the renderer/gpu helper processes
+            running = GPU_FLAG in cmd
+            break
+    except Exception:
+        pass
+    return {"gpu_raster_running": running, "gpu_raster_on_disk": disk}
+
+
 def metrics():
     m = {"ui_version": AGENT_VER}
+    m.update(kiosk_gpu())
     m.update(UI_STATE.get("wifi") or {})
     try:
         t = Path("/sys/class/thermal/thermal_zone0/temp").read_text().strip()
