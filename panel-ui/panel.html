@@ -208,6 +208,13 @@ body.sheet-open #scrim{opacity:.55}
 #bTitle{padding-left:128px;padding-right:128px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .crumb{flex:1;font-size:19px;color:var(--ink-quiet);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* The one sheet that does not get the glass. A scroller inside a
+   backdrop-filtered ancestor cannot be composited away from it, so every frame
+   of a flick repaints the blurred surface as well as the rows -- the same cost
+   that made a list of blurred tiles unscrollable, one level further out. The
+   sheet is already 90% opaque, so behind a list of opaque rows the blur was
+   buying almost nothing. */
+#s-browse{backdrop-filter:none;-webkit-backdrop-filter:none;background:rgba(11,11,18,.97)}
 .blist{position:absolute;left:32px;right:32px;top:156px;bottom:24px;overflow-y:auto;scrollbar-width:none;
   overscroll-behavior:contain}
 .blist::-webkit-scrollbar{display:none}
@@ -302,7 +309,9 @@ body.ng-tiles .tile{backdrop-filter:none!important;-webkit-backdrop-filter:none!
 #fps{position:absolute;top:8px;right:12px;font-size:15px;color:#2E7F68;z-index:99;font-variant-numeric:tabular-nums}
 /* Off unless a panel asks for them. They are for bring-up, and a finished
    panel on a wall should not be showing a frame counter. */
-body:not(.diag) #conn, body:not(.diag) #fps{display:none}
+body:not(.diag) #conn, body:not(.diag) #fps, body:not(.diag) #pDiag{display:none}
+#pDiag{margin-top:14px;font-size:16px;color:#2E7F68;text-align:center;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -323,6 +332,7 @@ body:not(.diag) #conn, body:not(.diag) #fps{display:none}
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 1v3m0 16v3M4.2 4.2l2.1 2.1m11.4 11.4l2.1 2.1M1 12h3m16 0h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
       <span>Bright</span></div>
   </div>
+  <div class="pdiag" id="pDiag"></div>
 </div>
 
 <!-- persistent now-playing strip, always present above the navbar -->
@@ -432,8 +442,11 @@ body:not(.diag) #conn, body:not(.diag) #fps{display:none}
 </section>
 
 <section class="sheet" id="s-browse">
-  <!-- No data-close: this one goes up a level and only dismisses at the root. -->
-  <div class="down press" id="bBack"><svg viewBox="0 0 24 24"><path id="bBackPath" d="M12 5v14m-7-7l7 7 7-7"/></svg></div>
+  <!-- No data-close: browse is only ever reached from the player, so back is
+       always back -- up a level, or to the player once at the root. Never a
+       dismiss, which is why this is a chevron and not the down-arrow the
+       other sheets use. -->
+  <div class="down press" id="bBack"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></div>
   <div class="grip"></div><h1 id="bTitle">Browse</h1>
   <div class="bnav"><div class="crumb" id="bCrumb">Library</div></div>
   <div class="blist" id="bList"></div>
@@ -686,6 +699,11 @@ function applyState(s){
   const li = LIGHTS.findIndex(l=>l.entity_id===id);
   if(li >= 0){
     LSTATE[li].level = s.state==="on" ? Math.round((s.attributes.brightness||0)/255*100) : 0;
+    /* A bulb Home Assistant cannot see says nothing about the room. Recorded
+       so the preset check can leave it out rather than read it as 0%, which
+       is indistinguishable from off and made one dead bulb enough to stop
+       either preset ever highlighting. */
+    LSTATE[li].seen = s.state!=="unavailable" && s.state!=="unknown";
     if(li===0){
       st.effect = s.attributes.effect || "none";
       if(s.attributes.effect_list && !st.effects.length){
@@ -823,7 +841,7 @@ function slider(el,get,set){
   return {paint};
 }
 /* one slider per configured light */
-const LSTATE = LIGHTS.map(()=>({level:0}));
+const LSTATE = LIGHTS.map(()=>({level:0, seen:false}));
 const lampSliders = [];
 (function buildLights(){
   const host = $("#lightRows");
@@ -1023,11 +1041,15 @@ function bRow(c){
   thumb.innerHTML = c.media_class==="directory" ? FOLDER : NOTE;
   row.querySelector(".n").textContent = c.title;
   row.querySelector(".s").textContent = c.media_class || "";
+  /* Decoded before it goes in the document. Album art arrives at whatever size
+     the source holds and is drawn into 64px; inserting it undecoded puts that
+     work in whichever frame it lands on, which during a flick is a dropped one. */
   if(c.thumbnail) row._thumb = async()=>{
     const u = await sign(c.thumbnail);
     if(!u) return;
-    const img=new Image(); img.decoding="async"; img.alt="";
-    img.src=u; thumb.replaceChildren(img);
+    const img=new Image(); img.decoding="async"; img.alt=""; img.src=u;
+    try{ await img.decode(); }catch(e){ return; }
+    thumb.replaceChildren(img);
   };
   row.addEventListener("click",()=>{
     if(c.can_expand){
@@ -1066,21 +1088,12 @@ function bFill(L, kids, from){
   if(bMore) bObserver().observe(bMore);
 }
 
-/* Down-arrow at the root, left-chevron once there is somewhere to go back to.
-   Same control either way -- what it does is what the glyph says. */
-const ARROW_DOWN="M12 5v14m-7-7l7 7 7-7", ARROW_BACK="M15 18l-6-6 6-6";
-function paintBack(){
-  const p=$("#bBackPath");
-  if(p) p.setAttribute("d", browseStack.length ? ARROW_BACK : ARROW_DOWN);
-}
-
 async function browse(id,type,title){
   const L=$("#bList");
   $("#bTitle").textContent = title || "Browse";
   if(bIO) bIO.disconnect();
   bMore=null; L.scrollTop=0;
   L.innerHTML='<div class="hint2">Loading…</div>';
-  paintBack();
   if(!live){ L.innerHTML='<div class="hint2">Add an HA token to browse</div>'; return; }
   const msg = {type:"media_player/browse_media", entity_id:SPEAKERS[target][0]};
   if(id)   msg.media_content_id = id;
@@ -1097,15 +1110,16 @@ async function browse(id,type,title){
   }
 }
 
-/* Up one level if there is one, dismiss only at the root. It always dismissed
-   before, so backing out of a folder shut the sheet instead of going up. */
+/* Up one level if there is one, back to the player at the root. Browsing is
+   entered from the player and nowhere else, so there is no state in which
+   dismissing the whole thing is the step back. */
 $("#bBack").addEventListener("click",()=>{
   if(browseStack.length){
     browseStack.pop();
     const t = browseStack[browseStack.length-1];
     if(t) browse(t.id,t.type,t.title); else browse(null,null,"Library");
     bump();
-  } else closeSheet();
+  } else showSheet("media");
 });
 
 /* ============================================================
@@ -1135,14 +1149,38 @@ function paintArt(){
    are already watching them.
 
    Tolerance because brightness is stored 0-255 and set as a percentage, so a
-   round trip rarely returns the exact number that was sent. */
-function paintPresets(){
-  const matches = which => LIGHTS.length && LIGHTS.every((l, i) => {
+   round trip rarely returns the exact number that was sent.
+
+   Two panels agree only if they agree on what the preset means: same lights,
+   same targets. Where they do not -- one panel listing a light the other does
+   not, or a soft level of 30 against 25 -- each is correctly describing its
+   own room and they will differ. That is invisible from the panel, so with
+   diagnostics on the line under the buttons names the light that is off
+   target and by how much. */
+function judgePreset(which){
+  const off = [];
+  let seen = 0;
+  LIGHTS.forEach((l, i) => {
+    const s = LSTATE[i];
+    if(!s || !s.seen) return;
+    seen++;
     const want = (which === "bright" ? l.bright : l.soft) ?? (which === "bright" ? 100 : 30);
-    return Math.abs((LSTATE[i] ? LSTATE[i].level : 0) - want) <= 2;
+    if(Math.abs(s.level - want) > 2) off.push((l.name || l.entity_id) + " " + s.level + "/" + want);
   });
-  document.querySelectorAll(".preset").forEach(p =>
-    p.classList.toggle("active", matches(p.dataset.preset)));
+  return {ok: seen > 0 && !off.length, off, seen};
+}
+function paintPresets(){
+  const notes = [];
+  document.querySelectorAll(".preset").forEach(p => {
+    const which = p.dataset.preset;
+    const v = judgePreset(which);
+    p.classList.toggle("active", v.ok);
+    notes.push(v.ok ? which + " ✓"
+             : !v.seen ? which + " ✗ no lights seen"
+             : which + " ✗ " + v.off.join(", "));
+  });
+  const d = $("#pDiag");
+  if(d) d.textContent = notes.join("   ");
 }
 function paintAll(){
   paintPresets();
