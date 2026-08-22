@@ -1,0 +1,41 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Panel config server",
+        "description": "The address panels use to reach the server, not the Home Assistant sidebar address. Ingress requires Home Assistant's own authentication and is not reachable from here.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "password": "Admin password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "No panel config server answered on that address and port.",
+      "invalid_auth": "The server rejected that password."
+    },
+    "abort": {
+      "already_configured": "That panel config server is already set up."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "online": { "name": "Online" },
+      "ha_connected": { "name": "Home Assistant link" }
+    },
+    "sensor": {
+      "cpu_temp": { "name": "CPU temperature" },
+      "disk_free": { "name": "Disk free" },
+      "config_version": { "name": "Config version" },
+      "config_pending": { "name": "Config versions behind" },
+      "agent_version": { "name": "Agent build" },
+      "backlight": { "name": "Backlight" }
+    },
+    "button": {
+      "reload": { "name": "Reload UI" },
+      "sync": { "name": "Force sync" },
+      "restart": { "name": "Restart panel" }
+    }
+  }
+}

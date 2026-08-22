@@ -430,6 +430,41 @@ def require_admin(request: Request):
     return True
 
 
+# Which of the two front ends is allowed to change a panel's configuration.
+# Both are already admin-authenticated, so this is not a security boundary --
+# it is the thing that makes "config happens in exactly one place" true rather
+# than merely intended. Without refusal you get a panel configured half from
+# the GUI and half from Home Assistant, and no way to tell which half is right.
+CLIENT_HEADER = "X-Panel-Client"
+
+
+def config_owner() -> str:
+    return db.get_setting("config_owner", "server")
+
+
+def _caller(request: Request) -> str:
+    return ("homeassistant"
+            if request.headers.get(CLIENT_HEADER, "").lower() == "homeassistant"
+            else "server")
+
+
+def require_config_owner(request: Request):
+    """Refuse writes from whichever side does not own the config.
+
+    409 rather than 403: nothing is wrong with the caller's credentials, the
+    request is simply addressed to the wrong owner, and the integration needs
+    to tell those apart to report it usefully.
+    """
+    owner, who = config_owner(), _caller(request)
+    if who != owner:
+        raise HTTPException(
+            409,
+            f"config_owner is '{owner}', so this cannot be changed from "
+            f"'{who}'. Change it in the owner, or move ownership in Settings.",
+        )
+    return True
+
+
 def _hash_password(pw: str) -> str:
     salt = secrets.token_bytes(16)
     dk = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt, PBKDF2_ROUNDS)
@@ -582,7 +617,7 @@ async def panel_detail(panel_id: str):
     }
 
 
-@app.post("/api/panels/{panel_id}/claim", dependencies=[Depends(require_admin)])
+@app.post("/api/panels/{panel_id}/claim", dependencies=[Depends(require_admin), Depends(require_config_owner)])
 async def claim(panel_id: str, request: Request):
     b = await request.json()
     p = db.claim(panel_id, b.get("room", ""), b.get("template", "default"), b.get("room_label"))
@@ -590,7 +625,7 @@ async def claim(panel_id: str, request: Request):
     return p
 
 
-@app.put("/api/panels/{panel_id}/config", dependencies=[Depends(require_admin)])
+@app.put("/api/panels/{panel_id}/config", dependencies=[Depends(require_admin), Depends(require_config_owner)])
 async def put_config(panel_id: str, request: Request):
     if not db.get_panel(panel_id):
         raise HTTPException(404, "unknown panel")
@@ -601,7 +636,7 @@ async def put_config(panel_id: str, request: Request):
     return {"version": v, "pushed": pushed}
 
 
-@app.post("/api/panels/{panel_id}/rollback", dependencies=[Depends(require_admin)])
+@app.post("/api/panels/{panel_id}/rollback", dependencies=[Depends(require_admin), Depends(require_config_owner)])
 async def rollback(panel_id: str, request: Request):
     b = await request.json()
     old = db.get_config(panel_id, int(b["version"]))
@@ -681,7 +716,7 @@ async def template(name: str):
     return t
 
 
-@app.put("/api/templates/{name}", dependencies=[Depends(require_admin)])
+@app.put("/api/templates/{name}", dependencies=[Depends(require_admin), Depends(require_config_owner)])
 async def put_template(name: str, request: Request):
     db.save_template(name, await request.json())
     return {"ok": True}
@@ -1059,6 +1094,10 @@ async def get_settings(request: Request):
             not db.get_setting("admin_password_hash") and ADMIN_PASSWORD in WEAK_DEFAULTS
         ),
         "ssh_public_key": ssh.public_key(),
+        # Which front end may change a panel's configuration. Provisioning is
+        # not covered: installing hardware is the server's job under either
+        # setting, and Home Assistant has no business flashing an SD card.
+        "config_owner": config_owner(),
         # The resolved value, not just where it came from. A panel is handed
         # this exact string, so it is the only thing worth showing.
         "panel_url": db.get_setting("panel_url") or PANEL_URL,
@@ -1090,6 +1129,14 @@ async def put_settings(request: Request):
             db.set_setting("panel_url", v)
         else:
             db.clear_setting("panel_url")
+    if "config_owner" in b:
+        v = (b.get("config_owner") or "server").strip().lower()
+        if v not in ("server", "homeassistant"):
+            raise HTTPException(400, "config_owner must be 'server' or 'homeassistant'")
+        # Deliberately not itself guarded by require_config_owner: handing
+        # ownership over is the one change the side losing it has to be able to
+        # make, or a misconfiguration locks both out of their own config.
+        db.set_setting("config_owner", v)
     if b.get("clear_ha_token"):
         db.clear_setting("ha_token")
     elif (b.get("ha_token") or "").strip():

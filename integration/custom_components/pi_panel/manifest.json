@@ -1,0 +1,12 @@
+{
+  "domain": "pi_panel",
+  "name": "Pi Panel",
+  "codeowners": ["@jsv93"],
+  "config_flow": true,
+  "documentation": "https://github.com/jsv93/pi-panel/blob/main/integration/README.md",
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/jsv93/pi-panel/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

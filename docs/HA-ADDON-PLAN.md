@@ -101,8 +101,17 @@ not after.
 
 ## Related: config ownership
 
-Agreed in discussion, not yet implemented. Exactly one source of truth,
-selected by the installer:
+**Implemented.** Server setting `config_owner`, enforced on the four endpoints
+that write panel config — claim, config, rollback, templates — by refusing with
+409 whichever side does not own it. Home Assistant identifies itself with an
+`X-Panel-Client` header; both sides are already admin-authenticated, so this is
+discipline, not security. Provisioning is deliberately not covered: installing
+hardware is the server's job under either setting.
+
+Handing ownership over is itself never refused, or a misconfiguration would
+lock both sides out of their own config.
+
+Exactly one source of truth, selected by the installer:
 
 - `config_owner: server` — today's behaviour; the integration is read-only and
   cannot write config
