@@ -309,7 +309,8 @@ body.ng-tiles .tile{backdrop-filter:none!important;-webkit-backdrop-filter:none!
 #fps{position:absolute;top:8px;right:12px;font-size:15px;color:#2E7F68;z-index:99;font-variant-numeric:tabular-nums}
 /* Off unless a panel asks for them. They are for bring-up, and a finished
    panel on a wall should not be showing a frame counter. */
-body:not(.diag) #conn, body:not(.diag) #fps, body:not(.diag) #pDiag{display:none}
+body:not(.diag) #conn, body:not(.diag) #fps, body:not(.diag) #pDiag,
+body:not(.diag) .diagonly{display:none}
 #pDiag{margin-top:14px;font-size:16px;color:#2E7F68;text-align:center;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -383,6 +384,7 @@ body:not(.diag) #conn, body:not(.diag) #fps, body:not(.diag) #pDiag{display:none
     <div class="row"><span class="k">Network</span><span id="stNet">–</span></div>
     <div class="row"><span class="k">Glass</span><span id="stGlass">–</span></div>
     <div class="row"><span class="k">Uptime</span><span id="sUp">–</span></div>
+    <div class="row diagonly"><span class="k">Renderer</span><span id="stGL">–</span></div>
   </div>
   <!-- Anything that changes something lives here, not among the status rows.
        Mixed together there was no way to tell which lines did something when
@@ -1400,6 +1402,21 @@ function fitStage(){
    guessing at why a layout is a few pixels out has already cost a round trip.
    `journalctl -u panel-agent | grep viewport` says what the page actually
    measured and what the body ended up occupying. */
+/* Whether chromium is drawing on the GPU or on the CPU. Nothing on the page
+   can tell the difference by looking -- a software-rastered panel is simply
+   slow, which reads as "the UI is too heavy" and sends you optimising the UI.
+   "V3D" is the Pi's GPU; "SwiftShader" or "Software" means the flags in
+   kiosk-launch.sh did not take and no amount of CSS will fix the frame rate. */
+function glRenderer(){
+  try{
+    const gl = document.createElement("canvas").getContext("webgl");
+    if(!gl) return "no webgl";
+    const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+    return String(dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)
+                      : gl.getParameter(gl.RENDERER));
+  }catch(e){ return "gl error"; }
+}
+
 function reportViewport(w, h, s, stageH, offset){
   setTimeout(()=>{
     let box = null;
@@ -1410,6 +1427,7 @@ function reportViewport(w, h, s, stageH, offset){
                   avail:[screen.availWidth, screen.availHeight],
                   configured:[SCREEN_W, SCREEN_H],
                   dpr:devicePixelRatio, scale:+s.toFixed(4), stageH, offset,
+                  gl:glRenderer(),
                   bodyLeftRightWidth:box,
                   scroll:[document.documentElement.scrollWidth, document.body.scrollWidth]};
     try{ if(agentWS && agentWS.readyState===1) agentWS.send(JSON.stringify(info)); }catch(e){}
@@ -1466,6 +1484,7 @@ function applyDiag(){
     localStorage.setItem("diagBase", DIAG_DEFAULT?"1":"0");
   }catch(e){}
 }
+{ const g=$("#stGL"); if(g) g.textContent = glRenderer(); }
 const dgr=$("#diagRow");
 if(dgr) dgr.addEventListener("click",()=>{ diag=!diag; applyDiag(); bump(); });
 applyDiag();

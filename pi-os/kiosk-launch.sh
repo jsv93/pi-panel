@@ -42,9 +42,21 @@ fi
 #     client that was retrying dead Google endpoints through that service.
 #   Both features go in ONE --enable-features: a second occurrence replaces the
 #     first rather than adding to it.
+#   --ignore-gpu-blocklist    Mesa's V3D driver is on chromium's blocklist, and
+#     a blocklisted GPU makes --enable-gpu-rasterization a no-op that reports
+#     no error. Raster then runs on the CPU, which is a scrolling list at 17fps
+#     no matter what the page does -- and it does not get better with less
+#     work on the page, which is how we found it.
+#   --enable-zero-copy        raster straight into the texture rather than into
+#     memory and then copying it across.
+#   Check rather than assume: Settings shows the GL renderer with diagnostics
+#     on. "V3D" means this worked, "SwiftShader" means it did not.
 exec cage -- "$CHROME" \
   --kiosk "$UI_URL" \
   --ozone-platform=wayland \
+  --ignore-gpu-blocklist \
+  --enable-gpu-rasterization \
+  --enable-zero-copy \
   --enable-features=UseOzonePlatform,NetworkServiceInProcess \
   --disable-features=TranslateUI \
   --user-data-dir="$HOME/chromium" \

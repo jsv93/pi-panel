@@ -228,6 +228,7 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
         <button class="btn" id="setupCmdBtn" style="display:none">Setup command</button>
         <button class="btn" id="reinstallBtn" style="display:none">Reinstall</button>
         <button class="btn" id="previewBtn">Preview</button>
+        <button class="btn" id="saveTplBtn">Save as template</button>
         <button class="btn" id="revertBtn">Revert</button>
         <button class="btn primary" id="saveBtn">Save &amp; push</button>
       </div>
@@ -503,20 +504,12 @@ function opts(list, val, blank="— none —"){
   return h + list.map(e=>
     `<option value="${e.entity_id}" ${e.entity_id===val?"selected":""}>${e.name} — ${e.entity_id}</option>`).join("");
 }
-async function openPanel(id){
-  CUR = await api("/panels/"+id);
-  CFG = JSON.parse(JSON.stringify(CUR.config));
-  await loadEntities();
-  $("#fleetView").style.display="none"; $("#detailView").style.display="block";
-  $("#dTitle").textContent = CUR.panel.hostname;
-  $("#dTemplate").textContent = "inherits: "+(CUR.panel.template||"default");
-  $("#fHostname").value = CUR.panel.hostname;
-  $("#fRoom").value = CUR.panel.room||"";
+/* Everything on this page that comes from the config, as opposed to from the
+   panel record. Split out because loading a template refills exactly this and
+   must leave hostname, room and the template picker alone. */
+function fillConfigForm(){
   $("#fRoomLabel").value = CFG.room_label||"";
   $("#fHaUrl").value = (CFG.connection||{}).ha_url||"";
-  const tpls = await api("/templates");
-  $("#fTemplate").innerHTML = tpls.map(t=>
-    `<option value="${t.name}" ${t.name===CUR.panel.template?"selected":""}>${t.name}</option>`).join("");
   renderLights(); renderSpeakers();
   $("#fTemp").innerHTML = opts(ENTITIES.sensor, (CFG.sensors||{}).temperature);
   $("#fHum").innerHTML  = opts(ENTITIES.sensor, (CFG.sensors||{}).humidity);
@@ -532,6 +525,23 @@ async function openPanel(id){
   $("#fDiag").value = d.diagnostics ? "1" : "0";
   $("#fScreenW").value = d.screen_width ?? 0;
   $("#fScreenH").value = d.screen_height ?? 0;
+}
+async function loadTemplateList(sel){
+  const tpls = await api("/templates");
+  $("#fTemplate").innerHTML = tpls.map(t=>
+    `<option value="${t.name}" ${t.name===sel?"selected":""}>${t.name}</option>`).join("");
+}
+async function openPanel(id){
+  CUR = await api("/panels/"+id);
+  CFG = JSON.parse(JSON.stringify(CUR.config));
+  await loadEntities();
+  $("#fleetView").style.display="none"; $("#detailView").style.display="block";
+  $("#dTitle").textContent = CUR.panel.hostname;
+  $("#dTemplate").textContent = "inherits: "+(CUR.panel.template||"default");
+  $("#fHostname").value = CUR.panel.hostname;
+  $("#fRoom").value = CUR.panel.room||"";
+  await loadTemplateList(CUR.panel.template);
+  fillConfigForm();
 
   $("#problems").innerHTML = (CUR.problems||[]).map(p=>
     `<div class="err">⚠ ${p.message}</div>`).join("");
@@ -695,6 +705,49 @@ $("#saveBtn").onclick = async ()=>{
   }
 };
 $("#revertBtn").onclick = ()=>openPanel(CUR.panel.id);
+
+/* ---------------- templates ----------------
+   Picking a template loads its values into the form rather than only changing
+   what the panel inherits. Inheritance on its own is invisible here: a panel's
+   own saved config wins over its template on every key, so switching the
+   template of a configured panel changes nothing anyone can see. Loading it
+   makes the change explicit, and Revert undoes it. */
+$("#fTemplate").onchange = async ()=>{
+  const name = $("#fTemplate").value;
+  try{
+    const t = await api("/templates/"+encodeURIComponent(name));
+    const label = CFG.room_label;          // identity belongs to the panel
+    CFG = JSON.parse(JSON.stringify(t));
+    CFG.room_label = label;
+    fillConfigForm();
+    toast(`Loaded "${name}" — Save & push to apply, Revert to undo`);
+  }catch(e){ toast("Could not load template: "+(e.message||e)); }
+};
+
+$("#saveTplBtn").onclick = ()=>{
+  const suggested = ($("#fRoom").value || CUR.panel.room || "")
+    .trim().toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+  confirmModal("Save as template",
+    `<div class="lbl">NAME</div>
+     <input id="tplName" style="width:100%" value="${suggested}" placeholder="e.g. living-areas">
+     <div style="margin-top:10px;font-size:12px;color:var(--dim);line-height:1.5">
+       Saves this panel's lights and their soft/bright levels, speakers, sensors,
+       connection and display settings. Hostname, room and room label stay with the
+       panel. Two panels on one template are configured identically, which is what
+       keeps their presets agreeing.</div>`,
+    async ()=>{
+      const name = ($("#tplName").value||"").trim();
+      if(!name){ toast("A template needs a name"); return; }
+      /* collect() returns the live CFG object, so the copy is not optional --
+         deleting the label off it would take it off the form's own config too. */
+      const body = JSON.parse(JSON.stringify(collect()));
+      delete body.room_label;
+      await api("/templates/"+encodeURIComponent(name),
+                {method:"PUT", body:JSON.stringify(body)});
+      await loadTemplateList($("#fTemplate").value);
+      toast(`Saved template "${name}"`);
+    });
+};
 
 document.querySelectorAll("[data-act]").forEach(b=>b.onclick=async()=>{
   const r = await api(`/panels/${CUR.panel.id}/action`,{method:"POST",
