@@ -163,7 +163,10 @@ body.sheet-open #scrim{opacity:.55}
 
 /* ---------- media player (matches reference layout) ---------- */
 #s-media{padding:0 32px}
-.mp-art{width:560px;height:560px;margin:26px auto 0;border-radius:18px;overflow:hidden;position:relative;
+/* Top margin clears the close arrow. This sheet has no h1, so the artwork used
+   to start under the button -- and since the button is the full width of its
+   112px target, the top-left corner of the album art dismissed the sheet. */
+.mp-art{width:560px;height:560px;margin:104px auto 0;border-radius:18px;overflow:hidden;position:relative;
   background:rgba(20,20,28,.7);border:1px solid rgba(120,125,150,.18);display:grid;place-items:center}
 .mp-art img{width:100%;height:100%;object-fit:cover}
 .mp-art>svg{width:96px;height:96px;stroke:var(--ink-ghost);fill:none;stroke-width:1.2}
@@ -196,17 +199,30 @@ body.sheet-open #scrim{opacity:.55}
 .mp-ico svg{width:30px;height:30px;stroke:currentColor;fill:none;stroke-width:1.7}
 .mp-ico.on{color:var(--accent);background:rgba(29,158,117,.16)}
 .mp-ico.dim{color:var(--ink-ghost)}
-.bnav{display:flex;align-items:center;gap:14px;margin:6px 0 0}
-.bup{display:flex;align-items:center;gap:10px;height:60px;padding:0 22px;border-radius:20px;
-  background:rgba(30,30,40,.85);font-size:21px;color:var(--ink-dim);flex:none}
-.bup svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8}
-.bup.hide{display:none}
-.crumb{flex:1;margin:0 4px;font-size:19px;color:var(--ink-quiet);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.blist{position:absolute;left:32px;right:32px;top:214px;bottom:24px;overflow-y:auto;scrollbar-width:none}
+/* No second Back button in this row. There was one, sitting at the left edge
+   directly under the sheet's own arrow: two controls for one job, overlapping,
+   and only one of them went up a level. */
+/* Indented past the arrow's 128px right edge, so the crumb reads as sitting
+   beside it rather than underneath it. */
+.bnav{display:flex;align-items:center;margin:8px 0 0;min-height:26px;padding-left:100px}
+#bTitle{padding-left:128px;padding-right:128px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crumb{flex:1;font-size:19px;color:var(--ink-quiet);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.blist{position:absolute;left:32px;right:32px;top:156px;bottom:24px;overflow-y:auto;scrollbar-width:none;
+  overscroll-behavior:contain}
 .blist::-webkit-scrollbar{display:none}
-/* flat backgrounds: a scrolling list of backdrop-filter tiles murders frame rate */
+/* flat backgrounds: a scrolling list of backdrop-filter tiles murders frame rate.
+   No .press either: a drag sets :active on the row under the finger, so every
+   flick started a transform transition on a row that was already moving.
+   content-visibility skips rows that are off-screen entirely. The intrinsic
+   size is the *content* box -- the 64px thumbnail, which is the tallest child;
+   padding and border are added to it. Measured, not guessed: overstating it by
+   the padding made every unseen row 28px too tall, which is a scroll extent
+   that shifts under the finger, i.e. the jank this is here to remove. */
 .bitem{display:flex;align-items:center;gap:18px;padding:14px;margin-bottom:12px;border-radius:18px;
-  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background:rgba(28,28,38,.72)}
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background:rgba(28,28,38,.72);
+  content-visibility:auto;contain-intrinsic-size:auto 64px}
+.bitem:active{background:rgba(42,42,56,.9)}
 .bthumb{width:64px;height:64px;border-radius:12px;flex:none;background:rgba(20,20,28,.7);
   border:1px solid rgba(120,125,150,.18);display:grid;place-items:center;overflow:hidden}
 .bthumb img{width:100%;height:100%;object-fit:cover}
@@ -368,6 +384,9 @@ body:not(.diag) #conn, body:not(.diag) #fps{display:none}
     <div class="act tile press" id="glassRow">
       <span class="t">Change glass</span><span class="v" id="glassV">Full</span>
       <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="act tile press" id="diagRow">
+      <span class="t">Diagnostics</span><span class="v" id="diagV">Off</span>
+      <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
   </div>
   <div class="restart tile press" id="reload">Reload panel</div>
 </section>
@@ -413,12 +432,10 @@ body:not(.diag) #conn, body:not(.diag) #fps{display:none}
 </section>
 
 <section class="sheet" id="s-browse">
-  <div class="down press" data-close><svg viewBox="0 0 24 24"><path d="M12 5v14m-7-7l7 7 7-7"/></svg></div>
+  <!-- No data-close: this one goes up a level and only dismisses at the root. -->
+  <div class="down press" id="bBack"><svg viewBox="0 0 24 24"><path id="bBackPath" d="M12 5v14m-7-7l7 7 7-7"/></svg></div>
   <div class="grip"></div><h1 id="bTitle">Browse</h1>
-  <div class="bnav">
-    <div class="bup press hide" id="bUp"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg><span>Back</span></div>
-    <div class="crumb" id="bCrumb">Library</div>
-  </div>
+  <div class="bnav"><div class="crumb" id="bCrumb">Library</div></div>
   <div class="blist" id="bList"></div>
 </section>
 
@@ -543,8 +560,19 @@ const OFF_MS   = (_disp.backlight_off_s ?? 0) * 1000;
 const SCREEN_W = +(_disp.screen_width  ?? 0) || 0;
 const SCREEN_H = +(_disp.screen_height ?? 0) || 0;
 /* Connection status and frame counter. Bring-up tools, off by default. */
-const DIAG = !!(_disp.diagnostics ?? false);
-if(DIAG) document.body.classList.add("diag");
+/* Same override rule as the glass tier: the panel may turn diagnostics on to
+   take a look, but a value pushed from the server wins once it changes. Set
+   here as well as in applyDiag() so an enabled panel does not flash without
+   the overlays while the rest of the script parses. */
+const DIAG_DEFAULT = !!(_disp.diagnostics ?? false);
+let diag = DIAG_DEFAULT;
+try{
+  const v = localStorage.getItem("diag");
+  const base = localStorage.getItem("diagBase");
+  if(v !== null && base !== null && (base === "1") === DIAG_DEFAULT) diag = v === "1";
+  else { localStorage.removeItem("diag"); localStorage.setItem("diagBase", DIAG_DEFAULT?"1":"0"); }
+}catch(e){}
+if(diag) document.body.classList.add("diag");
 const BL_MIN   = _disp.backlight_min ?? 5;
 const BL_DEF   = _disp.backlight_default ?? 100;
 const GLASS_DEFAULT = _disp.glass_tier ?? 0;
@@ -962,10 +990,97 @@ const FOLDER='<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 0
 const NOTE  ='<svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
 const CHEV  ='<svg class="bgo" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
 
+/* Rendering a folder was the whole folder at once: a DOM row per child, each
+   appended individually, each awaiting its own websocket round-trip to sign a
+   thumbnail. A playlist folder of a few hundred tracks therefore built a few
+   hundred nodes and fired a few hundred round-trips before the first frame,
+   which is what made scrolling feel like treacle. Rows now arrive a screenful
+   at a time and thumbnails are signed only as they come into view. */
+const BROWSE_CHUNK = 40;
+let bIO = null, bMore = null;
+
+function bObserver(){
+  if(bIO) return bIO;
+  bIO = new IntersectionObserver(es=>{
+    for(const e of es){
+      if(!e.isIntersecting) continue;
+      const el = e.target;
+      bIO.unobserve(el);
+      if(el === bMore) el.dispatchEvent(new Event("bmore"));
+      else if(el._thumb) el._thumb();
+    }
+  },{root:$("#bList"), rootMargin:"400px"});
+  return bIO;
+}
+
+function bRow(c){
+  const row=document.createElement("div");
+  row.className="bitem tile";
+  row.innerHTML='<div class="bthumb"></div>'+
+    '<div class="bmeta"><div class="n"></div><div class="s"></div></div>'+
+    (c.can_expand?CHEV:"");
+  const thumb=row.querySelector(".bthumb");
+  thumb.innerHTML = c.media_class==="directory" ? FOLDER : NOTE;
+  row.querySelector(".n").textContent = c.title;
+  row.querySelector(".s").textContent = c.media_class || "";
+  if(c.thumbnail) row._thumb = async()=>{
+    const u = await sign(c.thumbnail);
+    if(!u) return;
+    const img=new Image(); img.decoding="async"; img.alt="";
+    img.src=u; thumb.replaceChildren(img);
+  };
+  row.addEventListener("click",()=>{
+    if(c.can_expand){
+      browseStack.push({id:c.media_content_id,type:c.media_content_type,title:c.title});
+      browse(c.media_content_id,c.media_content_type,c.title);
+    }else if(c.can_play){
+      call("media_player","play_media",{entity_id:SPEAKERS[target][0],
+        media_content_id:c.media_content_id, media_content_type:c.media_content_type});
+      showSheet("media");
+    }
+    bump();
+  });
+  return row;
+}
+
+function bFill(L, kids, from){
+  if(bMore){ bMore.remove(); bMore=null; }
+  const frag=document.createDocumentFragment();
+  const end=Math.min(from+BROWSE_CHUNK, kids.length);
+  const rows=[];
+  for(let i=from;i<end;i++){
+    const row=bRow(kids[i]);
+    frag.appendChild(row);
+    if(row._thumb) rows.push(row);
+  }
+  if(end<kids.length){
+    bMore=document.createElement("div");
+    bMore.className="hint2";
+    bMore.textContent="…";
+    bMore.addEventListener("bmore",()=>bFill(L,kids,end),{once:true});
+    frag.appendChild(bMore);
+  }
+  L.appendChild(frag);
+  /* observed after insertion, or they never intersect anything */
+  rows.forEach(r=>bObserver().observe(r));
+  if(bMore) bObserver().observe(bMore);
+}
+
+/* Down-arrow at the root, left-chevron once there is somewhere to go back to.
+   Same control either way -- what it does is what the glyph says. */
+const ARROW_DOWN="M12 5v14m-7-7l7 7 7-7", ARROW_BACK="M15 18l-6-6 6-6";
+function paintBack(){
+  const p=$("#bBackPath");
+  if(p) p.setAttribute("d", browseStack.length ? ARROW_BACK : ARROW_DOWN);
+}
+
 async function browse(id,type,title){
   const L=$("#bList");
   $("#bTitle").textContent = title || "Browse";
+  if(bIO) bIO.disconnect();
+  bMore=null; L.scrollTop=0;
   L.innerHTML='<div class="hint2">Loading…</div>';
+  paintBack();
   if(!live){ L.innerHTML='<div class="hint2">Add an HA token to browse</div>'; return; }
   const msg = {type:"media_player/browse_media", entity_id:SPEAKERS[target][0]};
   if(id)   msg.media_content_id = id;
@@ -973,42 +1088,24 @@ async function browse(id,type,title){
   try{
     const r = await wsSend(msg);
     $("#bCrumb").textContent = ["Library"].concat(browseStack.map(b=>b.title)).join("  ›  ");
-    $("#bUp").classList.toggle("hide", browseStack.length===0);
     const kids = r.children || [];
     if(!kids.length){ L.innerHTML='<div class="hint2">Nothing here</div>'; return; }
     L.innerHTML="";
-    kids.forEach(async function(c){
-      const row=document.createElement("div");
-      row.className="bitem tile press";
-      row.innerHTML='<div class="bthumb">'+(c.media_class==="directory"?FOLDER:NOTE)+'</div>'+
-        '<div class="bmeta"><div class="n"></div><div class="s">'+(c.media_class||"")+'</div></div>'+
-        (c.can_expand?CHEV:"");
-      row.querySelector(".n").textContent=c.title;
-      L.appendChild(row);
-      if(c.thumbnail){
-        const u=await sign(c.thumbnail);
-        if(u) row.querySelector(".bthumb").innerHTML='<img src="'+u+'" alt="">';
-      }
-      row.addEventListener("click",()=>{
-        if(c.can_expand){
-          browseStack.push({id:c.media_content_id,type:c.media_content_type,title:c.title});
-          browse(c.media_content_id,c.media_content_type,c.title);
-        }else if(c.can_play){
-          call("media_player","play_media",{entity_id:SPEAKERS[target][0],
-            media_content_id:c.media_content_id, media_content_type:c.media_content_type});
-          showSheet("media");
-        }
-        bump();
-      });
-    });
+    bFill(L,kids,0);
   }catch(e){
     L.innerHTML='<div class="hint2">This player can’t browse</div>';
   }
 }
-$("#bUp").addEventListener("click",()=>{
-  browseStack.pop();
-  const t = browseStack[browseStack.length-1];
-  if(t) browse(t.id,t.type,t.title); else browse(null,null,"Library");
+
+/* Up one level if there is one, dismiss only at the root. It always dismissed
+   before, so backing out of a folder shut the sheet instead of going up. */
+$("#bBack").addEventListener("click",()=>{
+  if(browseStack.length){
+    browseStack.pop();
+    const t = browseStack[browseStack.length-1];
+    if(t) browse(t.id,t.type,t.title); else browse(null,null,"Library");
+    bump();
+  } else closeSheet();
 });
 
 /* ============================================================
@@ -1306,15 +1403,34 @@ $("#idle").addEventListener("click",bump);
 const t0=Date.now();
 setInterval(()=>{ const s=(Date.now()-t0)/1000;
   $("#sUp").textContent = s<3600 ? Math.floor(s/60)+"m" : Math.floor(s/3600)+"h "+Math.floor(s%3600/60)+"m"; },1000);
-/* Only when diagnostics are on. Counting frames means a requestAnimationFrame
+/* Only while diagnostics are on. Counting frames means a requestAnimationFrame
    callback every frame forever, which on a panel that spends most of its life
-   idle is work for a number nobody is reading. */
-if(DIAG){
+   idle is work for a number nobody is reading -- so the loop starts and stops
+   with the toggle rather than being decided once at load. */
+let fpsOn=false;
+function startFps(){
+  if(fpsOn) return;
+  fpsOn=true;
   let frames=0,last=performance.now();
-  (function loop(now){ frames++;
+  requestAnimationFrame(function loop(now){
+    if(!fpsOn) return;
+    frames++;
     if(now-last>=1000){ $("#fps").textContent=frames+" fps"; frames=0; last=now; }
-    requestAnimationFrame(loop); })(performance.now());
+    requestAnimationFrame(loop);
+  });
 }
+function applyDiag(){
+  document.body.classList.toggle("diag", diag);
+  const el=$("#diagV"); if(el) el.textContent = diag ? "On" : "Off";
+  if(diag) startFps(); else fpsOn=false;
+  try{
+    localStorage.setItem("diag", diag?"1":"0");
+    localStorage.setItem("diagBase", DIAG_DEFAULT?"1":"0");
+  }catch(e){}
+}
+const dgr=$("#diagRow");
+if(dgr) dgr.addEventListener("click",()=>{ diag=!diag; applyDiag(); bump(); });
+applyDiag();
 
 connect(); paintAll(); bump(); setBacklight(st.bl);
 </script>
