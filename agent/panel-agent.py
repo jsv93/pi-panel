@@ -199,6 +199,9 @@ BUNDLE_TARGETS = {
     "panel.html":     Path("/opt/panel/current/panel.html"),
     "panel-agent.py": Path("/usr/local/bin/panel-agent"),
     "backlight.py":   Path("/usr/local/bin/panel-backlight"),
+    # Here because it was not: the launcher is written once at install time, so
+    # a chromium flag added to it reached a panel only on a full reinstall.
+    "kiosk-launch.sh": Path("/usr/local/bin/panel-kiosk-launch"),
 }
 SELF = "panel-agent.py"
 PREV = Path("/usr/local/bin/panel-agent.prev")
@@ -241,13 +244,18 @@ async def fetch_bundle(session, name, digest):
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp.write_bytes(data)
+        # A syntax error here would restart-loop the agent forever, or in the
+        # launcher's case leave a black screen, and on a wall panel neither is
+        # something to discover later.
+        check = None
         if name.endswith(".py"):
-            # A syntax error here would restart-loop the agent forever, and on
-            # a wall panel that is not something to discover later.
-            r = subprocess.run([sys.executable, "-m", "py_compile", str(tmp)],
-                               capture_output=True)
+            check = [sys.executable, "-m", "py_compile", str(tmp)]
+        elif name.endswith(".sh"):
+            check = ["sh", "-n", str(tmp)]
+        if check:
+            r = subprocess.run(check, capture_output=True)
             if r.returncode != 0:
-                print(f"[agent] update {name}: does not compile, ignoring")
+                print(f"[agent] update {name}: does not parse, ignoring")
                 tmp.unlink(missing_ok=True)
                 return False
             tmp.chmod(0o755)
@@ -291,6 +299,12 @@ async def check_bundle(session):
         await reload_ui()
     if "backlight.py" in changed:
         subprocess.run(["systemctl", "restart", "panel-backlight"], check=False)
+    if "kiosk-launch.sh" in changed:
+        # Chromium reads its flags once, at exec. Restarting the unit takes the
+        # browser down and back up -- visible on the wall for a second, and the
+        # only way a launcher change means anything.
+        print("[agent] kiosk launcher changed, restarting cage-kiosk")
+        subprocess.run(["systemctl", "restart", "cage-kiosk"], check=False)
     if self_changed:
         # Leave a marker and exit; systemd restarts us. The replacement checks
         # for the marker and rolls back if it cannot reach the server, so a bad
