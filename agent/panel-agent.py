@@ -594,6 +594,11 @@ async def ws_loop(session):
             async with session.ws_connect(url, heartbeat=20) as ws:
                 print("[agent] server socket up")
                 await sync(session)
+                # The socket drops when the server restarts, and the server
+                # restarts when it is updated -- which is exactly when there is
+                # a new bundle to collect. Checking on reconnect turns "up to
+                # five minutes" into "seconds" for the case that matters.
+                await check_bundle(session)
                 async for msg in ws:
                     if msg.type != aiohttp.WSMsgType.TEXT:
                         continue
@@ -601,6 +606,12 @@ async def ws_loop(session):
                     t = data.get("type")
                     if t in ("config_updated", "hello", "sync"):
                         await sync(session, force=(t == "sync"))
+                        # Force sync means "catch up with the server", which
+                        # people reasonably read as including the panel's own
+                        # files. It did not, so the button appeared to do
+                        # nothing whenever the bundle was what had changed.
+                        if t == "sync":
+                            await check_bundle(session)
                     elif t == "reload":
                         await reload_ui()
                     elif t == "restart":
