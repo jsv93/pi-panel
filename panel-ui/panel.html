@@ -144,7 +144,12 @@ body.sheet-open #scrim{opacity:.55}
 .ov.on{visibility:visible}
 .ov-bg{position:absolute;inset:0;background:rgba(0,0,0,.62);opacity:0;transition:opacity .2s var(--ease)}
 .ov.on .ov-bg{opacity:1}
+/* Promoted for the same reason as .blist: the speaker, queue and network lists
+   scroll under the same stage transform and were repainting per frame too.
+   Shorter lists, so it was never as obvious -- which is the only reason it was
+   never noticed. */
 .ov-card{position:absolute;left:0;right:0;bottom:0;max-height:76%;overflow-y:auto;scrollbar-width:none;
+  will-change:transform;
   background:rgba(17,17,25,.985);border-radius:32px 32px 0 0;padding:0 28px 34px;
   border-top:1px solid rgba(120,125,150,.16);
   transform:translateY(100%);transition:transform .24s var(--sheet-ease)}
@@ -215,8 +220,17 @@ body.sheet-open #scrim{opacity:.55}
    sheet is already 90% opaque, so behind a list of opaque rows the blur was
    buying almost nothing. */
 #s-browse{backdrop-filter:none;-webkit-backdrop-filter:none;background:rgba(11,11,18,.97)}
+/* will-change is what takes this list from 14fps to 64. The whole stage sits
+   under a transform: scale(), and a scroller inside a transformed ancestor is
+   not given its own compositing layer -- so every frame of a flick repainted
+   the list rather than moving a layer that was already drawn. Measured on the
+   panel, six cases, and this was the only one that mattered: disabling
+   content-visibility, thumbnails and text each moved it by a frame or two.
+   Removing the rows' borders and corners reached 37, which is the same finding
+   seen from the other end -- an expensive repaint, happening every frame. Once
+   it stops repainting, what the rows cost to paint stops being interesting. */
 .blist{position:absolute;left:32px;right:32px;top:156px;bottom:24px;overflow-y:auto;scrollbar-width:none;
-  overscroll-behavior:contain}
+  overscroll-behavior:contain;will-change:transform}
 .blist::-webkit-scrollbar{display:none}
 /* flat backgrounds: a scrolling list of backdrop-filter tiles murders frame rate.
    No .press either: a drag sets :active on the row under the finger, so every
@@ -1132,7 +1146,11 @@ async function browse(id,type,title){
    the rest of the table is measuring the right thing. */
 const SCROLL_CASES = [
   ["baseline",        ""],
-  ["promoted list",   ".blist{will-change:transform}"],
+  /* Inverted now that the list is promoted by default: this case takes the
+     promotion away, so the table keeps showing the size of the thing rather
+     than repeating the baseline. It should read far worse than baseline. If it
+     ever reads the same, the promotion has stopped taking effect. */
+  ["unpromoted list", ".blist{will-change:auto!important}"],
   ["no content-vis",  ".bitem{content-visibility:visible!important}"],
   ["no thumbnails",   ".bthumb{visibility:hidden!important}"],
   ["no text",         ".bmeta{visibility:hidden!important}"],
