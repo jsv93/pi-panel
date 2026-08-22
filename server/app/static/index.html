@@ -227,7 +227,10 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
       <div id="sBundleWhere" style="margin-top:12px"></div>
       <div id="sBundleLog" style="margin-top:14px;max-height:220px;overflow-y:auto;
         font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace"></div>
-      <div style="margin-top:12px"><button class="btn" id="sBundleRefresh">Refresh</button></div>
+      <div style="margin-top:12px;display:flex;gap:8px">
+        <button class="btn" id="sBundleRefresh">Refresh</button>
+        <button class="btn" id="sBundleUseImage" style="display:none">Use the image's copies</button>
+      </div>
     </div>
   </div>
 
@@ -1070,6 +1073,10 @@ async function loadBundleLog(){
       <span style="width:150px;color:var(--dim)">${f}</span>
       <span style="color:${bad?"var(--bad)":"var(--ok)"}">${src}</span></div>`;
   }).join("");
+  /* Offered only when there is something to clear, so the button cannot be
+     read as a general repair action for an update that is failing elsewhere. */
+  const overridden = Object.entries(b.serving).filter(([,src])=>src!=="image" && src!=="MISSING");
+  $("#sBundleUseImage").style.display = overridden.length ? "" : "none";
   $("#sBundleLog").innerHTML = b.recent.length
     ? b.recent.map(r=>{
         const when = new Date(r.at*1000).toLocaleTimeString();
@@ -1080,6 +1087,20 @@ async function loadBundleLog(){
     : `<div class="muted">Nothing yet. Panels ask every 5 minutes.</div>`;
 }
 $("#sBundleRefresh").onclick = loadBundleLog;
+$("#sBundleUseImage").onclick = ()=>{
+  confirmModal("Use the image's copies",
+    `<div style="font-size:13px;line-height:1.6;color:var(--dim)">
+       Stands down the hand-copied panel files so the ones shipped inside this
+       add-on are served instead. Panels pick the difference up within five
+       minutes. The old files are renamed, not deleted, so this is reversible.
+     </div>`,
+    async ()=>{
+      const r = await api("/bundle/use-image", {method:"POST"});
+      toast(r.moved.length ? `Now serving the image's ${r.moved.join(", ")}`
+                           : "Nothing was overridden");
+      loadBundleLog();
+    });
+};
 
 async function loadSettings(){
   loadBundleLog();

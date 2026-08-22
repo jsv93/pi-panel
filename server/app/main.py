@@ -1006,6 +1006,28 @@ async def bundle(name: str, request: Request):
     return FileResponse(path)
 
 
+@app.post("/api/bundle/use-image", dependencies=[Depends(require_admin)])
+async def bundle_use_image():
+    """Stop serving hand-copied panel files, and go back to the image's.
+
+    Renamed rather than deleted -- _bundle_path only matches the exact name, so
+    a rename is enough to stand them down and still leaves them recoverable.
+
+    Here because the alternative is a shell on the Home Assistant host, and the
+    directory this clears is reachable from neither the panel nor the Terminal
+    add-on's container. A setting that can only be undone from a machine the
+    operator cannot get to is not a setting, it is a trap.
+    """
+    moved = []
+    stamp = time.strftime("%Y%m%d%H%M%S")
+    for name in BUNDLE_FILES:
+        p = os.path.join(BUNDLE_DIR, name)
+        if os.path.exists(p):
+            os.replace(p, f"{p}.overridden-{stamp}")
+            moved.append(name)
+    return {"moved": moved}
+
+
 @app.get("/api/bundle-log", dependencies=[Depends(require_admin)])
 async def bundle_log():
     """What the panels have actually asked for, and where each file is served
