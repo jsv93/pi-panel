@@ -947,13 +947,14 @@ def _bundle_path(name):
 
 
 @app.get("/bundle/manifest")
-async def bundle_manifest():
+async def bundle_manifest(request: Request):
     """Hashes of the panel files, so an agent can tell whether it is current.
 
     Hashes rather than a version number: nothing to remember to bump, and it
     notices a file edited by hand on either end. Unauthenticated like the rest
     of /bundle — it describes files any panel may already fetch.
     """
+    _note_bundle(request, "manifest", "served")
     out = {}
     for name in BUNDLE_FILES:
         path = _bundle_path(name)
@@ -967,8 +968,25 @@ async def bundle_manifest():
     return out
 
 
+# Recent bundle traffic, newest last, keyed by source address. Purely a
+# diagnostic and deliberately in memory: the question it answers is "is this
+# panel asking for files right now", which nothing persistent improves.
+#
+# It exists because there was no way to tell a panel that never asked from one
+# that asked and could not install what it got. Both present as a panel that
+# does not update, and the only instrument was a shell on the panel.
+BUNDLE_LOG: list = []
+BUNDLE_LOG_MAX = 200
+
+
+def _note_bundle(request: Request, name: str, status: str):
+    ip = request.client.host if request.client else "?"
+    BUNDLE_LOG.append({"ip": ip, "file": name, "status": status, "at": time.time()})
+    del BUNDLE_LOG[:-BUNDLE_LOG_MAX]
+
+
 @app.get("/bundle/{name}")
-async def bundle(name: str):
+async def bundle(name: str, request: Request):
     """Panel files the bootstrap script pulls. Not secret — panel.html is served
     to every panel anyway — but path-checked so it can only reach these dirs.
 
@@ -978,11 +996,27 @@ async def bundle(name: str):
     fresh install, each of which presented as something else entirely.
     """
     if name not in BUNDLE_FILES:
+        _note_bundle(request, name, "unknown")
         raise HTTPException(404, "unknown bundle file")
     path = _bundle_path(name)
     if not path:
+        _note_bundle(request, name, "missing")
         raise HTTPException(404, f"{name} is in neither {BUNDLE_DIR} nor the image")
+    _note_bundle(request, name, "served")
     return FileResponse(path)
+
+
+@app.get("/api/bundle-log", dependencies=[Depends(require_admin)])
+async def bundle_log():
+    """What the panels have actually asked for, and where each file is served
+    from. `source` matters: a stale hand-copied file in /data/bundle wins over
+    the image and freezes a panel at whatever was left there."""
+    where = {}
+    for name in BUNDLE_FILES:
+        p = _bundle_path(name)
+        where[name] = ("operator (/data/bundle)" if p and p.startswith(BUNDLE_DIR)
+                       else "image" if p else "MISSING")
+    return {"serving": where, "recent": list(reversed(BUNDLE_LOG))}
 
 
 # ---------------------------------------------------------------- settings

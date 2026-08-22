@@ -216,6 +216,19 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
       <h2 style="margin-bottom:12px">Server</h2>
       <div id="sServerInfo"></div>
     </div>
+
+    <!-- Answers "is this panel asking for files at all", which is otherwise
+         indistinguishable from "it asked and could not install what it got". -->
+    <div class="card" style="padding:18px;margin-top:14px">
+      <h2 style="margin-bottom:8px">Panel updates</h2>
+      <p class="muted" style="font-size:13px">Where each panel file is served from, and
+        which panels have asked for one. A panel checks every 5 minutes; nothing here
+        for a panel that is online means it is not reaching this server.</p>
+      <div id="sBundleWhere" style="margin-top:12px"></div>
+      <div id="sBundleLog" style="margin-top:14px;max-height:220px;overflow-y:auto;
+        font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace"></div>
+      <div style="margin-top:12px"><button class="btn" id="sBundleRefresh">Refresh</button></div>
+    </div>
   </div>
 
   <!-- ============ DETAIL ============ -->
@@ -1044,7 +1057,32 @@ function srcNote(src){
        : src==="env"      ? "from environment variable"
        : "not set";
 }
+async function loadBundleLog(){
+  const b = await api("/bundle-log");
+  const known = {};
+  (await api("/panels")).forEach(p => { if(p.ip) known[p.ip] = p.hostname; });
+  $("#sBundleWhere").innerHTML = Object.entries(b.serving).map(([f,src])=>{
+    /* A hand-copied file in /data/bundle wins over the image and stays won,
+       which is how a panel gets pinned to an old build without anyone doing
+       anything. Flagged rather than merely reported. */
+    const bad = src !== "image";
+    return `<div style="display:flex;gap:10px;font-size:13px;margin-bottom:4px">
+      <span style="width:150px;color:var(--dim)">${f}</span>
+      <span style="color:${bad?"var(--bad)":"var(--ok)"}">${src}</span></div>`;
+  }).join("");
+  $("#sBundleLog").innerHTML = b.recent.length
+    ? b.recent.map(r=>{
+        const when = new Date(r.at*1000).toLocaleTimeString();
+        const who = known[r.ip] || r.ip;
+        return `<div style="color:${r.status==="served"?"var(--dim)":"var(--bad)"}">
+          ${when}  ${who}  ${r.file}  ${r.status}</div>`;
+      }).join("")
+    : `<div class="muted">Nothing yet. Panels ask every 5 minutes.</div>`;
+}
+$("#sBundleRefresh").onclick = loadBundleLog;
+
 async function loadSettings(){
+  loadBundleLog();
   const s = await api("/settings");
   $("#sHaUrl").value = s.ha_url || "";
   $("#sHaToken").value = "";

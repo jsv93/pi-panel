@@ -33,7 +33,20 @@ UI_PORT     = int(os.environ.get("PANEL_UI_PORT", "8088"))
 PANEL_DIR   = Path(os.environ.get("PANEL_DIR", "/opt/panel"))
 CONFIG_PATH = PANEL_DIR / "current" / "config.json"
 KIND        = os.environ.get("PANEL_KIND", "pi")
-AGENT_VER   = "1.0.0"
+# The agent's own content hash, not a number anyone has to remember to bump --
+# which is what "1.0.0" was, unchanged across every release since this file was
+# written. It meant the fleet page could not distinguish a panel running last
+# week's agent from one running today's, so "did the update land" had no answer
+# short of a shell on the panel. The first eight characters match the manifest's
+# entry for panel-agent.py, so the two can simply be compared.
+def _self_version():
+    try:
+        return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:8]
+    except Exception:
+        return "unknown"
+
+
+AGENT_VER = _self_version()
 POLL_S      = 300
 HEARTBEAT_S = 30
 
