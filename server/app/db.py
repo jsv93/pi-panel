@@ -138,10 +138,29 @@ def upsert_panel(panel_id, hostname, mac, ip, kind, agent_version):
     return get_panel(panel_id)
 
 
+def _panel_row(r):
+    """One row, with metrics as an object rather than the JSON text it is
+    stored as.
+
+    Here because list_panels() parsed that column and get_panel() did not, so
+    the fleet page showed a panel's metrics while the detail page -- reading the
+    same column through the other function -- showed an em dash for every field,
+    forever. Nothing errored: JavaScript reading .cpu_temp off a string just
+    gets undefined. It cost a long hunt for an agent that was not reporting,
+    through a readout that could not have displayed the report.
+    """
+    d = dict(r)
+    try:
+        d["metrics"] = json.loads(d["metrics"]) if d["metrics"] else {}
+    except Exception:
+        d["metrics"] = {}
+    return d
+
+
 def get_panel(panel_id):
     with conn() as c:
         r = c.execute("SELECT * FROM panels WHERE id=?", (panel_id,)).fetchone()
-        return dict(r) if r else None
+        return _panel_row(r) if r else None
 
 
 def list_panels():
@@ -149,8 +168,7 @@ def list_panels():
         rows = c.execute("SELECT * FROM panels ORDER BY claimed DESC, hostname").fetchall()
     out = []
     for r in rows:
-        d = dict(r)
-        d["metrics"] = json.loads(d["metrics"]) if d["metrics"] else {}
+        d = _panel_row(r)
         d["latest_version"] = latest_version(d["id"])
         d["online"] = bool(d["last_seen"] and (time.time() - d["last_seen"]) < 90)
         out.append(d)
