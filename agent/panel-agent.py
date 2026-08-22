@@ -476,6 +476,12 @@ async def page_ws(request):
                 # A panel has no console, so what the page measured is only
                 # visible if it says so somewhere readable over SSH.
                 print(f"[agent] viewport {json.dumps({k: v for k, v in data.items() if k != 'type'})}")
+            elif data.get("type") == "scrolltest":
+                # Kept on the panel as well as shown on it, so the numbers can
+                # be read back later without anyone transcribing them off a wall.
+                UI_STATE["scrolltest"] = data.get("results")
+                for name, fps in data.get("results") or []:
+                    print(f"[agent] scrolltest {name}: {fps} fps")
     finally:
         PAGES.discard(ws)
         print(f"[agent] page gone ({len(PAGES)} open)")

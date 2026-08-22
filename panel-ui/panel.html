@@ -399,6 +399,9 @@ body:not(.diag) .diagonly{display:none}
     <div class="act tile press" id="diagRow">
       <span class="t">Diagnostics</span><span class="v" id="diagV">Off</span>
       <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="act tile press diagonly" id="scrollTestRow">
+      <span class="t">Scroll test</span><span class="v">~20s</span>
+      <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
   </div>
   <div class="restart tile press" id="reload">Reload panel</div>
 </section>
@@ -1111,6 +1114,93 @@ async function browse(id,type,title){
     L.innerHTML='<div class="hint2">This player can’t browse</div>';
   }
 }
+
+/* ---------- scroll test (diagnostics only) ----------
+   Six runs over the same synthetic list, each disabling one suspect, so the
+   frame rates can be read against each other on the actual panel. Built after
+   turning GPU rasterisation on made no difference at all: at that point every
+   remaining theory was equally plausible from here, and each one cost a
+   release to test.
+
+   Each case leaves the visible area alone -- visibility:hidden rather than
+   display:none, no change to the stage transform -- because a case that paints
+   fewer pixels wins for the wrong reason and reads as a fix.
+
+   One caveat on the numbers: this scrolls from a rAF callback, which runs on
+   the main thread, while a real flick can be driven by the compositor. Compare
+   the baseline against what the counter shows under your finger; if they agree,
+   the rest of the table is measuring the right thing. */
+const SCROLL_CASES = [
+  ["baseline",        ""],
+  ["promoted list",   ".blist{will-change:transform}"],
+  ["no content-vis",  ".bitem{content-visibility:visible!important}"],
+  ["no thumbnails",   ".bthumb{visibility:hidden!important}"],
+  ["no text",         ".bmeta{visibility:hidden!important}"],
+  ["flat rows",       ".bitem{border:0!important;border-radius:0!important;" +
+                      "background:#1c1c26!important}"],
+];
+
+function scrollTest(){
+  const L = $("#bList");
+  showSheet("browse");
+  const style = document.createElement("style");
+  document.head.appendChild(style);
+
+  browseStack.length = 0;
+  L.innerHTML = "";
+  const frag = document.createDocumentFragment();
+  for(let i = 0; i < 200; i++){
+    const r = document.createElement("div");
+    r.className = "bitem tile";
+    r.innerHTML = '<div class="bthumb"></div>' +
+      '<div class="bmeta"><div class="n">Row ' + i + '</div><div class="s">test</div></div>';
+    frag.appendChild(r);
+  }
+  L.appendChild(frag);
+
+  const results = [];
+  let i = 0;
+
+  function run(){
+    if(i >= SCROLL_CASES.length) return done();
+    const [name, css] = SCROLL_CASES[i];
+    style.textContent = css;
+    $("#bTitle").textContent = "Scroll test";
+    $("#bCrumb").textContent = name + "  (" + (i + 1) + " of " + SCROLL_CASES.length + ")";
+    let frames = 0, step = 7;
+    const t0 = performance.now();
+    requestAnimationFrame(function tick(){
+      frames++;
+      L.scrollTop += step;
+      if(L.scrollTop <= 0 || L.scrollTop + L.clientHeight >= L.scrollHeight - 1) step = -step;
+      const dt = performance.now() - t0;
+      if(dt < 2500) return requestAnimationFrame(tick);
+      results.push([name, Math.round(frames / (dt / 1000))]);
+      i++;
+      setTimeout(run, 250);          // let it settle between cases
+    });
+  }
+
+  function done(){
+    style.remove();
+    const best = Math.max(...results.map(r => r[1]));
+    $("#bCrumb").textContent = "Close and reopen to browse again";
+    L.innerHTML = results.map(([n, f]) =>
+      '<div class="bitem tile"><div class="bmeta"><div class="n">' + n +
+      '</div><div class="s">' + f + ' fps' +
+      (f === best && f > results[0][1] + 3 ? "  ← biggest gain" : "") +
+      '</div></div></div>').join("");
+    /* Into the journal too, so it can be read off the server rather than
+       copied off a wall by hand. */
+    try{
+      if(agentWS && agentWS.readyState === 1)
+        agentWS.send(JSON.stringify({type: "scrolltest", results}));
+    }catch(e){}
+  }
+  run();
+}
+const str = $("#scrollTestRow");
+if(str) str.addEventListener("click", ()=>{ scrollTest(); bump(); });
 
 /* Up one level if there is one, back to the player at the root. Browsing is
    entered from the player and nowhere else, so there is no state in which
