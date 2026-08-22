@@ -1228,13 +1228,22 @@ function scrollTest(){
 
   function done(){
     style.remove();
-    const best = Math.max(...results.map(r => r[1]));
+    /* Deltas against baseline, and only flagged past 25%. The first run of this
+       found one case worth 4.5x and the rest worth a frame or two. The second,
+       with that fixed, put four unrelated removals within 64-67 of a 59
+       baseline -- which is not four findings, it is the panel's ceiling seen
+       four times. A marker on the highest number would have sent someone off
+       to delete the rows' borders for 13%. */
+    const base = results[0][1] || 1;
     $("#bCrumb").textContent = "Close and reopen to browse again";
-    L.innerHTML = results.map(([n, f]) =>
-      '<div class="bitem tile"><div class="bmeta"><div class="n">' + n +
-      '</div><div class="s">' + f + ' fps' +
-      (f === best && f > results[0][1] + 3 ? "  ← biggest gain" : "") +
-      '</div></div></div>').join("");
+    L.innerHTML = results.map(([n, f], i) => {
+      const d = Math.round((f - base) / base * 100);
+      const note = i === 0 ? "baseline"
+                 : Math.abs(d) < 25 ? (d >= 0 ? "+" : "") + d + "%  (within noise)"
+                 : (d >= 0 ? "+" : "") + d + "%  ← this one matters";
+      return '<div class="bitem tile"><div class="bmeta"><div class="n">' + n +
+        '</div><div class="s">' + f + ' fps · ' + note + '</div></div></div>';
+    }).join("");
     /* Into the journal too, so it can be read off the server rather than
        copied off a wall by hand. */
     try{

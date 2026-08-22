@@ -57,6 +57,22 @@ The Pi 5 renders 720x1280 with `backdrop-filter` glass. Frame budget is tight:
 - Blur radius costs scale with radius. Lists of many `backdrop-filter` elements
   will tank frame rate; keep glass on hero elements only.
 - The glass tier toggle in Settings exists to A/B this. Don't remove it.
+- **Every scrolling container needs `will-change: transform`.** The whole stage
+  sits under a `transform: scale()`, and a scroller inside a transformed
+  ancestor is not given its own compositing layer — so each frame of a flick
+  repaints the list instead of moving a layer already drawn. Measured on the
+  panel: 14fps without it, 64 with. Applies to any new scroller, not just the
+  media browser.
+- Diagnostics → **Scroll test** A/Bs six suspects over a synthetic 200-row list
+  and prints the frame rates. Reach for it before optimising anything about
+  scrolling. Three releases of plausible page-level work — lazy thumbnails,
+  content-visibility, chunked rendering, dropping a sheet's `backdrop-filter` —
+  were each worth one or two frames, against 4.5x for one line of CSS about
+  compositing. Don't remove it either.
+- Once a list is promoted the panel tops out around 65fps, and removals of
+  unrelated things (text, thumbnails, borders, content-visibility) all land
+  within ~10% of each other. That flatness means the ceiling, not four
+  findings; don't chase it.
 
 ## ESPHome panel constraints (ESP32-P4)
 
