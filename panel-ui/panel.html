@@ -1036,15 +1036,38 @@ const CHEV  ='<svg class="bgo" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg
 const BROWSE_CHUNK = 40;
 let bIO = null, bMore = null;
 
+/* Thumbnails are queued rather than started the moment a row comes into view,
+   and the queue only runs when the list is still. A swipe through a long folder
+   crosses dozens of rows in a few frames, and each one wanted a websocket
+   round-trip, an image fetch, a decode and a DOM swap -- all landing in the
+   frames still being scrolled. Held until the flick settles, the same work
+   happens where there is time for it. Three at a time so a settled list does
+   not simply move the pile-up to a later frame. */
+const thumbQ = [];
+let thumbBusy = 0, listMoving = false, listStill = null;
+
+function drainThumbs(){
+  while(!listMoving && thumbBusy < 3 && thumbQ.length){
+    const fn = thumbQ.shift();
+    thumbBusy++;
+    Promise.resolve().then(fn).catch(()=>{}).then(()=>{ thumbBusy--; drainThumbs(); });
+  }
+}
+
 function bObserver(){
   if(bIO) return bIO;
+  $("#bList").addEventListener("scroll", ()=>{
+    listMoving = true;
+    clearTimeout(listStill);
+    listStill = setTimeout(()=>{ listMoving = false; drainThumbs(); }, 140);
+  }, {passive:true});
   bIO = new IntersectionObserver(es=>{
     for(const e of es){
       if(!e.isIntersecting) continue;
       const el = e.target;
       bIO.unobserve(el);
       if(el === bMore) el.dispatchEvent(new Event("bmore"));
-      else if(el._thumb) el._thumb();
+      else if(el._thumb){ thumbQ.push(el._thumb); drainThumbs(); }
     }
   },{root:$("#bList"), rootMargin:"400px"});
   return bIO;
@@ -1111,6 +1134,10 @@ async function browse(id,type,title){
   const L=$("#bList");
   $("#bTitle").textContent = title || "Browse";
   if(bIO) bIO.disconnect();
+  /* Queued thumbnails belong to rows that no longer exist. Left in place they
+     would sign and decode images for a folder nobody is looking at, competing
+     with the one that just opened. */
+  thumbQ.length = 0;
   bMore=null; L.scrollTop=0;
   L.innerHTML='<div class="hint2">Loading…</div>';
   if(!live){ L.innerHTML='<div class="hint2">Add an HA token to browse</div>'; return; }

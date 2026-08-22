@@ -565,7 +565,11 @@ async function openPanel(id){
   const m = CUR.panel.metrics||{};
   $("#diagStrip").innerHTML = [
     ["CPU", m.cpu_temp?m.cpu_temp+"°C":"—"], ["Disk free", m.disk_free||"—"],
-    ["Backlight", m.backlight||"—"], ["UI version", m.ui_version||"—"],
+    /* Raw value over the device's own maximum, not a percentage: two panels at
+       "100%" are two different numbers, which is the whole question when one
+       screen looks dimmer than the other. */
+    ["Backlight", m.backlight ? m.backlight + (m.backlight_dev ? " · "+m.backlight_dev : "") : "—"],
+    ["UI version", m.ui_version||"—"],
     ["Running config", "v"+(CUR.panel.config_version||0)],
     ["Socket", CUR.live?"live":"polling"],
     /* Shown separately from the launcher on disk on purpose. Equal is the

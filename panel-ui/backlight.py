@@ -108,6 +108,14 @@ class H(BaseHTTPRequestHandler):
                 v = int(q.get("v", ["255"])[0])
                 v = max(0, min(255, v))
                 scaled = round(v / 255 * mx)
+                # Before the write, per unblank()'s own reasoning: a brightness
+                # write while bl_power is non-zero lands in sysfs and changes
+                # nothing. This call was missing entirely -- the function was
+                # written, documented and never invoked, leaving the order
+                # write-then-unblank, which relies on the driver re-applying
+                # brightness when it comes back.
+                if v:
+                    unblank(dev)
                 with open(dev, "w") as f:
                     f.write(str(scaled))
                 # v=0 means off, not dim. Blank after writing so the panel does

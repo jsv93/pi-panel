@@ -190,6 +190,9 @@ async def wifi_scan():
 
 
 GPU_FLAG = "--enable-gpu-rasterization"
+# Overridable so this can be pointed at a fixture and actually tested, rather
+# than only ever running on the one machine that has the real thing.
+BACKLIGHT_SYS = Path(os.environ.get("PANEL_BACKLIGHT_SYS", "/sys/class/backlight"))
 
 
 def kiosk_gpu():
@@ -225,9 +228,47 @@ def kiosk_gpu():
     return {"gpu_raster_running": running, "gpu_raster_on_disk": disk}
 
 
+def backlight_state():
+    """Which sysfs backlight this panel has, and where it is actually set.
+
+    Reported because "one panel is dimmer than the other" cannot be answered
+    from a desk otherwise. The same percentage drives different hardware
+    maxima, so 100% on two panels is two different numbers, and the helper
+    takes the first device alphabetically -- which is the wrong one on a board
+    that exposes more than one. Both are visible here now, so a software cause
+    can be ruled in or out by looking rather than by reasoning about it.
+    """
+    try:
+        devs = sorted(p for p in BACKLIGHT_SYS.iterdir())
+    except Exception:
+        return {}
+    if not devs:
+        return {"backlight": "no device"}
+    d = devs[0]
+
+    def rd(n):
+        try:
+            return (d / n).read_text().strip()
+        except Exception:
+            return "?"
+
+    cur, mx = rd("brightness"), rd("max_brightness")
+    out = {"backlight": f"{cur}/{mx}", "backlight_dev": d.name}
+    try:
+        out["backlight"] += f" ({round(int(cur) / int(mx) * 100)}%)"
+    except Exception:
+        pass
+    if rd("bl_power") not in ("0", "?"):
+        out["backlight"] += " BLANKED"
+    if len(devs) > 1:
+        out["backlight_dev"] += f" (1 of {len(devs)})"
+    return out
+
+
 def metrics():
     m = {"ui_version": AGENT_VER}
     m.update(kiosk_gpu())
+    m.update(backlight_state())
     m.update(UI_STATE.get("wifi") or {})
     try:
         t = Path("/sys/class/thermal/thermal_zone0/temp").read_text().strip()
