@@ -281,8 +281,10 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
         <div class="sect" data-s="lights">
           <h2 style="margin-bottom:14px">Lights &amp; presets</h2>
           <table class="lights">
-            <thead><tr><th style="width:36%">ENTITY</th><th style="width:26%">DISPLAY NAME</th>
-              <th style="width:14%">SOFT %</th><th style="width:14%">BRIGHT %</th><th></th></tr></thead>
+            <thead><tr><th style="width:32%">ENTITY</th><th style="width:24%">DISPLAY NAME</th>
+              <th style="width:12%">SOFT %</th><th style="width:12%">BRIGHT %</th>
+              <th style="width:12%" title="Whether the Soft and Bright buttons on the panel move this light">PRESETS</th>
+              <th></th></tr></thead>
             <tbody id="lightRows"></tbody>
           </table>
           <button class="btn" style="margin-top:12px;color:var(--ok);border-color:rgba(93,202,165,.35)"
@@ -351,6 +353,7 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
           <div class="lbl" style="margin-top:20px">CONFIG HISTORY</div>
           <div id="history"></div>
           <div style="margin-top:18px;display:flex;gap:8px">
+            <button class="btn" data-act="identify">Identify</button>
             <button class="btn" data-act="reload">Reload UI</button>
             <button class="btn" data-act="sync">Force sync</button>
             <button class="btn" data-act="restart">Restart panel</button>
@@ -668,16 +671,22 @@ function renderLights(){
     <td><input data-l="${i}" data-k="name" value="${l.name||""}"></td>
     <td><input type="number" data-l="${i}" data-k="soft" value="${l.soft??30}"></td>
     <td><input type="number" data-l="${i}" data-k="bright" value="${l.bright??100}"></td>
+    <td style="text-align:center"><input type="checkbox" data-l="${i}" data-k="include_presets"
+      ${l.include_presets===false?"":"checked"} style="width:18px;height:18px"></td>
     <td><button class="btn danger" data-del="${i}" style="padding:5px 9px">✕</button></td></tr>`).join("");
-  $("#lightRows").innerHTML = rows || `<tr><td colspan="5" class="muted" style="padding:14px">No lights configured</td></tr>`;
+  $("#lightRows").innerHTML = rows || `<tr><td colspan="6" class="muted" style="padding:14px">No lights configured</td></tr>`;
   $("#lightRows").querySelectorAll("[data-l]").forEach(el=>el.onchange=()=>{
     const l = CFG.lights[+el.dataset.l], k = el.dataset.k;
+    /* Unticked means "the Soft and Bright buttons leave this alone". A hallway
+       lamp that is always on otherwise stops either preset ever highlighting,
+       because the panel judges the room by every light it lists. */
+    if(k==="include_presets"){ l[k] = el.checked; return; }
     l[k] = (k==="soft"||k==="bright") ? +el.value : el.value;
   });
   $("#lightRows").querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
     CFG.lights.splice(+b.dataset.del,1); renderLights(); });
 }
-$("#addLight").onclick=()=>{ (CFG.lights=CFG.lights||[]).push({entity_id:"",name:"",soft:30,bright:100}); renderLights(); };
+$("#addLight").onclick=()=>{ (CFG.lights=CFG.lights||[]).push({entity_id:"",name:"",soft:30,bright:100,include_presets:true}); renderLights(); };
 
 function renderSpeakers(){
   const sp = (CFG.media||{}).speakers||[];

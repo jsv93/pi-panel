@@ -484,18 +484,23 @@ PAGES: set = set()
 UI_STATE = {"ha_connected": False}
 
 
-async def reload_ui():
-    """Tell the page to reload. A real command over a real socket — the old
-    `pkill -HUP chromium` was advisory at best and Chromium ignores it."""
+async def tell_pages(payload: dict):
+    """Send one message to every open page, dropping the ones that have gone."""
     dead = []
     for ws in list(PAGES):
         try:
-            await ws.send_json({"type": "reload"})
+            await ws.send_json(payload)
         except Exception:
             dead.append(ws)
     for ws in dead:
         PAGES.discard(ws)
     return len(PAGES) - len(dead)
+
+
+async def reload_ui():
+    """Tell the page to reload. A real command over a real socket — the old
+    `pkill -HUP chromium` was advisory at best and Chromium ignores it."""
+    return await tell_pages({"type": "reload"})
 
 
 async def page_ws(request):
@@ -527,6 +532,31 @@ async def page_ws(request):
         PAGES.discard(ws)
         print(f"[agent] page gone ({len(PAGES)} open)")
     return ws
+
+
+async def save_preset(request):
+    """Store the levels currently on screen as this panel's Soft or Bright.
+
+    Proxied rather than posted from the page directly: the page is served from
+    the agent's own origin, so going to the config server means CORS, and a
+    panel that cannot reach the server should fail here where the failure can
+    be reported rather than in a browser console nobody will ever read.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad request"}, status=400)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(f"{SERVER}/api/panel/{PANEL_ID}/presets",
+                              json=body, timeout=10) as r:
+                data = await r.json()
+                if r.status != 200:
+                    print(f"[agent] preset save refused: {data}")
+                return web.json_response(data, status=r.status)
+    except Exception as e:
+        print(f"[agent] preset save failed: {e}")
+        return web.json_response({"error": str(e)}, status=502)
 
 
 async def wifi_get(request):
@@ -593,6 +623,7 @@ async def serve_ui():
     # Before the static catch-all, which would otherwise swallow these.
     app.router.add_get("/wifi", wifi_get)
     app.router.add_post("/wifi/connect", wifi_connect)
+    app.router.add_post("/presets", save_preset)
     app.router.add_static("/", str(root), show_index=True)
     runner = web.AppRunner(app)
     await runner.setup()
@@ -674,6 +705,11 @@ async def ws_loop(session):
                             await check_bundle(session)
                     elif t == "reload":
                         await reload_ui()
+                    elif t == "identify":
+                        # Straight through to the page: the panel has to show
+                        # something a person standing in front of it can see,
+                        # which only the browser can do.
+                        await tell_pages({"type": "identify"})
                     elif t == "restart":
                         restart_panel()
         except Exception as e:

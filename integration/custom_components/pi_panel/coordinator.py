@@ -97,6 +97,17 @@ class PanelServer:
             "POST", f"/panels/{panel_id}/action", json={"action": action}
         )
 
+    async def set_display(self, panel_id: str, values: dict):
+        """Change individual display settings.
+
+        A different endpoint from put_config on purpose, and not subject to the
+        ownership rule: this adjusts values the server already holds, in place,
+        rather than replacing the document that says what the panel is.
+        """
+        return await self._request(
+            "PATCH", f"/panels/{panel_id}/display", json=values
+        )
+
     async def put_config(self, panel_id: str, config: dict):
         """Raises NotTheOwner unless the server has handed config to us.
 

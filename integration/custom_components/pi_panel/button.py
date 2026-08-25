@@ -18,6 +18,9 @@ from .coordinator import PanelServerError
 from .entity import PanelEntity
 
 BUTTONS: tuple[ButtonEntityDescription, ...] = (
+    # Not diagnostic or config: "which of these is the study one" is a question
+    # you ask standing in a hallway, so it belongs on the main card.
+    ButtonEntityDescription(key="identify", translation_key="identify"),
     ButtonEntityDescription(
         key="reload", translation_key="reload", entity_category=EntityCategory.CONFIG
     ),

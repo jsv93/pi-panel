@@ -21,21 +21,62 @@
   },
   "entity": {
     "binary_sensor": {
-      "online": { "name": "Online" },
-      "ha_connected": { "name": "Home Assistant link" }
+      "online": {
+        "name": "Online"
+      },
+      "ha_connected": {
+        "name": "Home Assistant link"
+      }
     },
     "sensor": {
-      "cpu_temp": { "name": "CPU temperature" },
-      "disk_free": { "name": "Disk free" },
-      "config_version": { "name": "Config version" },
-      "config_pending": { "name": "Config versions behind" },
-      "agent_version": { "name": "Agent build" },
-      "backlight": { "name": "Backlight" }
+      "cpu_temp": {
+        "name": "CPU temperature"
+      },
+      "disk_free": {
+        "name": "Disk free"
+      },
+      "config_version": {
+        "name": "Config version"
+      },
+      "config_pending": {
+        "name": "Config versions behind"
+      },
+      "agent_version": {
+        "name": "Agent build"
+      },
+      "backlight": {
+        "name": "Backlight"
+      }
     },
     "button": {
-      "reload": { "name": "Reload UI" },
-      "sync": { "name": "Force sync" },
-      "restart": { "name": "Restart panel" }
+      "reload": {
+        "name": "Reload UI"
+      },
+      "sync": {
+        "name": "Force sync"
+      },
+      "restart": {
+        "name": "Restart panel"
+      },
+      "identify": {
+        "name": "Identify"
+      }
+    },
+    "number": {
+      "brightness": {
+        "name": "Screen brightness"
+      },
+      "wake_time": {
+        "name": "Dim after"
+      },
+      "blank_after": {
+        "name": "Blank after"
+      }
+    },
+    "switch": {
+      "diagnostics": {
+        "name": "Diagnostics overlay"
+      }
     }
   }
 }

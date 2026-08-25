@@ -128,6 +128,23 @@ body.sheet-open #scrim{opacity:.55}
 .down{position:absolute;top:18px;left:16px;width:112px;height:100px;display:grid;place-items:center;z-index:2}
 .down svg{width:40px;height:40px;stroke:var(--ink-quiet);fill:none;stroke-width:1.8}
 
+/* The name is the control; the rest of the label is not. Underlined rather
+   than given a chevron, which at this size read as a slider handle. */
+.lname{text-decoration:underline;text-decoration-color:var(--ink-ghost);
+  text-underline-offset:6px;padding:6px 2px;margin:-6px -2px;border-radius:8px}
+.swatches{display:flex;flex-wrap:wrap;gap:14px;margin-top:16px}
+.sw{width:76px;height:76px;border-radius:38px;border:2px solid transparent}
+.sw.on{border-color:#fff;box-shadow:0 0 0 3px rgba(0,0,0,.55) inset}
+/* Warm to cool, so the slider looks like what it does. */
+.slider.ct{background:linear-gradient(90deg,#FFB25E,#FFE9CC,#CFE3FF)}
+.slider.ct .fill{background:transparent}
+/* Full-screen and unmissable: the whole point is to be seen from across a
+   room by someone who does not know which panel is which. */
+#identify{position:absolute;inset:0;z-index:120;display:none;place-items:center;
+  background:var(--accent);color:#08110D;font-size:64px;font-weight:600;
+  letter-spacing:1px;text-align:center;padding:0 40px}
+#identify.on{display:grid;animation:idpulse .9s steps(1,end) infinite}
+@keyframes idpulse{0%,49%{opacity:1}50%,100%{opacity:.35}}
 .fx{display:flex;flex-wrap:wrap;gap:12px;margin-top:24px}
 .fx div{padding:14px 22px;border-radius:20px;font-size:20px;color:var(--ink-quiet);
   backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background:rgba(28,28,38,.72)}
@@ -363,10 +380,24 @@ body:not(.diag) .diagonly{display:none}
 <section class="sheet" id="s-lights">
   <div class="down press" data-close><svg viewBox="0 0 24 24"><path d="M12 5v14m-7-7l7 7 7-7"/></svg></div>
   <div class="grip"></div><h1>Lights</h1>
+  <!-- Brightness on this page and nothing else. Colour, temperature and
+       effects live one tap deeper, per light, because they are per light --
+       laid out flat they read as settings for the room, which they are not. -->
   <div id="lightRows"></div>
-  <div class="slabel" id="fxLabel" style="display:none"><span class="n">Effect</span><span class="v"></span></div>
-  <div class="fx" id="fx"></div>
 </section>
+
+<div id="identify"><span id="identifyName">This panel</span></div>
+
+<!-- One light's own controls. Built on open rather than up front: most lights
+     support none of this, and the ones that do differ. -->
+<div class="ov" id="ovLight">
+  <div class="ov-bg" data-ovclose></div>
+  <div class="ov-card">
+    <div class="grip"></div>
+    <h2 id="lightTitle">Light</h2>
+    <div id="lightBody"></div>
+  </div>
+</div>
 
 <section class="sheet" id="s-climate">
   <div class="down press" data-close><svg viewBox="0 0 24 24"><path d="M12 5v14m-7-7l7 7 7-7"/></svg></div>
@@ -412,6 +443,16 @@ body:not(.diag) .diagonly{display:none}
       <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
     <div class="act tile press" id="diagRow">
       <span class="t">Diagnostics</span><span class="v" id="diagV">Off</span>
+      <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
+    <!-- Here rather than on the Lights page on purpose. On Lights it sits
+         next to the sliders and reads as another way to set a level, when what
+         it actually does is redefine what Soft and Bright mean for this room,
+         on the server, for every panel. That belongs with the settings. -->
+    <div class="act tile press" id="saveSoftRow">
+      <span class="t">Save levels as Soft</span><span class="v" id="softV"></span>
+      <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="act tile press" id="saveBrightRow">
+      <span class="t">Save levels as Bright</span><span class="v" id="brightV"></span>
       <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
     <div class="act tile press diagonly" id="scrollTestRow">
       <span class="t">Scroll test</span><span class="v">~20s</span>
@@ -653,11 +694,32 @@ function agentConnect(){
     agentWS.onmessage = ev=>{
       let m; try{ m = JSON.parse(ev.data); }catch(e){ return; }
       if(m.type==="reload") location.reload();
+      if(m.type==="identify") identify();
     };
     agentWS.onclose = ()=>{ agentWS=null; setTimeout(agentConnect, 5000); };
     agentWS.onerror = ()=>{ try{ agentWS.close(); }catch(e){} };
   }catch(e){ setTimeout(agentConnect, 5000); }
 }
+/* Which one is this? Panels are named in the GUI and blank on the wall, so
+   pairing a record with a physical screen otherwise means turning them off at
+   the socket one at a time. Full brightness as well as full screen: a panel
+   dimmed to 5% in a bright hallway is not obviously flashing anything. */
+let identifyTimer = null;
+function identify(){
+  const el = $("#identify");
+  if(!el) return;
+  $("#identifyName").textContent = ROOM || "This panel";
+  el.classList.add("on");
+  const was = st.bl;
+  setBacklight(100);
+  clearTimeout(identifyTimer);
+  identifyTimer = setTimeout(()=>{ el.classList.remove("on"); setBacklight(was); }, 10000);
+  // Touching it stops it early, so nobody has to stand and wait once they have
+  // found the thing they were looking for.
+  el.onclick = ()=>{ clearTimeout(identifyTimer); el.classList.remove("on"); setBacklight(was); };
+  bump();
+}
+
 function reportHA(ok){
   if(agentWS && agentWS.readyState===1){
     try{ agentWS.send(JSON.stringify({type:"ha",connected:!!ok})); }catch(e){}
@@ -723,12 +785,22 @@ function applyState(s){
        is indistinguishable from off and made one dead bulb enough to stop
        either preset ever highlighting. */
     LSTATE[li].seen = s.state!=="unavailable" && s.state!=="unknown";
-    if(li===0){
-      st.effect = s.attributes.effect || "none";
-      if(s.attributes.effect_list && !st.effects.length){
-        st.effects = s.attributes.effect_list; st.fxEntity = id; buildFx();
-      }
-    }
+    /* Each light's own capabilities and current colour, kept per light rather
+       than borrowed from the first one. The effect list used to be read off
+       LIGHTS[0] and shown as the room's, which was wrong the moment a room had
+       two different bulbs in it. */
+    const a = s.attributes || {};
+    LSTATE[li].attrs = {
+      modes: a.supported_color_modes || [],
+      mode: a.color_mode || null,
+      effects: a.effect_list || [],
+      effect: a.effect || null,
+      kelvin: a.color_temp_kelvin ?? null,
+      minK: a.min_color_temp_kelvin ?? 2000,
+      maxK: a.max_color_temp_kelvin ?? 6500,
+      hs: a.hs_color || null,
+    };
+    if(openLightIdx === li) paintLightSheet();
   } else if(id===TEMP_ENT){ st.temp = parseFloat(s.state);
   } else if(id===HUM_ENT){  st.hum  = parseFloat(s.state);
   } else if(SPEAKERS[target] && id===SPEAKERS[target][0]){
@@ -867,13 +939,19 @@ const lampSliders = [];
   LIGHTS.forEach((l,i)=>{
     const lab = document.createElement("div");
     lab.className = "slabel";
-    lab.innerHTML = '<span class="n"></span><span class="v" id="lv'+i+'">Off</span>';
+    // The name opens the light's own controls; the chevron says so. Everything
+    // that is not the name stays a plain label, so a stray touch while reaching
+    // for the slider does not open a sheet.
+    lab.innerHTML = '<span class="n lname press" data-light="'+i+'"></span>' +
+                    '<span class="v" id="lv'+i+'">Off</span>';
     lab.querySelector(".n").textContent = l.name || l.entity_id;
     const sl = document.createElement("div");
     sl.className = "slider"; sl.id = "ls"+i;
     sl.innerHTML = '<div class="fill"></div>';
     host.appendChild(lab); host.appendChild(sl);
   });
+  host.querySelectorAll("[data-light]").forEach(n=>
+    n.addEventListener("click", ()=>openLight(+n.dataset.light)));
   LIGHTS.forEach((l,i)=>{
     lampSliders.push(slider($("#ls"+i), ()=>LSTATE[i].level, v=>{
       LSTATE[i].level = v;
@@ -904,6 +982,7 @@ document.querySelectorAll(".preset").forEach(p=>p.addEventListener("click",()=>{
      also un-highlights it if the lights did not actually end up there. */
   document.querySelectorAll(".preset").forEach(x=>x.classList.toggle("active",x===p));
   LIGHTS.forEach((l,i)=>{
+    if(l.include_presets === false) return;   // excluded on the server; leave it alone
     const pct = (which==="bright" ? l.bright : l.soft) ?? (which==="bright"?100:30);
     LSTATE[i].level = pct;
     if(lampSliders[i]) lampSliders[i].paint(pct);
@@ -914,21 +993,95 @@ document.querySelectorAll(".preset").forEach(p=>p.addEventListener("click",()=>{
 }));
 
 /* ---------- effects ---------- */
-function buildFx(){
-  const w = $("#fx"); w.innerHTML="";
-  st.effects.filter(e=>!/^stop_|^finish_/.test(e)).slice(0,10).forEach(name=>{
-    const d=document.createElement("div");
-    d.className="tile press"+(name===st.effect?" on":"");
-    d.textContent=name.replace(/_/g," ");
-    d.addEventListener("click",()=>{
-      st.effect=name;
-      document.querySelectorAll("#fx div").forEach(x=>x.classList.toggle("on",x===d));
-      if(live) call("light","turn_on",{entity_id:st.fxEntity, effect:name});
-      bump();
+/* ---------- one light's own controls ----------
+   Colour temperature, colour and effects, for the light whose name was
+   tapped. Built from what that light says it supports, so a plain dimmer
+   shows nothing but its brightness and a colour bulb shows the rest. Guessing
+   from the first light in the room was wrong as soon as a room held two
+   different bulbs. */
+let openLightIdx = -1;
+
+const HUES = [0, 20, 40, 60, 120, 180, 200, 220, 260, 290, 320, 340];
+
+function openLight(i){
+  openLightIdx = i;
+  $("#lightTitle").textContent = LIGHTS[i].name || LIGHTS[i].entity_id;
+  paintLightSheet();
+  ovOpen("#ovLight");
+}
+
+function paintLightSheet(){
+  const i = openLightIdx;
+  if(i < 0) return;
+  const l = LIGHTS[i], a = (LSTATE[i] && LSTATE[i].attrs) || {};
+  const body = $("#lightBody");
+  const modes = a.modes || [];
+  const hasTemp = modes.includes("color_temp");
+  const hasColor = modes.some(m => ["hs","rgb","rgbw","rgbww","xy"].includes(m));
+  const effects = (a.effects || []).filter(e => !/^stop_|^finish_/.test(e)).slice(0, 12);
+
+  body.innerHTML = "";
+  if(!hasTemp && !hasColor && !effects.length){
+    body.innerHTML = '<div class="hint2">This light has brightness only</div>';
+    return;
+  }
+
+  if(hasTemp){
+    const lab = document.createElement("div");
+    lab.className = "slabel";
+    lab.innerHTML = '<span class="n">Warmth</span><span class="v" id="ctV"></span>';
+    const sl = document.createElement("div");
+    sl.className = "slider ct"; sl.id = "ctSlider";
+    sl.innerHTML = '<div class="fill"></div>';
+    body.appendChild(lab); body.appendChild(sl);
+    const minK = a.minK || 2000, maxK = a.maxK || 6500;
+    const pct = a.kelvin ? Math.round((a.kelvin - minK) / (maxK - minK) * 100) : 50;
+    $("#ctV").textContent = (a.kelvin || "—") + "K";
+    slider(sl, () => pct, v => {
+      const k = Math.round(minK + (maxK - minK) * v / 100);
+      $("#ctV").textContent = k + "K";
+      if(live) call("light", "turn_on", {entity_id: l.entity_id, color_temp_kelvin: k});
+    }).paint(pct);
+  }
+
+  if(hasColor){
+    const lab = document.createElement("div");
+    lab.className = "slabel"; lab.innerHTML = '<span class="n">Colour</span>';
+    const row = document.createElement("div");
+    row.className = "swatches";
+    HUES.forEach(h => {
+      const d = document.createElement("div");
+      d.className = "sw press";
+      d.style.background = `hsl(${h} 85% 55%)`;
+      if(a.hs && Math.abs(a.hs[0] - h) < 10) d.classList.add("on");
+      d.addEventListener("click", () => {
+        row.querySelectorAll(".sw").forEach(x => x.classList.toggle("on", x === d));
+        if(live) call("light", "turn_on", {entity_id: l.entity_id, hs_color: [h, 85]});
+        bump();
+      });
+      row.appendChild(d);
     });
-    w.appendChild(d);
-  });
-  const fl=$("#fxLabel"); if(fl) fl.style.display = w.children.length ? "" : "none";
+    body.appendChild(lab); body.appendChild(row);
+  }
+
+  if(effects.length){
+    const lab = document.createElement("div");
+    lab.className = "slabel"; lab.innerHTML = '<span class="n">Effect</span>';
+    const w = document.createElement("div");
+    w.className = "fx";
+    effects.forEach(name => {
+      const d = document.createElement("div");
+      d.className = "tile press" + (name === a.effect ? " on" : "");
+      d.textContent = name.replace(/_/g, " ");
+      d.addEventListener("click", () => {
+        w.querySelectorAll("div").forEach(x => x.classList.toggle("on", x === d));
+        if(live) call("light", "turn_on", {entity_id: l.entity_id, effect: name});
+        bump();
+      });
+      w.appendChild(d);
+    });
+    body.appendChild(lab); body.appendChild(w);
+  }
 }
 
 /* ---------- speakers ---------- */
@@ -1307,6 +1460,10 @@ function judgePreset(which){
   const off = [];
   let seen = 0;
   LIGHTS.forEach((l, i) => {
+    // A light left out of the presets on the server has no opinion about
+    // whether the room is soft or bright. Counting it made a single always-on
+    // hallway lamp enough to stop either preset ever highlighting.
+    if(l.include_presets === false) return;
     const s = LSTATE[i];
     if(!s || !s.seen) return;
     seen++;
@@ -1352,8 +1509,9 @@ function paintAll(){
   $("#idTitle").textContent = st.title; $("#idArtist").textContent = st.artist;
   $("#pp").innerHTML   = st.playing?PAUSE:PLAY;
   $("#rmPP").innerHTML = st.playing?PAUSE:PLAY;
-  /* progress bar id changed with the new layout */
-  document.querySelectorAll("#fx div").forEach(d=>d.classList.toggle("on", d.textContent.replace(/ /g,"_")===st.effect));
+  /* Effects are repainted by paintLightSheet, against the light they belong
+     to, rather than from here against a room-wide st.effect that no longer
+     exists. */
   paintTransport(); paintProgress(); paintArt();
 }
 
@@ -1629,6 +1787,63 @@ function applyDiag(){
   }catch(e){}
 }
 { const g=$("#stGL"); if(g) g.textContent = glRenderer(); }
+/* ---------- capturing presets ----------
+   Dial the room in on the sliders, then record that as Soft or Bright. It goes
+   to the server, not just to this panel: the levels are config, so the change
+   has to reach every panel in the room and survive a reinstall. Sent through
+   the agent, which knows where the server is -- the page does not, and posting
+   across origins from here would need CORS on the server for no gain.
+
+   Only lights that take part in the presets are sent. A lamp excluded on the
+   server stays excluded; being on screen when someone pressed save is not
+   consent to enrol it. */
+function presetLevels(){
+  const out = {};
+  LIGHTS.forEach((l, i) => {
+    if(l.include_presets === false) return;
+    out[l.entity_id] = LSTATE[i] ? LSTATE[i].level : 0;
+  });
+  return out;
+}
+
+async function savePreset(which, row){
+  const levels = presetLevels();
+  const n = Object.keys(levels).length;
+  if(!n){ flashRow(row, "no lights"); return; }
+  flashRow(row, "saving…");
+  try{
+    const r = await fetch("/presets", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({preset: which, levels}),
+    });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.detail || d.error || ("HTTP " + r.status));
+    /* The server pushes the new config straight back, so the local copy is
+       replaced within a second and the preset highlight re-derives itself.
+       Nothing is set locally here on purpose -- a value that only this panel
+       believed is exactly the disagreement between panels we just finished
+       removing. */
+    flashRow(row, "saved " + d.changed + " light" + (d.changed === 1 ? "" : "s"));
+  }catch(e){
+    flashRow(row, "failed: " + (e.message || e));
+  }
+  bump();
+}
+
+function flashRow(row, msg){
+  const v = row.querySelector(".v");
+  if(!v) return;
+  v.textContent = msg;
+  clearTimeout(v._t);
+  v._t = setTimeout(()=>{ v.textContent = ""; }, 4000);
+}
+
+[["soft", "#saveSoftRow"], ["bright", "#saveBrightRow"]].forEach(([which, id])=>{
+  const row = $(id);
+  if(row) row.addEventListener("click", ()=>savePreset(which, row));
+});
+
 const dgr=$("#diagRow");
 if(dgr) dgr.addEventListener("click",()=>{ diag=!diag; applyDiag(); bump(); });
 applyDiag();

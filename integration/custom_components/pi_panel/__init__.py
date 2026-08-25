@@ -14,7 +14,13 @@ from homeassistant.core import HomeAssistant
 
 from .coordinator import PanelCoordinator, PanelServer
 
-PLATFORMS = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SENSOR]
+PLATFORMS = [
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.NUMBER,
+    Platform.SENSOR,
+    Platform.SWITCH,
+]
 
 # Plain alias rather than a `type` statement: identical here, and it keeps the
 # file parseable by anything older than 3.12, which is what checks it outside

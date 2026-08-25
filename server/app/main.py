@@ -569,6 +569,95 @@ async def panel_config(panel_id: str):
     return cfg
 
 
+# Keys a panel or Home Assistant may set without authoring the whole config.
+# Narrow on purpose: a caller reaching for one of these cannot clobber the
+# lights list, the speakers, or anything else it did not mean to touch.
+DISPLAY_KEYS = {
+    "backlight_default": int,
+    "backlight_min": int,
+    "backlight_off_s": int,
+    "idle_timeout_s": int,
+    "glass_tier": int,
+    "diagnostics": bool,
+}
+
+
+async def _patch_display(panel_id: str, values: dict) -> dict:
+    p = db.get_panel(panel_id)
+    if not p:
+        raise HTTPException(404, "unknown panel")
+    clean = {}
+    for k, v in (values or {}).items():
+        if k not in DISPLAY_KEYS:
+            raise HTTPException(400, f"'{k}' is not a display setting")
+        try:
+            clean[k] = DISPLAY_KEYS[k](v)
+        except (TypeError, ValueError):
+            raise HTTPException(400, f"'{k}' must be {DISPLAY_KEYS[k].__name__}")
+    if not clean:
+        raise HTTPException(400, "nothing to change")
+    cfg = db.merged_config(panel_id)
+    cfg["display"] = {**cfg.get("display", {}), **clean}
+    version = db.save_config(panel_id, cfg)
+    pushed = await notify(panel_id, {"type": "config_updated", "version": version})
+    return {"version": version, "pushed": pushed, "display": cfg["display"]}
+
+
+@app.patch("/api/panels/{panel_id}/display", dependencies=[Depends(require_admin)])
+async def patch_display(panel_id: str, request: Request):
+    """Change individual display settings.
+
+    Not guarded by require_config_owner, and the distinction matters. Authoring
+    a panel's configuration -- which lights it shows, which speaker it drives --
+    is what has to happen in one place. Turning the brightness down is adjusting
+    a value that already lives here, through the same store, with the server
+    still the only copy. Nothing can diverge, so nothing needs arbitrating.
+    """
+    return await _patch_display(panel_id, await request.json())
+
+
+@app.post("/api/panel/{panel_id}/presets")
+async def panel_presets(panel_id: str, request: Request):
+    """A panel saving the levels someone just dialled in on the wall.
+
+    Unauthenticated, like register, heartbeat and config: the panel has no
+    credentials and never has. It writes nothing but soft/bright numbers on
+    lights this panel already has, so the worst a stranger on the LAN can do
+    with it is change what Soft means in someone's living room -- the same
+    thing they could do by walking in and touching the panel.
+    """
+    p = db.get_panel(panel_id)
+    if not p:
+        raise HTTPException(404, "unknown panel")
+    b = await request.json()
+    which = b.get("preset")
+    if which not in ("soft", "bright"):
+        raise HTTPException(400, "preset must be 'soft' or 'bright'")
+    levels = b.get("levels") or {}
+    cfg = db.merged_config(panel_id)
+    changed = 0
+    for light in cfg.get("lights", []):
+        # Excluded here as well as on the panel. The panel already filters
+        # these out, but a light kept out of the presets should stay out
+        # whatever arrives, and the server is the side that decides.
+        if light.get("include_presets") is False:
+            continue
+        if light.get("entity_id") in levels:
+            try:
+                light[which] = max(0, min(100, int(levels[light["entity_id"]])))
+                changed += 1
+            except (TypeError, ValueError):
+                pass
+    if not changed:
+        raise HTTPException(400, "no matching lights on this panel")
+    version = db.save_config(panel_id, cfg)
+    # Straight back out to the panel, and to any other panel sharing these
+    # lights, so the preset highlight agrees everywhere immediately rather than
+    # at whatever point each panel next polls.
+    await notify(panel_id, {"type": "config_updated", "version": version})
+    return {"version": version, "changed": changed}
+
+
 @app.websocket("/api/ws/{panel_id}")
 async def panel_ws(ws: WebSocket, panel_id: str):
     await ws.accept()
@@ -611,6 +700,11 @@ async def panels():
     out = db.list_panels()
     for p in out:
         p["live"] = p["id"] in LIVE
+        # Display settings inline, so a client showing controls for them does
+        # not need a second request per panel to find out where they are set.
+        # Only this section: the rest of the config is large, changes rarely,
+        # and nothing polling a fleet every 30 seconds wants a copy of it.
+        p["display"] = db.merged_config(p["id"]).get("display", {})
     return out
 
 
@@ -666,7 +760,10 @@ async def rollback(panel_id: str, request: Request):
 async def action(panel_id: str, request: Request):
     b = await request.json()
     act = b.get("action")
-    if act not in ("reload", "restart", "sync"):
+    # identify: which of these is the one on the landing? Panels are named in
+    # the GUI and unlabelled on the wall, and a fleet page listing study-rp3
+    # and study-e98b is no help at all when you are standing in front of them.
+    if act not in ("reload", "restart", "sync", "identify"):
         raise HTTPException(400, "unknown action")
     ok = await notify(panel_id, {"type": act})
     return {"sent": ok}
