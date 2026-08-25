@@ -342,8 +342,11 @@ body.ng-tiles .tile{backdrop-filter:none!important;-webkit-backdrop-filter:none!
    panel on a wall should not be showing a frame counter. */
 body:not(.diag) #conn, body:not(.diag) #fps, body:not(.diag) #pDiag,
 body:not(.diag) .diagonly{display:none}
-#pDiag{margin-top:14px;font-size:16px;color:#2E7F68;text-align:center;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Wraps rather than truncating: the second line names every light and its
+   targets, which is the part worth reading, and an ellipsis would cut off
+   exactly the light being asked about. */
+#pDiag{margin-top:14px;font-size:15px;line-height:1.5;color:#2E7F68;
+  text-align:center;white-space:pre-wrap;word-break:break-word}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -1482,8 +1485,20 @@ function paintPresets(){
              : !v.seen ? which + " ✗ no lights seen"
              : which + " ✗ " + v.off.join(", "));
   });
+  /* What this panel believes, not what the server was last told. The two are
+     the same only if the config actually arrived, and "the setting has no
+     effect" looks identical whether the panel disagrees with the server or
+     never heard from it. Config version included for the same reason: compared
+     against the fleet page it says outright whether this panel is current. */
+  const detail = LIGHTS.map((l, i) => {
+    const s = LSTATE[i] || {};
+    const want = (l.soft ?? 30) + "/" + (l.bright ?? 100);
+    return (l.name || l.entity_id) + " " + (s.seen ? s.level + "%" : "unseen") +
+           " want " + want + (l.include_presets === false ? " EXCLUDED" : "");
+  });
   const d = $("#pDiag");
-  if(d) d.textContent = notes.join("   ");
+  if(d) d.textContent = notes.join("   ") +
+    "\nconfig v" + (CFG._version ?? "?") + " · " + detail.join(" · ");
 }
 function paintAll(){
   paintPresets();

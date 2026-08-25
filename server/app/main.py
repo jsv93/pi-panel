@@ -651,9 +651,10 @@ async def panel_presets(panel_id: str, request: Request):
     if not changed:
         raise HTTPException(400, "no matching lights on this panel")
     version = db.save_config(panel_id, cfg)
-    # Straight back out to the panel, and to any other panel sharing these
-    # lights, so the preset highlight agrees everywhere immediately rather than
-    # at whatever point each panel next polls.
+    # Straight back to the panel that saved it, so its own preset highlight
+    # re-derives immediately instead of at the next poll. Only this panel:
+    # every panel holds its own config, so another panel in the same room does
+    # not inherit these levels and has nothing to be told about.
     await notify(panel_id, {"type": "config_updated", "version": version})
     return {"version": version, "changed": changed}
 
