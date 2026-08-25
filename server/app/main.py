@@ -659,6 +659,34 @@ async def panel_presets(panel_id: str, request: Request):
     return {"version": version, "changed": changed}
 
 
+@app.post("/api/panel/{panel_id}/light")
+async def panel_light(panel_id: str, request: Request):
+    """Whether one light takes part in this panel's Soft and Bright.
+
+    The companion to the capture endpoint: deciding the levels from the wall is
+    no use if deciding which lights they apply to still means walking to a
+    computer. Same trust as the rest of the panel-facing API, and the same
+    narrow reach -- one boolean on one light this panel already has.
+    """
+    if not db.get_panel(panel_id):
+        raise HTTPException(404, "unknown panel")
+    b = await request.json()
+    ent = b.get("entity_id")
+    inc = b.get("include_presets")
+    if not ent or not isinstance(inc, bool):
+        raise HTTPException(400, "entity_id and include_presets (bool) required")
+    cfg = db.merged_config(panel_id)
+    for light in cfg.get("lights", []):
+        if light.get("entity_id") == ent:
+            light["include_presets"] = inc
+            break
+    else:
+        raise HTTPException(404, "that light is not on this panel")
+    version = db.save_config(panel_id, cfg)
+    await notify(panel_id, {"type": "config_updated", "version": version})
+    return {"version": version, "entity_id": ent, "include_presets": inc}
+
+
 @app.websocket("/api/ws/{panel_id}")
 async def panel_ws(ws: WebSocket, panel_id: str):
     await ws.accept()

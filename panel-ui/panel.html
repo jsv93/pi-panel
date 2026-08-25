@@ -1013,6 +1013,31 @@ function openLight(i){
   ovOpen("#ovLight");
 }
 
+async function setIncluded(i, inc, row){
+  const l = LIGHTS[i];
+  const v = row.querySelector(".v");
+  v.textContent = "…";
+  try{
+    const r = await fetch("/light", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({entity_id: l.entity_id, include_presets: inc}),
+    });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.detail || d.error || ("HTTP " + r.status));
+    /* Set locally as well as on the server. The server pushes the new config
+       back and the page reloads on it, but that is a second or two away and
+       the preset highlight should stop counting this light immediately. */
+    l.include_presets = inc;
+    paintLightSheet();
+    paintPresets();
+  }catch(e){
+    v.textContent = "failed";
+    setTimeout(paintLightSheet, 2500);
+  }
+  bump();
+}
+
 function paintLightSheet(){
   const i = openLightIdx;
   if(i < 0) return;
@@ -1024,8 +1049,24 @@ function paintLightSheet(){
   const effects = (a.effects || []).filter(e => !/^stop_|^finish_/.test(e)).slice(0, 12);
 
   body.innerHTML = "";
+
+  /* Config, not a capability, so it comes first and shows for every light --
+     including a plain dimmer, which is exactly the sort of thing someone wants
+     to keep out of the presets. Deciding the levels from the wall is not much
+     use if deciding which lights they apply to still means a computer. */
+  const inc = l.include_presets !== false;
+  const row = document.createElement("div");
+  row.className = "act tile press";
+  row.innerHTML = '<span class="t">Include in Soft / Bright</span>' +
+                  '<span class="v">' + (inc ? "Yes" : "No") + '</span>';
+  row.addEventListener("click", ()=>setIncluded(i, !inc, row));
+  body.appendChild(row);
+
   if(!hasTemp && !hasColor && !effects.length){
-    body.innerHTML = '<div class="hint2">This light has brightness only</div>';
+    const note = document.createElement("div");
+    note.className = "hint2";
+    note.textContent = "This light has brightness only";
+    body.appendChild(note);
     return;
   }
 

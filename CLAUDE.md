@@ -46,6 +46,24 @@ Corollaries:
 - Test what can be tested locally before claiming it works. `python -m py_compile`
   is not a test.
 
+## What a panel may change about itself
+
+Three things, and the list is closed:
+
+- its own screen — backlight, glass tier, diagnostics, wifi (local, not config)
+- the Soft and Bright **levels**, captured from whatever is on the sliders
+- whether one light **takes part** in Soft and Bright
+
+Everything else — which lights the panel has, which speaker it drives, its
+room, its screen type — is configured on the server. The two writes above exist
+because setting a room's levels from a computer while standing in the room is
+absurd, and because choosing the levels is no use without choosing which lights
+they apply to. That is the whole justification, and it does not extend.
+
+Both go through the agent to narrow server endpoints that touch one field
+each, never through a general config write. A panel cannot author its own
+configuration and should not be given a way to.
+
 ## Panel UI performance constraints (measured, not theoretical)
 
 The Pi 5 renders 720x1280 with `backdrop-filter` glass. Frame budget is tight:

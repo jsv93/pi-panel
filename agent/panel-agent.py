@@ -534,8 +534,8 @@ async def page_ws(request):
     return ws
 
 
-async def save_preset(request):
-    """Store the levels currently on screen as this panel's Soft or Bright.
+async def _to_server(request, path, label):
+    """Forward one small write from the page to the config server.
 
     Proxied rather than posted from the page directly: the page is served from
     the agent's own origin, so going to the config server means CORS, and a
@@ -548,15 +548,24 @@ async def save_preset(request):
         return web.json_response({"error": "bad request"}, status=400)
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.post(f"{SERVER}/api/panel/{PANEL_ID}/presets",
+            async with s.post(f"{SERVER}/api/panel/{PANEL_ID}/{path}",
                               json=body, timeout=10) as r:
                 data = await r.json()
                 if r.status != 200:
-                    print(f"[agent] preset save refused: {data}")
+                    print(f"[agent] {label} refused: {data}")
                 return web.json_response(data, status=r.status)
     except Exception as e:
-        print(f"[agent] preset save failed: {e}")
+        print(f"[agent] {label} failed: {e}")
         return web.json_response({"error": str(e)}, status=502)
+
+
+async def save_light(request):
+    return await _to_server(request, "light", "light setting")
+
+
+async def save_preset(request):
+    """Store the levels currently on screen as this panel's Soft or Bright."""
+    return await _to_server(request, "presets", "preset save")
 
 
 async def wifi_get(request):
@@ -624,6 +633,7 @@ async def serve_ui():
     app.router.add_get("/wifi", wifi_get)
     app.router.add_post("/wifi/connect", wifi_connect)
     app.router.add_post("/presets", save_preset)
+    app.router.add_post("/light", save_light)
     app.router.add_static("/", str(root), show_index=True)
     runner = web.AppRunner(app)
     await runner.setup()
