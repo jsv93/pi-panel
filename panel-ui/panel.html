@@ -132,6 +132,15 @@ body.sheet-open #scrim{opacity:.55}
    than given a chevron, which at this size read as a slider handle. */
 .lname{text-decoration:underline;text-decoration-color:var(--ink-ghost);
   text-underline-offset:6px;padding:6px 2px;margin:-6px -2px;border-radius:8px}
+/* Sized to be read across a room, not to match a desktop checkbox. The row is
+   the touch target, so this only has to be legible. */
+.chk{width:48px;height:48px;border-radius:13px;flex:none;display:grid;place-items:center;
+  border:2px solid var(--ink-ghost);
+  transition:background .16s var(--ease),border-color .16s var(--ease)}
+.chk svg{width:28px;height:28px;stroke:#08110D;fill:none;stroke-width:3;
+  stroke-linecap:round;stroke-linejoin:round;opacity:0;transition:opacity .16s var(--ease)}
+.chk.on{background:var(--accent);border-color:var(--accent)}
+.chk.on svg{opacity:1}
 .swatches{display:flex;flex-wrap:wrap;gap:14px;margin-top:16px}
 .sw{width:76px;height:76px;border-radius:38px;border:2px solid transparent}
 .sw.on{border-color:#fff;box-shadow:0 0 0 3px rgba(0,0,0,.55) inset}
@@ -1016,7 +1025,12 @@ function openLight(i){
 async function setIncluded(i, inc, row){
   const l = LIGHTS[i];
   const v = row.querySelector(".v");
-  v.textContent = "…";
+  const box = row.querySelector(".chk");
+  /* Ticked the moment it is pressed. The write takes a round trip through the
+     agent and the server, and a box that waits for that reads as one that did
+     not register the press -- so it is put back only if the write fails. */
+  box.classList.toggle("on", inc);
+  v.textContent = "";
   try{
     const r = await fetch("/light", {
       method: "POST",
@@ -1032,7 +1046,8 @@ async function setIncluded(i, inc, row){
     paintLightSheet();
     paintPresets();
   }catch(e){
-    v.textContent = "failed";
+    box.classList.toggle("on", !inc);   // back to what the server still holds
+    v.textContent = "not saved";
     setTimeout(paintLightSheet, 2500);
   }
   bump();
@@ -1057,8 +1072,12 @@ function paintLightSheet(){
   const inc = l.include_presets !== false;
   const row = document.createElement("div");
   row.className = "act tile press";
+  /* A box that is ticked or not, rather than the word Yes or No. Both say the
+     same thing, but only one of them says it without being read. */
   row.innerHTML = '<span class="t">Include in Soft / Bright</span>' +
-                  '<span class="v">' + (inc ? "Yes" : "No") + '</span>';
+                  '<span class="v"></span>' +
+                  '<span class="chk' + (inc ? " on" : "") + '">' +
+                  '<svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span>';
   row.addEventListener("click", ()=>setIncluded(i, !inc, row));
   body.appendChild(row);
 
