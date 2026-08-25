@@ -36,25 +36,36 @@ the sidebar is the wrong one here even though it is the obvious one.
 | Agent build | the agent's content hash, comparable with the server's bundle manifest |
 | Reload UI / Force sync / Restart panel | commands, allowed under either owner |
 
-## Who owns config
+## This integration does not configure panels
 
-Set in the server's Settings, under **Who owns panel config**:
+It monitors them and issues three commands. Configuration happens on the
+server, and the server refuses config writes from here.
 
-- `server` — the default. This integration reads and commands, and is refused
-  if it tries to write config.
-- `homeassistant` — Home Assistant owns it, and the server's config screens go
-  read-only with a banner.
+There was briefly a setting to hand config ownership to Home Assistant. It was
+withdrawn before anyone could use it: turning it on disabled the server's
+config screens and gave you nothing to configure with instead, so its only
+possible effect was to make things worse.
 
-The refusal is the point. "Config happens in exactly one place" only holds if
-the other place actively says no; otherwise a panel ends up configured half
-from each with no way to tell which half is current. Both sides are already
-authenticated, so this is a discipline boundary rather than a security one.
+The enforcement behind it is still in place and still tested — writes from here
+are refused with a 409 — so the mode can return the day there is something in
+Home Assistant worth owning config with. The obvious candidate is display
+settings driven by automations: brightness by time of day, glass tier, the
+diagnostics overlay. Those are things the server's GUI genuinely cannot do,
+because it has no automation engine, and they would justify the switch. Fleet
+monitoring on its own does not.
 
-Provisioning stays on the server under either setting. Installing hardware is
-not Home Assistant's job.
+## What it is good for
 
-The integration re-reads the setting every poll, so moving ownership in the
-server's GUI takes effect without reloading anything here.
+Panels fail quietly. A wall panel can be dead for a fortnight before anyone
+walks past it. These are the automations worth having:
+
+- **Online** goes off → notify. The panel is down.
+- **Home Assistant link** goes off while **Online** stays on → notify. The
+  panel is up and showing a blank screen, usually an expired token. From
+  across a room those two faults look identical; here they do not.
+- **Config versions behind** stays above zero for a few minutes → a push has
+  not landed.
+- Reload or restart on a schedule, or after something changes.
 
 ## Note for anyone extending this
 

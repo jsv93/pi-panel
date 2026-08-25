@@ -101,17 +101,34 @@ not after.
 
 ## Related: config ownership
 
-**Implemented.** Server setting `config_owner`, enforced on the four endpoints
-that write panel config — claim, config, rollback, templates — by refusing with
-409 whichever side does not own it. Home Assistant identifies itself with an
-`X-Panel-Client` header; both sides are already admin-authenticated, so this is
-discipline, not security. Provisioning is deliberately not covered: installing
-hardware is the server's job under either setting.
+**Enforcement implemented; the Home Assistant mode withdrawn.**
 
-Handing ownership over is itself never refused, or a misconfiguration would
-lock both sides out of their own config.
+`require_config_owner` guards the four endpoints that write panel config —
+claim, config, rollback, templates — refusing with 409 whichever side does not
+own it. Home Assistant identifies itself with an `X-Panel-Client` header; both
+sides are already admin-authenticated, so this is discipline, not security.
+Provisioning is deliberately not covered: installing hardware is the server's
+job either way.
 
-Exactly one source of truth, selected by the installer:
+`config_owner()` is clamped to `server`. The mode was shipped and pulled in the
+same day, on the correct objection that it did nothing: switching to
+`homeassistant` disabled the server's config screens and offered nothing in
+Home Assistant to configure with, so its only effect was to remove the working
+UI. Sequencing said "settle the rule before the add-on", which was right about
+the rule and wrong about shipping the switch ahead of the capability.
+
+Clamped rather than deleted so a stored value cannot strand anyone, and so the
+enforcement stays exercised.
+
+**What would earn the mode back:** writing entities in the integration —
+`number` for backlight default/minimum and blank timeout, `select` for glass
+tier, `switch` for diagnostics, plus a service to apply a named template.
+Brightness by time of day is the case that justifies it: the server has no
+automation engine and never will, so that genuinely belongs in Home Assistant.
+Until something like that exists, one owner is the honest answer.
+
+Original intent, for whenever that happens — exactly one source of truth,
+selected by the installer:
 
 - `config_owner: server` — today's behaviour; the integration is read-only and
   cannot write config

@@ -198,24 +198,6 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
       <div style="margin-top:12px"><button class="btn primary" id="sSavePanelUrlBtn">Save</button></div>
     </div>
 
-    <div class="card" style="padding:18px;margin-top:14px">
-      <h2 style="margin-bottom:8px">Who owns panel config</h2>
-      <p class="muted" style="font-size:13px">
-        One source of truth, chosen here. The other side is refused, not merely
-        discouraged — otherwise a panel ends up configured half from each and
-        there is no telling which half is current. Provisioning stays here
-        either way; installing hardware is not Home Assistant's job.
-        Panels pull config from this server regardless, so Home Assistant is
-        never in the delivery path and can be down without a panel noticing.
-      </p>
-      <div style="margin-top:12px;max-width:320px">
-        <select id="sConfigOwner">
-          <option value="server">This server — the integration is read-only</option>
-          <option value="homeassistant">Home Assistant — these screens go read-only</option>
-        </select>
-      </div>
-      <div style="margin-top:12px"><button class="btn primary" id="sSaveOwnerBtn">Save</button></div>
-    </div>
 
     <div class="card" style="padding:18px;margin-top:14px">
       <h2 style="margin-bottom:8px">Panel access key</h2>
@@ -281,14 +263,6 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
       </div>
 
       <div class="card" style="padding:18px">
-        <!-- Says which side owns this, so a disabled Save reads as the rule
-             rather than as a broken page. -->
-        <div id="ownerBanner" style="display:none;margin-bottom:14px;padding:10px 12px;
-          border-radius:8px;border:1px solid rgba(138,138,240,.35);
-          background:rgba(138,138,240,.10);font-size:13px;color:var(--dim)">
-          Home Assistant owns panel config. These fields are read-only — change them
-          in Home Assistant, or hand ownership back under Settings.
-        </div>
         <div id="problems"></div>
 
         <div class="sect on" data-s="identity">
@@ -1133,33 +1107,9 @@ $("#sBundleUseImage").onclick = ()=>{
     });
 };
 
-/* Read once at login and again after saving, so the detail page can tell
-   whether it is allowed to write before offering a button that would 409. */
-let CONFIG_OWNER = "server";
-function applyConfigOwner(){
-  const haOwns = CONFIG_OWNER === "homeassistant";
-  const sel = $("#sConfigOwner"); if(sel) sel.value = CONFIG_OWNER;
-  const banner = $("#ownerBanner");
-  if(banner) banner.style.display = haOwns ? "" : "none";
-  /* Disabled rather than hidden. A missing Save button reads as a bug; a
-     disabled one next to a line saying why reads as the rule doing its job. */
-  ["#saveBtn","#saveTplBtn","#revertBtn"].forEach(id=>{
-    const b = $(id); if(b){ b.disabled = haOwns; b.style.opacity = haOwns ? ".4" : ""; }
-  });
-}
-$("#sSaveOwnerBtn").onclick = async ()=>{
-  const v = $("#sConfigOwner").value;
-  await api("/settings",{method:"PUT",body:JSON.stringify({config_owner:v})});
-  CONFIG_OWNER = v; applyConfigOwner();
-  toast(v === "server" ? "This server owns panel config"
-                       : "Home Assistant owns panel config");
-};
-
 async function loadSettings(){
   loadBundleLog();
   const s = await api("/settings");
-  CONFIG_OWNER = s.config_owner || "server";
-  applyConfigOwner();
   $("#sHaUrl").value = s.ha_url || "";
   $("#sHaToken").value = "";
   $("#sTokenState").textContent = s.ha_token_set

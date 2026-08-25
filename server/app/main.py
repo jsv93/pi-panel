@@ -439,7 +439,21 @@ CLIENT_HEADER = "X-Panel-Client"
 
 
 def config_owner() -> str:
-    return db.get_setting("config_owner", "server")
+    """Always 'server' for now.
+
+    The 'homeassistant' mode is withdrawn, not abandoned. Setting it disabled
+    the server's config screens and offered nothing to configure with in
+    exchange -- a switch whose only effect was to take away the working UI,
+    which is the same trap as a bundle override that can only be cleared from a
+    host nobody can reach.
+
+    Clamped here rather than deleted so that a value already stored cannot
+    strand a deployment, and so the enforcement below stays exercised. When
+    there is something in Home Assistant worth owning config with -- display
+    settings driven by automations is the obvious one -- this returns the
+    stored value again and the rest already works.
+    """
+    return "server"
 
 
 def _caller(request: Request) -> str:
@@ -1131,11 +1145,13 @@ async def put_settings(request: Request):
             db.clear_setting("panel_url")
     if "config_owner" in b:
         v = (b.get("config_owner") or "server").strip().lower()
-        if v not in ("server", "homeassistant"):
-            raise HTTPException(400, "config_owner must be 'server' or 'homeassistant'")
-        # Deliberately not itself guarded by require_config_owner: handing
-        # ownership over is the one change the side losing it has to be able to
-        # make, or a misconfiguration locks both out of their own config.
+        if v != "server":
+            raise HTTPException(
+                400,
+                "Only 'server' is available. Home Assistant ownership is "
+                "withdrawn until the integration can actually configure a "
+                "panel; enabling it would only disable the screens that can.",
+            )
         db.set_setting("config_owner", v)
     if b.get("clear_ha_token"):
         db.clear_setting("ha_token")
