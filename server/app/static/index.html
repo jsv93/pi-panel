@@ -9,6 +9,9 @@
   --bg:#0E0E14; --card:#15151E; --line:#26262F; --line2:#1D1D25; --sunk:#0F0F16;
   --ink:#E8E8EC; --dim:#B4B4BE; --quiet:#9A9AA6; --faint:#61616C;
   --ok:#5DCAA5; --bad:#C4705A; --warn:#D8A657; --violet:#8A8AF0;
+  --ok-soft:rgba(29,158,117,.14); --ok-line:rgba(93,202,165,.35);
+  --bad-soft:rgba(196,112,90,.14); --warn-soft:rgba(216,166,87,.14);
+  --violet-soft:rgba(138,138,240,.13);
 }
 /* Ambient, for the admin GUI. Every rule below already reads these tokens, so
    the theme is a palette swap plus the two places that hard-code a border --
@@ -18,6 +21,9 @@ body.ambient{
   --bg:#1B1411; --card:#271D17; --line:#3A2C22; --line2:#2F231B; --sunk:#211913;
   --ink:#F9F0E7; --dim:#E0CCBA; --quiet:#AD9585; --faint:#7C6555;
   --ok:#EE8B42; --bad:#C4705A; --warn:#D8A657; --violet:#C9A88A;
+  --ok-soft:rgba(238,139,66,.16); --ok-line:rgba(238,139,66,.38);
+  --bad-soft:rgba(196,112,90,.14); --warn-soft:rgba(216,166,87,.14);
+  --violet-soft:rgba(201,168,138,.14);
   font-family:Outfit,system-ui,-apple-system,sans-serif;
 }
 body.ambient input,body.ambient select{border-color:#3A2C22}
@@ -61,7 +67,7 @@ h2{font-size:14px;font-weight:600}
 /* detail */
 .cols{display:grid;grid-template-columns:190px 1fr;gap:16px;margin-top:16px}
 .nav div{font-size:13px;padding:9px 10px;border-radius:7px;color:var(--quiet);cursor:pointer}
-.nav div.on{background:rgba(93,202,165,.13);color:var(--ok)}
+.nav div.on{background:var(--ok-soft);color:var(--ok)}
 .sect{display:none} .sect.on{display:block}
 .f2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 table.lights{width:100%;border-collapse:collapse;border:1px solid var(--line2);border-radius:8px;overflow:hidden}
@@ -111,10 +117,10 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
     <div class="card">
       <div class="head">
         <h1>Panels</h1>
-        <span class="pill" id="cOnline" style="color:var(--ok);background:rgba(29,158,117,.14)">0 online</span>
-        <span class="pill" id="cOffline" style="color:var(--bad);background:rgba(196,112,90,.14)">0 offline</span>
-        <span class="pill" id="cUnclaimed" style="color:var(--warn);background:rgba(216,166,87,.14)">0 unclaimed</span>
-        <span id="haWarn" class="pill" style="color:var(--warn);background:rgba(216,166,87,.14);display:none">HA not configured</span>
+        <span class="pill" id="cOnline" style="color:var(--ok);background:var(--ok-soft)">0 online</span>
+        <span class="pill" id="cOffline" style="color:var(--bad);background:var(--bad-soft)">0 offline</span>
+        <span class="pill" id="cUnclaimed" style="color:var(--warn);background:var(--warn-soft)">0 unclaimed</span>
+        <span id="haWarn" class="pill" style="color:var(--warn);background:var(--warn-soft);display:none">HA not configured</span>
         <div style="margin-left:auto;display:flex;gap:8px">
           <button class="btn" id="addPanelBtn">Add panel</button>
           <button class="btn" id="settingsBtn">Settings</button>
@@ -269,7 +275,7 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
     <div style="display:flex;align-items:center;gap:12px">
       <button class="btn" id="backBtn">← Fleet</button>
       <h1 id="dTitle">panel</h1>
-      <span class="pill" id="dTemplate" style="color:var(--violet);background:rgba(138,138,240,.13)"></span>
+      <span class="pill" id="dTemplate" style="color:var(--violet);background:var(--violet-soft)"></span>
       <div style="margin-left:auto;display:flex;gap:8px">
         <button class="btn" id="setupCmdBtn" style="display:none">Setup command</button>
         <button class="btn" id="reinstallBtn" style="display:none">Reinstall</button>
@@ -316,7 +322,7 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
               <th></th></tr></thead>
             <tbody id="lightRows"></tbody>
           </table>
-          <button class="btn" style="margin-top:12px;color:var(--ok);border-color:rgba(93,202,165,.35)"
+          <button class="btn" style="margin-top:12px;color:var(--ok);border-color:var(--ok-line)"
             id="addLight">+ Add light</button>
         </div>
 
@@ -327,7 +333,7 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
             <input id="fSpeakerName" placeholder="defaults to the entity id"></div>
           <div class="lbl" style="margin-top:16px">SELECTABLE SPEAKERS</div>
           <div id="speakerList"></div>
-          <button class="btn" style="margin-top:10px;color:var(--ok);border-color:rgba(93,202,165,.35)"
+          <button class="btn" style="margin-top:10px;color:var(--ok);border-color:var(--ok-line)"
             id="addSpeaker">+ Add speaker</button>
         </div>
 
@@ -1126,8 +1132,8 @@ $("#setBackBtn").onclick  = ()=>{ showSettings(false); loadFleet(); };
 
 function pill(el, text, kind){
   const c = {ok:"var(--ok)", bad:"var(--bad)", warn:"var(--warn)"}[kind] || "var(--faint)";
-  const bg = {ok:"rgba(29,158,117,.14)", bad:"rgba(196,112,90,.14)",
-              warn:"rgba(216,166,87,.14)"}[kind] || "transparent";
+  const bg = {ok:"var(--ok-soft)", bad:"var(--bad-soft)",
+              warn:"var(--warn-soft)"}[kind] || "transparent";
   el.textContent = text; el.style.color = c; el.style.background = bg;
 }
 /* Where a value came from matters here: "saved" and "inherited from the
@@ -1241,7 +1247,7 @@ $("#sTestBtn").onclick = async ()=>{
   const r = await api("/settings/test_ha",{method:"POST",body:JSON.stringify({
     ha_url:$("#sHaUrl").value, ha_token:$("#sHaToken").value})});
   box.innerHTML = r.ok
-    ? `<div class="warn" style="background:rgba(29,158,117,.10);border-color:rgba(29,158,117,.35);color:var(--ok)">
+    ? `<div class="warn" style="background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)">
         Connected — ${r.entities} entities visible.</div>`
     : `<div class="warn">Failed${r.status?` (HTTP ${r.status})`:""}: ${r.error}</div>`;
 };
