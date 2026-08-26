@@ -293,6 +293,10 @@ BUNDLE_TARGETS = {
     # Here because it was not: the launcher is written once at install time, so
     # a chromium flag added to it reached a panel only on a full reinstall.
     "kiosk-launch.sh": Path("/usr/local/bin/panel-kiosk-launch"),
+    # Beside panel.html, which is what @font-face's relative url resolves
+    # against. Bundled rather than linked so the ambient theme still has its
+    # face on a panel with no internet.
+    "outfit.woff2":   Path("/opt/panel/current/outfit.woff2"),
 }
 SELF = "panel-agent.py"
 PREV = Path("/usr/local/bin/panel-agent.prev")

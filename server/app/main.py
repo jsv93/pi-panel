@@ -105,6 +105,7 @@ fetch() {
 fetch "$SERVER/bundle/panel.html"     /opt/panel/current/panel.html
 fetch "$SERVER/bundle/panel-agent.py" /usr/local/bin/panel-agent
 fetch "$SERVER/bundle/backlight.py"   /usr/local/bin/panel-backlight
+fetch "$SERVER/bundle/outfit.woff2"  /opt/panel/current/outfit.woff2
 chmod +x /usr/local/bin/panel-agent /usr/local/bin/panel-backlight
 
 # The bundle is populated by hand, so it can lag the server. An agent without
@@ -1110,7 +1111,8 @@ async def bootstrap(request: Request, t: str = ""):
     return Response(content=body, media_type="text/x-shellscript")
 
 
-BUNDLE_FILES = ("panel.html", "panel-agent.py", "backlight.py", "kiosk-launch.sh")
+BUNDLE_FILES = ("panel.html", "panel-agent.py", "backlight.py", "kiosk-launch.sh",
+                "outfit.woff2")
 
 
 def _bundle_path(name):

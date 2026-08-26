@@ -336,6 +336,88 @@ body.sheet-open #scrim{opacity:.55}
 #idleMedia .t{font-size:22px;color:#5A5A63} #idleMedia .a{font-size:19px;color:#3D3D46}
 #idle .hint{position:absolute;bottom:90px;font-size:19px;color:#24242C}
 
+/* ================= theme: Ambient =================
+   Warm near-black, no borders anywhere, surfaces separated by tone and radius
+   instead of by line. Selected per panel; the default theme is untouched.
+
+   Everything here is an override on the base rules above rather than a second
+   copy of them, so layout, sizing and every measurement stay in one place --
+   a theme that forked the geometry would drift from the default the first time
+   either was edited.
+
+   Outfit is bundled, not linked. A wall panel has to come up with the server
+   unreachable and often with no internet at all, and a webfont that fails on
+   those mornings falls back to a face the whole theme was not drawn for.
+   14.5 KB, SIL Open Font Licence -- see panel-ui/FONT-LICENCE.md. */
+@font-face{
+  font-family:"Outfit";
+  src:url("outfit.woff2") format("woff2-variations");
+  font-weight:200 500;
+  font-display:swap;
+}
+body.theme-ambient{
+  --ink:#F7F0E8; --ink-dim:#D8CABB; --ink-quiet:#9E8F82; --ink-ghost:#6E6055;
+  --accent:#F2A65A; --accent-deep:#C97D3A; --accent-line:transparent;
+  --warm:#F2A65A; --bad:#C4705A;
+  --tile:#1F1813; --tile-line:transparent;
+  --r:32px;
+  background:#14100D;
+  font-family:"Outfit","Helvetica Neue",system-ui,sans-serif;
+}
+/* Flat ground and no coloured wash: the warmth comes from the surfaces, and a
+   green-and-violet gradient underneath fights it. */
+body.theme-ambient::before{background:none}
+body.theme-ambient .tile{border:0;backdrop-filter:none;-webkit-backdrop-filter:none}
+
+body.theme-ambient .clock{font-size:158px;letter-spacing:-3px;padding-top:96px}
+body.theme-ambient .sub{font-size:22px;letter-spacing:1px;padding-top:18px}
+
+body.theme-ambient .presets{gap:18px;margin-top:54px}
+body.theme-ambient .preset{height:188px;border-radius:34px;background:#1F1813;gap:16px}
+body.theme-ambient .preset svg{width:34px;height:34px;stroke:var(--ink-quiet);stroke-width:1.4}
+body.theme-ambient .preset span{font-size:26px;color:var(--ink-quiet)}
+body.theme-ambient .preset.active{background:linear-gradient(160deg,#33241A,#241A13)}
+body.theme-ambient .preset.active svg{stroke:var(--accent)}
+body.theme-ambient .preset.active span{color:var(--accent)}
+
+/* Inset and rounded rather than a full-width band welded to the navbar. */
+body.theme-ambient .strip{left:40px;right:40px;bottom:172px;height:132px;
+  border-radius:34px;background:#1F1813;border:0}
+body.theme-ambient .strip-row{padding:0 26px;gap:20px}
+body.theme-ambient .art{width:84px;height:84px;border-radius:24px;
+  background:linear-gradient(140deg,#4A3527,#2A1E16)}
+body.theme-ambient .strip .prog{background:rgba(247,240,232,.07)}
+
+body.theme-ambient .slider{height:64px;border-radius:32px;border:0;
+  background:rgba(247,240,232,.07)}
+body.theme-ambient .slider.thin{height:28px;border-radius:14px}
+body.theme-ambient .fill{background:linear-gradient(90deg,#C97D3A,#F2A65A)}
+
+/* Pill behind the active icon instead of a tinted label, and no rule along the
+   top -- the whole point of the theme is that nothing is separated by a line. */
+body.theme-ambient .nav{background:transparent;border-top:0;
+  backdrop-filter:none;-webkit-backdrop-filter:none;height:144px;padding:0 30px 18px}
+body.theme-ambient .nav button{gap:9px;color:var(--ink-ghost)}
+body.theme-ambient .nav svg{width:26px;height:26px;stroke-width:1.5}
+body.theme-ambient .nav b{font-size:19px}
+body.theme-ambient .nav button.on{color:var(--accent)}
+body.theme-ambient .nav button.on svg{background:rgba(242,166,90,.16);border-radius:26px;
+  width:74px;height:52px;padding:13px 24px;box-sizing:border-box}
+
+body.theme-ambient .sheet{background:#191410;border-top:0;border-radius:36px 36px 0 0;
+  backdrop-filter:none;-webkit-backdrop-filter:none}
+body.theme-ambient #s-browse{background:#191410}
+body.theme-ambient .ov-card{background:#1B1610;border-top:0;border-radius:36px 36px 0 0}
+body.theme-ambient .rows,
+body.theme-ambient .act,
+body.theme-ambient .bitem{background:#241C16!important;border:0!important;border-radius:28px}
+body.theme-ambient .row{border-bottom-color:rgba(247,240,232,.06)}
+body.theme-ambient .slabel .n{color:var(--ink-dim)}
+body.theme-ambient .chk{border-color:rgba(247,240,232,.22)}
+body.theme-ambient .chk.on{background:var(--accent);border-color:var(--accent)}
+body.theme-ambient .chk svg{stroke:#14100D}
+body.theme-ambient #identify{background:var(--accent);color:#14100D}
+
 /* ---------- glass tiers (toggled live from Settings) ---------- */
 body.ng-sheets .sheet{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
   background:rgba(11,11,18,.985)}
@@ -440,6 +522,7 @@ body:not(.diag) .diagonly{display:none}
     <div class="row"><span class="k">Backlight service</span><span id="stBL"><span class="dot wait"></span>–</span></div>
     <div class="row"><span class="k">Network</span><span id="stNet">–</span></div>
     <div class="row"><span class="k">Glass</span><span id="stGlass">–</span></div>
+    <div class="row"><span class="k">Theme</span><span id="stTheme">–</span></div>
     <div class="row"><span class="k">Uptime</span><span id="sUp">–</span></div>
     <div class="row diagonly"><span class="k">Renderer</span><span id="stGL">–</span></div>
   </div>
@@ -452,6 +535,9 @@ body:not(.diag) .diagonly{display:none}
       <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
     <div class="act tile press" id="glassRow">
       <span class="t">Change glass</span><span class="v" id="glassV">Full</span>
+      <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="act tile press" id="themeRow">
+      <span class="t">Theme</span><span class="v" id="themeV">Default</span>
       <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
     <div class="act tile press" id="diagRow">
       <span class="t">Diagnostics</span><span class="v" id="diagV">Off</span>
@@ -662,6 +748,33 @@ const BL_MIN   = _disp.backlight_min ?? 5;
 const BL_DEF   = _disp.backlight_default ?? 100;
 const GLASS_DEFAULT = _disp.glass_tier ?? 0;
 const BL_URL   = "http://127.0.0.1:8081";
+/* Applied straight away rather than in a paint pass: the theme changes the
+   ground colour, and a frame of the default palette before the ambient one
+   lands is a visible flash on a panel that never reloads otherwise. */
+const THEMES = [
+  {id:"default", name:"Default"},
+  {id:"ambient", name:"Ambient"},
+];
+const THEME_DEFAULT = (_disp.theme || "default");
+let theme = THEME_DEFAULT;
+try{
+  const v = localStorage.getItem("theme");
+  const base = localStorage.getItem("themeBase");
+  if(v !== null && base !== null && base === THEME_DEFAULT) theme = v;
+  else { localStorage.removeItem("theme"); localStorage.setItem("themeBase", THEME_DEFAULT); }
+}catch(e){}
+function applyTheme(){
+  THEMES.forEach(t => document.body.classList.toggle("theme-" + t.id, t.id === theme));
+  const t = THEMES.find(t => t.id === theme) || THEMES[0];
+  const el = $("#themeV"); if(el) el.textContent = t.name;
+  const st = $("#stTheme"); if(st) st.textContent = t.name;
+  try{
+    localStorage.setItem("theme", theme);
+    localStorage.setItem("themeBase", THEME_DEFAULT);
+  }catch(e){}
+}
+applyTheme();
+
 const GLASS_TIERS = [
   {name:"Full",       cls:""},
   {name:"No sheet",   cls:"ng-sheets"},
@@ -1619,6 +1732,12 @@ function applyGlass(){
     localStorage.setItem("glassBase", GLASS_DEFAULT);
   }catch(e){}
 }
+const thr = $("#themeRow");
+if(thr) thr.addEventListener("click",()=>{
+  theme = THEMES[(THEMES.findIndex(t=>t.id===theme) + 1) % THEMES.length].id;
+  applyTheme(); bump();
+});
+
 const gr = $("#glassRow");
 if(gr) gr.addEventListener("click",()=>{ glassTier = (glassTier+1) % GLASS_TIERS.length; applyGlass(); bump(); });
 applyGlass();

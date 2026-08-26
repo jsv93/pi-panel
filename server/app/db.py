@@ -75,6 +75,10 @@ DEFAULT_TEMPLATE = {
         # 0 = never; dimming alone still glows noticeably on this panel.
         "backlight_off_s": 0,
         "glass_tier": 0,
+        # Visual theme. "default" is the build as shipped; "ambient" is the
+        # warm, borderless one. A theme changes only appearance -- every
+        # measurement and every control is the same in both.
+        "theme": "default",
         # dtoverlay line for the panel's DSI display, written to config.txt at
         # provisioning. Stock Raspberry Pi OS auto-detects only the official
         # Touch Display, so a third-party panel with the wrong line here gets

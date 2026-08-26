@@ -538,6 +538,7 @@ function fillConfigForm(){
   const d = CFG.display||{};
   $("#fIdle").value = d.idle_timeout_s ?? 45;
   $("#fGlass").value = d.glass_tier ?? 0;
+  $("#fTheme").value = d.theme || "default";
   $("#fBlDef").value = d.backlight_default ?? 100;
   $("#fBlMin").value = d.backlight_min ?? 5;
   $("#fBlOff").value = d.backlight_off_s ?? 0;
@@ -715,7 +716,7 @@ function collect(){
   CFG.media = {...(CFG.media||{}), default_speaker:$("#fSpeaker").value,
                default_speaker_name:$("#fSpeakerName").value.trim()};
   CFG.sensors = {temperature:$("#fTemp").value, humidity:$("#fHum").value};
-  CFG.display = {idle_timeout_s:+$("#fIdle").value, glass_tier:+$("#fGlass").value,
+  CFG.display = {idle_timeout_s:+$("#fIdle").value, glass_tier:+$("#fGlass").value, theme:$("#fTheme").value,
                  backlight_default:+$("#fBlDef").value, backlight_min:+$("#fBlMin").value,
                  backlight_off_s:+$("#fBlOff").value,
                  dsi_overlay:$("#fDsiOverlay").value.trim(),
