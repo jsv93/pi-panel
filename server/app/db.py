@@ -66,7 +66,7 @@ DEFAULT_TEMPLATE = {
     "room_label": "Room",
     "lights": [],
     "media": {"default_speaker": "", "default_speaker_name": "", "speakers": []},
-    "sensors": {"temperature": "", "humidity": ""},
+    "sensors": {"temperature": "", "humidity": "", "climate": ""},
     "display": {
         "idle_timeout_s": 45,
         "backlight_default": 100,
@@ -79,6 +79,10 @@ DEFAULT_TEMPLATE = {
         # warm, borderless one. A theme changes only appearance -- every
         # measurement and every control is the same in both.
         "theme": "default",
+        # Whether a sub-page covers the navbar. It always did; the Ambient
+        # theme puts an active marker on the navbar, which is invisible if the
+        # bar is covered the moment you navigate.
+        "hide_nav_on_sheets": True,
         # dtoverlay line for the panel's DSI display, written to config.txt at
         # provisioning. Stock Raspberry Pi OS auto-detects only the official
         # Touch Display, so a third-party panel with the wrong line here gets

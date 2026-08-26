@@ -296,7 +296,10 @@ BUNDLE_TARGETS = {
     # Beside panel.html, which is what @font-face's relative url resolves
     # against. Bundled rather than linked so the ambient theme still has its
     # face on a panel with no internet.
-    "outfit.woff2":   Path("/opt/panel/current/outfit.woff2"),
+    "outfit-200.woff2": Path("/opt/panel/current/outfit-200.woff2"),
+    "outfit-300.woff2": Path("/opt/panel/current/outfit-300.woff2"),
+    "outfit-400.woff2": Path("/opt/panel/current/outfit-400.woff2"),
+    "outfit-500.woff2": Path("/opt/panel/current/outfit-500.woff2"),
 }
 SELF = "panel-agent.py"
 PREV = Path("/usr/local/bin/panel-agent.prev")

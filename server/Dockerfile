@@ -19,7 +19,7 @@ COPY panel-ui/panel.html      /srv/bundle/panel.html
 COPY agent/panel-agent.py     /srv/bundle/panel-agent.py
 COPY panel-ui/backlight.py    /srv/bundle/backlight.py
 COPY pi-os/kiosk-launch.sh    /srv/bundle/kiosk-launch.sh
-COPY panel-ui/outfit.woff2    /srv/bundle/outfit.woff2
+COPY panel-ui/outfit-*.woff2  /srv/bundle/
 
 VOLUME ["/data"]
 EXPOSE 8099

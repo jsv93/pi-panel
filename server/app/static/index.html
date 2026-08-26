@@ -10,6 +10,22 @@
   --ink:#E8E8EC; --dim:#B4B4BE; --quiet:#9A9AA6; --faint:#61616C;
   --ok:#5DCAA5; --bad:#C4705A; --warn:#D8A657; --violet:#8A8AF0;
 }
+/* Ambient, for the admin GUI. Every rule below already reads these tokens, so
+   the theme is a palette swap plus the two places that hard-code a border --
+   nothing about the layout changes, which is the point: this is a
+   configuration tool and it should stay legible before it is pretty. */
+body.ambient{
+  --bg:#14100D; --card:#1F1813; --line:#2C231B; --line2:#241C16; --sunk:#191410;
+  --ink:#F7F0E8; --dim:#D8CABB; --quiet:#9E8F82; --faint:#6E6055;
+  --ok:#F2A65A; --bad:#C4705A; --warn:#D8A657; --violet:#C9A88A;
+  font-family:Outfit,system-ui,-apple-system,sans-serif;
+}
+body.ambient input,body.ambient select{border-color:#2C231B}
+body.ambient .btn{border-color:#2C231B}
+body.ambient .btn.primary{color:#14100D}
+@font-face{font-family:"Outfit";src:url("fonts/outfit-300.woff2") format("woff2");font-weight:300;font-display:swap}
+@font-face{font-family:"Outfit";src:url("fonts/outfit-400.woff2") format("woff2");font-weight:400;font-display:swap}
+@font-face{font-family:"Outfit";src:url("fonts/outfit-500.woff2") format("woff2");font-weight:500;font-display:swap}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--ink);font:14px/1.45 Inter,system-ui,-apple-system,sans-serif}
 button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
@@ -214,6 +230,19 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
     </div>
 
     <div class="card" style="padding:18px;margin-top:14px">
+      <h2 style="margin-bottom:8px">Appearance</h2>
+      <p class="muted" style="font-size:13px">How this page looks. Stored in the browser,
+        not on the server &mdash; it is a preference of whoever is sitting here, and two
+        people administering the same fleet need not agree about it.</p>
+      <div style="margin-top:12px;max-width:280px">
+        <select id="sGuiTheme">
+          <option value="default">Default</option>
+          <option value="ambient">Ambient &mdash; warm, borderless</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="card" style="padding:18px;margin-top:14px">
       <h2 style="margin-bottom:12px">Server</h2>
       <div id="sServerInfo"></div>
     </div>
@@ -308,6 +337,10 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
             <div><div class="lbl">TEMPERATURE</div><select id="fTemp"></select></div>
             <div><div class="lbl">HUMIDITY</div><select id="fHum"></select></div>
           </div>
+          <div style="margin-top:14px">
+            <div class="lbl">THERMOSTAT — ITS SETPOINT IS THE HOME SCREEN TILE</div>
+            <select id="fClimate"></select>
+          </div>
         </div>
 
         <div class="sect" data-s="display">
@@ -326,6 +359,9 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
             <div><div class="lbl">BACKLIGHT MINIMUM %</div><input type="number" id="fBlMin"></div>
             <div><div class="lbl">BACKLIGHT OFF AFTER (SECONDS IDLE, 0 = NEVER)</div>
               <input type="number" id="fBlOff"></div>
+            <div><div class="lbl">NAVBAR ON SUB-PAGES</div><select id="fHideNav">
+              <option value="1">Hidden — sub-pages cover it</option>
+              <option value="0">Always visible</option></select></div>
             <div><div class="lbl">DIAGNOSTICS ON THE PANEL</div><select id="fDiag">
               <option value="0">Off</option><option value="1">Connection status and fps</option>
             </select></div>
@@ -447,6 +483,19 @@ $("#pw").addEventListener("keydown",e=>{ if(e.key==="Enter") $("#loginBtn").clic
 
 /* ---------------- fleet ---------------- */
 let PANELS=[], ENTITIES={};
+/* Read and applied at once rather than after the first render: the whole page
+   is dark either way, but the accent and the card colour change, and a flash
+   of the other palette on every load is exactly the kind of cheap tell this
+   restyle exists to remove. */
+function applyGuiTheme(t){
+  document.body.classList.toggle("ambient", t === "ambient");
+  const sel = document.querySelector("#sGuiTheme"); if(sel) sel.value = t;
+  try{ localStorage.setItem("guiTheme", t); }catch(e){}
+}
+try{ applyGuiTheme(localStorage.getItem("guiTheme") || "default"); }catch(e){}
+document.addEventListener("change", e => {
+  if(e.target && e.target.id === "sGuiTheme") applyGuiTheme(e.target.value);
+});
 function ago(ts){
   if(!ts) return "never";
   const s = Date.now()/1000 - ts;
@@ -519,6 +568,7 @@ async function loadEntities(){
   ENTITIES.light  = await api("/entities?domain=light,switch");
   ENTITIES.media  = await api("/entities?domain=media_player");
   ENTITIES.sensor = await api("/entities?domain=sensor");
+  ENTITIES.climate = await api("/entities?domain=climate");
 }
 function opts(list, val, blank="— none —"){
   const has = list.some(e=>e.entity_id===val);
@@ -536,6 +586,7 @@ function fillConfigForm(){
   renderLights(); renderSpeakers();
   $("#fTemp").innerHTML = opts(ENTITIES.sensor, (CFG.sensors||{}).temperature);
   $("#fHum").innerHTML  = opts(ENTITIES.sensor, (CFG.sensors||{}).humidity);
+  $("#fClimate").innerHTML = opts(ENTITIES.climate||[], (CFG.sensors||{}).climate);
   $("#fSpeaker").innerHTML = opts(ENTITIES.media, (CFG.media||{}).default_speaker);
   $("#fSpeakerName").value = (CFG.media||{}).default_speaker_name || "";
   const d = CFG.display||{};
@@ -547,6 +598,7 @@ function fillConfigForm(){
   $("#fBlOff").value = d.backlight_off_s ?? 0;
   renderScreens(d.dsi_overlay ?? "");
   $("#fDiag").value = d.diagnostics ? "1" : "0";
+  $("#fHideNav").value = (d.hide_nav_on_sheets ?? true) ? "1" : "0";
   $("#fScreenW").value = d.screen_width ?? 0;
   $("#fScreenH").value = d.screen_height ?? 0;
 }
@@ -718,12 +770,14 @@ function collect(){
   CFG.connection = {...(CFG.connection||{}), ha_url:$("#fHaUrl").value};
   CFG.media = {...(CFG.media||{}), default_speaker:$("#fSpeaker").value,
                default_speaker_name:$("#fSpeakerName").value.trim()};
-  CFG.sensors = {temperature:$("#fTemp").value, humidity:$("#fHum").value};
+  CFG.sensors = {temperature:$("#fTemp").value, humidity:$("#fHum").value,
+                 climate:$("#fClimate").value};
   CFG.display = {idle_timeout_s:+$("#fIdle").value, glass_tier:+$("#fGlass").value, theme:$("#fTheme").value,
                  backlight_default:+$("#fBlDef").value, backlight_min:+$("#fBlMin").value,
                  backlight_off_s:+$("#fBlOff").value,
                  dsi_overlay:$("#fDsiOverlay").value.trim(),
                  diagnostics:$("#fDiag").value === "1",
+                 hide_nav_on_sheets:$("#fHideNav").value === "1",
                  screen_width:+$("#fScreenW").value || 0,
                  screen_height:+$("#fScreenH").value || 0};
   return CFG;

@@ -105,7 +105,9 @@ fetch() {
 fetch "$SERVER/bundle/panel.html"     /opt/panel/current/panel.html
 fetch "$SERVER/bundle/panel-agent.py" /usr/local/bin/panel-agent
 fetch "$SERVER/bundle/backlight.py"   /usr/local/bin/panel-backlight
-fetch "$SERVER/bundle/outfit.woff2"  /opt/panel/current/outfit.woff2
+for w in 200 300 400 500; do
+  fetch "$SERVER/bundle/outfit-$w.woff2" "/opt/panel/current/outfit-$w.woff2"
+done
 chmod +x /usr/local/bin/panel-agent /usr/local/bin/panel-backlight
 
 # The bundle is populated by hand, so it can lag the server. An agent without
@@ -580,6 +582,7 @@ DISPLAY_KEYS = {
     "idle_timeout_s": int,
     "glass_tier": int,
     "diagnostics": bool,
+    "hide_nav_on_sheets": bool,
 }
 
 
@@ -1112,7 +1115,8 @@ async def bootstrap(request: Request, t: str = ""):
 
 
 BUNDLE_FILES = ("panel.html", "panel-agent.py", "backlight.py", "kiosk-launch.sh",
-                "outfit.woff2")
+                "outfit-200.woff2", "outfit-300.woff2",
+                "outfit-400.woff2", "outfit-500.woff2")
 
 
 def _bundle_path(name):
@@ -1203,6 +1207,22 @@ async def bundle_use_image():
             os.replace(p, f"{p}.overridden-{stamp}")
             moved.append(name)
     return {"moved": moved}
+
+
+@app.get("/fonts/{name}")
+async def font(name: str):
+    """The panel's bundled faces, for the admin GUI's own Ambient theme.
+
+    Served from the bundle rather than copied into the static directory so
+    there is one set of files, and reached by a relative URL from the
+    stylesheet so it resolves correctly behind Home Assistant's ingress too.
+    """
+    if not name.startswith("outfit-") or not name.endswith(".woff2"):
+        raise HTTPException(404, "unknown font")
+    path = _bundle_path(name)
+    if not path:
+        raise HTTPException(404, "font not in the bundle")
+    return FileResponse(path, media_type="font/woff2")
 
 
 @app.get("/api/bundle-log", dependencies=[Depends(require_admin)])

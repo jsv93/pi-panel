@@ -349,16 +349,15 @@ body.sheet-open #scrim{opacity:.55}
    unreachable and often with no internet at all, and a webfont that fails on
    those mornings falls back to a face the whole theme was not drawn for.
    14.5 KB, SIL Open Font Licence -- see panel-ui/FONT-LICENCE.md. */
-@font-face{
-  font-family:"Outfit";
-  src:url("outfit.woff2") format("woff2-variations");
-  font-weight:200 500;
-  font-display:swap;
-}
+@font-face{font-family:"Outfit";src:url("outfit-200.woff2") format("woff2");font-weight:200;font-display:swap}
+@font-face{font-family:"Outfit";src:url("outfit-300.woff2") format("woff2");font-weight:300;font-display:swap}
+@font-face{font-family:"Outfit";src:url("outfit-400.woff2") format("woff2");font-weight:400;font-display:swap}
+@font-face{font-family:"Outfit";src:url("outfit-500.woff2") format("woff2");font-weight:500;font-display:swap}
 body.theme-ambient{
   --ink:#F7F0E8; --ink-dim:#D8CABB; --ink-quiet:#9E8F82; --ink-ghost:#6E6055;
   --accent:#F2A65A; --accent-deep:#C97D3A; --accent-line:transparent;
   --warm:#F2A65A; --bad:#C4705A;
+  --bg-top:#14100D; --bg-bot:#14100D;
   --tile:#1F1813; --tile-line:transparent;
   --r:32px; --nav:144px; --strip:160px;
   background:#14100D;
@@ -367,6 +366,10 @@ body.theme-ambient{
 /* Flat ground and no coloured wash: the warmth comes from the surfaces, and a
    green-and-violet gradient underneath fights it. */
 body.theme-ambient::before{background:none}
+/* html paints the ground behind the scaled stage, and it is not a descendant
+   of body -- so the tokens set on body never reach it and it stayed the
+   default near-black. That is the ring of cold grey around a warm panel. */
+html.theme-ambient{background:#14100D}
 body.theme-ambient .tile{border:0;backdrop-filter:none;-webkit-backdrop-filter:none}
 
 /* Room and day above the clock, which is the order the theme was drawn in.
@@ -391,12 +394,36 @@ body.theme-ambient .art{width:84px;height:84px;border-radius:24px;
   background:linear-gradient(140deg,#4A3527,#2A1E16)}
 body.theme-ambient .strip .prog{background:rgba(247,240,232,.07)}
 
-/* Readings, hidden everywhere else. */
+/* The setpoint, not the reading: what the room is set to is the thing anyone
+   walks up to a panel to change. What it actually is belongs on the climate
+   page, where you go to find out rather than to act. */
 .readings{display:none}
-body.theme-ambient .readings{display:flex;gap:18px;margin-top:18px}
-body.theme-ambient .readings .tile{flex:1;height:120px;border-radius:30px;background:#1F1813;
-  display:grid;place-items:center;font-size:40px;font-weight:200;font-variant-numeric:tabular-nums}
-body.theme-ambient .readings .tile:last-child{color:var(--ink-quiet)}
+body.theme-ambient .readings{display:block;margin-top:18px}
+body.theme-ambient .setpoint{height:120px;border-radius:30px;background:#1F1813;
+  display:flex;align-items:center;justify-content:space-between;padding:0 14px}
+body.theme-ambient .sp-btn{width:92px;height:92px;border-radius:26px;display:grid;place-items:center;flex:none}
+body.theme-ambient .sp-btn svg{width:32px;height:32px;stroke:var(--ink-quiet);fill:none;
+  stroke-width:1.8;stroke-linecap:round}
+body.theme-ambient .sp-val{flex:1;text-align:center;font-size:52px;font-weight:200;
+  font-variant-numeric:tabular-nums;line-height:1}
+body.theme-ambient .sp-val sup{font-size:24px;vertical-align:super;color:var(--ink-quiet)}
+body.theme-ambient .setpoint.off .sp-val{color:var(--ink-ghost)}
+
+/* Four bars instead of a progress line. Progress on a strip this size was a
+   3px hairline nobody reads; whether something is playing is the thing you
+   actually want to know from across the room. transform only, so it costs the
+   compositor and not the main thread. */
+.eq{display:none;align-items:flex-end;gap:4px;height:30px;flex:none}
+.eq i{display:block;width:5px;height:30px;border-radius:3px;background:var(--accent);
+  transform-origin:bottom center;transform:scaleY(.28)}
+.strip:not(.idle) .eq{display:flex}
+.strip:not(.idle) .eq i{animation:eqbar .9s ease-in-out infinite alternate}
+.strip:not(.idle) .eq i:nth-child(2){animation-duration:.62s}
+.strip:not(.idle) .eq i:nth-child(3){animation-duration:1.05s}
+.strip:not(.idle) .eq i:nth-child(4){animation-duration:.78s}
+@keyframes eqbar{from{transform:scaleY(.22)}to{transform:scaleY(1)}}
+@media (prefers-reduced-motion:reduce){.strip:not(.idle) .eq i{animation:none;transform:scaleY(.6)}}
+body.theme-ambient .strip .prog{display:none}
 
 /* Each light becomes a card with its own slider inside, which is the single
    biggest difference from the default and the one that reads at a glance. */
@@ -412,10 +439,14 @@ body.theme-ambient .lamp .slider{height:14px;border-radius:8px;margin-top:22px;
 body.theme-ambient .slider{height:64px;border-radius:32px;border:0;
   background:rgba(247,240,232,.07)}
 body.theme-ambient .slider.thin{height:28px;border-radius:14px}
-body.theme-ambient .fill{background:linear-gradient(90deg,#C97D3A,#F2A65A);border-radius:8px}
+body.theme-ambient .fill{background:linear-gradient(180deg,#F2A65A,#C97D3A);border-radius:8px}
 
 /* Pill behind the active icon instead of a tinted label, and no rule along the
    top -- the whole point of the theme is that nothing is separated by a line. */
+/* Above the sheets rather than under them, so the active pill is visible while
+   a sub-page is open. Off by default: the sheets were drawn full-height. */
+body.nav-always .nav{z-index:46}
+body.nav-always .sheet{bottom:var(--nav)}
 body.theme-ambient .nav{background:transparent;border-top:0;
   backdrop-filter:none;-webkit-backdrop-filter:none;padding:0 30px 18px}
 body.theme-ambient .nav button{gap:9px;color:var(--ink-ghost)}
@@ -489,8 +520,11 @@ body:not(.diag) .diagonly{display:none}
        Same two values either way -- no new plumbing, only somewhere else to
        put what the panel already knows. -->
   <div class="readings">
-    <div class="tile"><span id="rTemp">–</span></div>
-    <div class="tile"><span id="rHum">–</span></div>
+    <div class="tile setpoint">
+      <div class="sp-btn press" id="spDown"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></div>
+      <div class="sp-val"><span id="spTemp">–</span><sup>&deg;</sup></div>
+      <div class="sp-btn press" id="spUp"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></div>
+    </div>
   </div>
   <div class="pdiag" id="pDiag"></div>
 </div>
@@ -500,6 +534,7 @@ body:not(.diag) .diagonly{display:none}
   <div class="strip-row">
     <div class="art"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
     <div class="meta"><div class="t" id="rmTitle">Nothing playing</div><div class="a" id="rmArtist"></div></div>
+    <div class="eq" id="rmEq"><i></i><i></i><i></i><i></i></div>
     <div class="pp" id="rmPP"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
   </div>
   <div class="prog"><i id="stripProg"></i></div>
@@ -746,6 +781,7 @@ const LIGHTS   = (CFG.lights||[]).filter(l=>l.entity_id);
 const ROOM     = CFG.room_label || "Room";
 const TEMP_ENT = (CFG.sensors||{}).temperature || "";
 const HUM_ENT  = (CFG.sensors||{}).humidity || "";
+const CLIMATE  = (CFG.sensors||{}).climate || "";
 const LUNA_URL = (CFG.connection||{}).luna_url || "";
 const _media   = CFG.media || {};
 const SPEAKERS = (_media.speakers||[]).map(s=>
@@ -798,7 +834,10 @@ try{
   else { localStorage.removeItem("theme"); localStorage.setItem("themeBase", THEME_DEFAULT); }
 }catch(e){}
 function applyTheme(){
-  THEMES.forEach(t => document.body.classList.toggle("theme-" + t.id, t.id === theme));
+  THEMES.forEach(t => {
+    document.body.classList.toggle("theme-" + t.id, t.id === theme);
+    document.documentElement.classList.toggle("theme-" + t.id, t.id === theme);
+  });
   const t = THEMES.find(t => t.id === theme) || THEMES[0];
   const el = $("#themeV"); if(el) el.textContent = t.name;
   const st = $("#stTheme"); if(st) st.textContent = t.name;
@@ -808,6 +847,7 @@ function applyTheme(){
   }catch(e){}
 }
 applyTheme();
+if(!(_disp.hide_nav_on_sheets ?? true)) document.body.classList.add("nav-always");
 
 const GLASS_TIERS = [
   {name:"Full",       cls:""},
@@ -821,6 +861,7 @@ const BASE = (/^https?:\/\//.test(HA_URL) ? HA_URL : "http://"+HA_URL).replace(/
 let target = 0;
 const st = {lamp:0, bl:BL_DEF, vol:45, playing:false, title:"", artist:"", art:"",
             effect:"none", effects:[], fxEntity:"", temp:null, hum:null, playlist:"",
+            setpoint:null, climateOn:false, spStep:0.5, spMin:7, spMax:35,
             pos:0, dur:0, posAt:Date.now(), reportedPos:-1, shuffle:false, repeat:"off", canSeek:false};
 
 function setDot(sel, cls, txt){
@@ -961,6 +1002,17 @@ function applyState(s){
     };
     if(openLightIdx === li) paintLightSheet();
   } else if(id===TEMP_ENT){ st.temp = parseFloat(s.state);
+  } else if(id===CLIMATE){
+    const a = s.attributes || {};
+    st.setpoint  = a.temperature ?? null;
+    st.climateOn = s.state !== "off" && s.state !== "unavailable";
+    st.spStep    = a.target_temp_step || 0.5;
+    st.spMin     = a.min_temp ?? 7;
+    st.spMax     = a.max_temp ?? 35;
+    /* current_temperature is the room, not the target. It belongs on the
+       climate page; the home tile is what the room is set to. */
+    if(a.current_temperature != null && !TEMP_ENT) st.temp = a.current_temperature;
+    paintSetpoint();
   } else if(id===HUM_ENT){  st.hum  = parseFloat(s.state);
   } else if(SPEAKERS[target] && id===SPEAKERS[target][0]){
     st.playing = s.state==="playing";
@@ -1688,6 +1740,31 @@ function judgePreset(which){
   });
   return {ok: seen > 0 && !off.length, off, seen};
 }
+function paintSetpoint(){
+  const t = $("#spTemp"); if(!t) return;
+  const tile = t.closest(".setpoint");
+  const has = st.setpoint != null;
+  t.textContent = has ? (Math.round(st.setpoint * 2) / 2).toFixed(1) : "–";
+  if(tile) tile.classList.toggle("off", !has || !st.climateOn);
+}
+
+/* Nudged rather than set: the panel does not hold a target of its own, it asks
+   for one relative to what the thermostat last reported. Two people adjusting
+   from two panels then add up instead of fighting. */
+function nudgeSetpoint(dir){
+  if(!CLIMATE || st.setpoint == null) return;
+  const next = Math.min(st.spMax, Math.max(st.spMin, st.setpoint + dir * st.spStep));
+  st.setpoint = next;              // shown immediately; HA confirms or corrects
+  paintSetpoint();
+  if(live) call("climate","set_temperature",{entity_id:CLIMATE, temperature:next});
+  bump();
+}
+{
+  const up = $("#spUp"), dn = $("#spDown");
+  if(up) up.addEventListener("click", ()=>nudgeSetpoint(+1));
+  if(dn) dn.addEventListener("click", ()=>nudgeSetpoint(-1));
+}
+
 function paintPresets(){
   const notes = [];
   document.querySelectorAll(".preset").forEach(p => {
@@ -1722,13 +1799,9 @@ function paintAll(){
   mvS.paint(st.vol);
   if(st.temp!=null && !isNaN(st.temp)){
     $("#navTemp").innerHTML = Math.round(st.temp)+"<sup>°</sup>";
-    const rt=$("#rTemp"); if(rt) rt.textContent = st.temp.toFixed(1)+"°";
     $("#cTemp").innerHTML   = st.temp.toFixed(1)+"<sup>°C</sup>";
   }
-  if(st.hum!=null && !isNaN(st.hum)){
-    $("#cHum").innerHTML = Math.round(st.hum)+"<sup>%</sup>";
-    const rh=$("#rHum"); if(rh) rh.textContent = Math.round(st.hum)+"%";
-  }
+  if(st.hum!=null && !isNaN(st.hum)) $("#cHum").innerHTML = Math.round(st.hum)+"<sup>%</sup>";
   const show = st.playing || st.title;
   /* strip stays put whether or not anything is playing — it just goes quiet */
   $("#roomMedia").classList.toggle("idle", !show);
