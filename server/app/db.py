@@ -83,6 +83,10 @@ DEFAULT_TEMPLATE = {
         # theme puts an active marker on the navbar, which is invisible if the
         # bar is covered the moment you navigate.
         "hide_nav_on_sheets": True,
+        # The thumbnail on the now-playing strip. The full player's artwork is
+        # the page itself and is never hidden; this is only about whether a
+        # 72px thumbnail earns its width on a bar that is mostly a title.
+        "mini_art": True,
         # dtoverlay line for the panel's DSI display, written to config.txt at
         # provisioning. Stock Raspberry Pi OS auto-detects only the official
         # Touch Display, so a third-party panel with the wrong line here gets

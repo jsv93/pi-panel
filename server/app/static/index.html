@@ -15,14 +15,14 @@
    nothing about the layout changes, which is the point: this is a
    configuration tool and it should stay legible before it is pretty. */
 body.ambient{
-  --bg:#14100D; --card:#1F1813; --line:#2C231B; --line2:#241C16; --sunk:#191410;
-  --ink:#F7F0E8; --dim:#D8CABB; --quiet:#9E8F82; --faint:#6E6055;
-  --ok:#F2A65A; --bad:#C4705A; --warn:#D8A657; --violet:#C9A88A;
+  --bg:#1B1411; --card:#271D17; --line:#3A2C22; --line2:#2F231B; --sunk:#211913;
+  --ink:#F9F0E7; --dim:#E0CCBA; --quiet:#AD9585; --faint:#7C6555;
+  --ok:#EE8B42; --bad:#C4705A; --warn:#D8A657; --violet:#C9A88A;
   font-family:Outfit,system-ui,-apple-system,sans-serif;
 }
-body.ambient input,body.ambient select{border-color:#2C231B}
-body.ambient .btn{border-color:#2C231B}
-body.ambient .btn.primary{color:#14100D}
+body.ambient input,body.ambient select{border-color:#3A2C22}
+body.ambient .btn{border-color:#3A2C22}
+body.ambient .btn.primary{color:#1B1411}
 @font-face{font-family:"Outfit";src:url("fonts/outfit-300.woff2") format("woff2");font-weight:300;font-display:swap}
 @font-face{font-family:"Outfit";src:url("fonts/outfit-400.woff2") format("woff2");font-weight:400;font-display:swap}
 @font-face{font-family:"Outfit";src:url("fonts/outfit-500.woff2") format("woff2");font-weight:500;font-display:swap}
@@ -362,6 +362,9 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
             <div><div class="lbl">NAVBAR ON SUB-PAGES</div><select id="fHideNav">
               <option value="1">Hidden — sub-pages cover it</option>
               <option value="0">Always visible</option></select></div>
+            <div><div class="lbl">ALBUM ART ON THE NOW-PLAYING BAR</div><select id="fMiniArt">
+              <option value="1">Show</option>
+              <option value="0">Hide — title only</option></select></div>
             <div><div class="lbl">DIAGNOSTICS ON THE PANEL</div><select id="fDiag">
               <option value="0">Off</option><option value="1">Connection status and fps</option>
             </select></div>
@@ -599,6 +602,7 @@ function fillConfigForm(){
   renderScreens(d.dsi_overlay ?? "");
   $("#fDiag").value = d.diagnostics ? "1" : "0";
   $("#fHideNav").value = (d.hide_nav_on_sheets ?? true) ? "1" : "0";
+  $("#fMiniArt").value = (d.mini_art ?? true) ? "1" : "0";
   $("#fScreenW").value = d.screen_width ?? 0;
   $("#fScreenH").value = d.screen_height ?? 0;
 }
@@ -778,6 +782,7 @@ function collect(){
                  dsi_overlay:$("#fDsiOverlay").value.trim(),
                  diagnostics:$("#fDiag").value === "1",
                  hide_nav_on_sheets:$("#fHideNav").value === "1",
+                 mini_art:$("#fMiniArt").value === "1",
                  screen_width:+$("#fScreenW").value || 0,
                  screen_height:+$("#fScreenH").value || 0};
   return CFG;

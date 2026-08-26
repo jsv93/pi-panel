@@ -121,6 +121,12 @@ body.sheet-open #scrim{opacity:.55}
   will-change:transform,opacity;
   transition:transform var(--dur) var(--sheet-ease),opacity .16s var(--ease)}
 .sheet.on{transform:translateY(0);opacity:1;pointer-events:auto}
+/* The only sheet that outgrows the screen, and it gained rows every release
+   until the last few were behind the navbar and untouchable. Promoted for the
+   same reason every other scroller here is. */
+#s-settings{overflow-y:auto;scrollbar-width:none;overscroll-behavior:contain;
+  will-change:transform;padding-bottom:40px}
+#s-settings::-webkit-scrollbar{display:none}
 .grip{width:56px;height:5px;border-radius:3px;background:rgba(150,155,180,.25);margin:14px auto 0}
 .sheet h1{font-size:34px;font-weight:300;letter-spacing:.5px;text-align:center;padding:16px 0 4px}
 /* Sized for a finger, not a cursor. At 78x70 it was fiddly on a 5" panel and
@@ -354,13 +360,13 @@ body.sheet-open #scrim{opacity:.55}
 @font-face{font-family:"Outfit";src:url("outfit-400.woff2") format("woff2");font-weight:400;font-display:swap}
 @font-face{font-family:"Outfit";src:url("outfit-500.woff2") format("woff2");font-weight:500;font-display:swap}
 body.theme-ambient{
-  --ink:#F7F0E8; --ink-dim:#D8CABB; --ink-quiet:#9E8F82; --ink-ghost:#6E6055;
-  --accent:#F2A65A; --accent-deep:#C97D3A; --accent-line:transparent;
-  --warm:#F2A65A; --bad:#C4705A;
-  --bg-top:#14100D; --bg-bot:#14100D;
-  --tile:#1F1813; --tile-line:transparent;
+  --ink:#F9F0E7; --ink-dim:#E0CCBA; --ink-quiet:#AD9585; --ink-ghost:#7C6555;
+  --accent:#EE8B42; --accent-deep:#BF6529; --accent-line:transparent;
+  --warm:#EE8B42; --bad:#C4705A;
+  --bg-top:#1B1411; --bg-bot:#1B1411;
+  --tile:#271D17; --tile-line:transparent;
   --r:32px; --nav:144px; --strip:160px;
-  background:#14100D;
+  background:#1B1411;
   font-family:"Outfit","Helvetica Neue",system-ui,sans-serif;
 }
 /* Flat ground and no coloured wash: the warmth comes from the surfaces, and a
@@ -369,7 +375,7 @@ body.theme-ambient::before{background:none}
 /* html paints the ground behind the scaled stage, and it is not a descendant
    of body -- so the tokens set on body never reach it and it stayed the
    default near-black. That is the ring of cold grey around a warm panel. */
-html.theme-ambient{background:#14100D}
+html.theme-ambient{background:#1B1411}
 body.theme-ambient .tile{border:0;backdrop-filter:none;-webkit-backdrop-filter:none}
 
 /* Room and day above the clock, which is the order the theme was drawn in.
@@ -379,27 +385,27 @@ body.theme-ambient .clock{order:2;font-size:158px;letter-spacing:-3px;padding-to
 body.theme-ambient .sub{order:1;font-size:22px;letter-spacing:1px;padding-top:0}
 
 body.theme-ambient .presets{gap:18px;margin-top:54px}
-body.theme-ambient .preset{height:188px;border-radius:34px;background:#1F1813;gap:16px}
+body.theme-ambient .preset{height:188px;border-radius:34px;background:#271D17;gap:16px}
 body.theme-ambient .preset svg{width:34px;height:34px;stroke:var(--ink-quiet);stroke-width:1.4}
 body.theme-ambient .preset span{font-size:26px;color:var(--ink-quiet)}
-body.theme-ambient .preset.active{background:linear-gradient(160deg,#33241A,#241A13)}
+body.theme-ambient .preset.active{background:linear-gradient(160deg,#4A3020,#301F16)}
 body.theme-ambient .preset.active svg{stroke:var(--accent)}
 body.theme-ambient .preset.active span{color:var(--accent)}
 
 /* Inset and rounded rather than a full-width band welded to the navbar. */
 body.theme-ambient .strip{left:40px;right:40px;bottom:calc(var(--nav) + 28px);height:132px;
-  border-radius:34px;background:#1F1813;border:0}
+  border-radius:34px;background:#271D17;border:0}
 body.theme-ambient .strip-row{padding:0 26px;gap:20px}
 body.theme-ambient .art{width:84px;height:84px;border-radius:24px;
-  background:linear-gradient(140deg,#4A3527,#2A1E16)}
-body.theme-ambient .strip .prog{background:rgba(247,240,232,.07)}
+  background:linear-gradient(140deg,#5A3B26,#33211A)}
+body.theme-ambient .strip .prog{background:rgba(249,240,231,.08)}
 
 /* The setpoint, not the reading: what the room is set to is the thing anyone
    walks up to a panel to change. What it actually is belongs on the climate
    page, where you go to find out rather than to act. */
 .readings{display:none}
 body.theme-ambient .readings{display:block;margin-top:18px}
-body.theme-ambient .setpoint{height:120px;border-radius:30px;background:#1F1813;
+body.theme-ambient .setpoint{height:120px;border-radius:30px;background:#271D17;
   display:flex;align-items:center;justify-content:space-between;padding:0 14px}
 body.theme-ambient .sp-btn{width:92px;height:92px;border-radius:26px;display:grid;place-items:center;flex:none}
 body.theme-ambient .sp-btn svg{width:32px;height:32px;stroke:var(--ink-quiet);fill:none;
@@ -413,33 +419,39 @@ body.theme-ambient .setpoint.off .sp-val{color:var(--ink-ghost)}
    3px hairline nobody reads; whether something is playing is the thing you
    actually want to know from across the room. transform only, so it costs the
    compositor and not the main thread. */
+/* Only the strip's thumbnail. The full player's artwork is the page, so it is
+   never hidden -- this is about whether a 72px thumbnail earns its width on a
+   bar that is mostly a title. */
+body.no-mini-art .strip .art{display:none}
 .eq{display:none;align-items:flex-end;gap:4px;height:30px;flex:none}
 .eq i{display:block;width:5px;height:30px;border-radius:3px;background:var(--accent);
   transform-origin:bottom center;transform:scaleY(.28)}
-.strip:not(.idle) .eq{display:flex}
-.strip:not(.idle) .eq i{animation:eqbar .9s ease-in-out infinite alternate}
-.strip:not(.idle) .eq i:nth-child(2){animation-duration:.62s}
-.strip:not(.idle) .eq i:nth-child(3){animation-duration:1.05s}
-.strip:not(.idle) .eq i:nth-child(4){animation-duration:.78s}
+/* .playing, not :not(.idle) -- idle means "nothing loaded", so a paused track
+   kept the bars dancing with the music stopped. */
+.strip.playing .eq{display:flex}
+.strip.playing .eq i{animation:eqbar .9s ease-in-out infinite alternate}
+.strip.playing .eq i:nth-child(2){animation-duration:.62s}
+.strip.playing .eq i:nth-child(3){animation-duration:1.05s}
+.strip.playing .eq i:nth-child(4){animation-duration:.78s}
 @keyframes eqbar{from{transform:scaleY(.22)}to{transform:scaleY(1)}}
-@media (prefers-reduced-motion:reduce){.strip:not(.idle) .eq i{animation:none;transform:scaleY(.6)}}
+@media (prefers-reduced-motion:reduce){.strip.playing .eq i{animation:none;transform:scaleY(.6)}}
 body.theme-ambient .strip .prog{display:none}
 
 /* Each light becomes a card with its own slider inside, which is the single
    biggest difference from the default and the one that reads at a glance. */
 .lamp{display:contents}
-body.theme-ambient .lamp{display:block;background:#241C16;border-radius:32px;
+body.theme-ambient .lamp{display:block;background:#2F231B;border-radius:32px;
   padding:30px 32px 34px;margin-bottom:16px}
 body.theme-ambient .lamp .slabel{margin:0}
 body.theme-ambient .lamp .slabel .n{font-size:28px;color:var(--ink)}
 body.theme-ambient .lamp .slabel .v{font-size:24px;color:var(--accent)}
 body.theme-ambient .lamp .slider{height:14px;border-radius:8px;margin-top:22px;
-  background:rgba(247,240,232,.07)}
+  background:rgba(249,240,231,.08)}
 
 body.theme-ambient .slider{height:64px;border-radius:32px;border:0;
-  background:rgba(247,240,232,.07)}
+  background:rgba(249,240,231,.08)}
 body.theme-ambient .slider.thin{height:28px;border-radius:14px}
-body.theme-ambient .fill{background:linear-gradient(180deg,#F2A65A,#C97D3A);border-radius:8px}
+body.theme-ambient .fill{background:linear-gradient(180deg,#EE8B42,#BF6529);border-radius:8px}
 
 /* Pill behind the active icon instead of a tinted label, and no rule along the
    top -- the whole point of the theme is that nothing is separated by a line. */
@@ -447,28 +459,34 @@ body.theme-ambient .fill{background:linear-gradient(180deg,#F2A65A,#C97D3A);bord
    a sub-page is open. Off by default: the sheets were drawn full-height. */
 body.nav-always .nav{z-index:46}
 body.nav-always .sheet{bottom:var(--nav)}
+/* The player is full-bleed by design -- artwork, transport and volume are laid
+   out against the whole screen -- so it goes over the navbar regardless. */
+body.nav-always #s-media{bottom:0;z-index:47}
+/* The scrim covered the whole stage, so with the navbar visible the strip
+   below the sheet was dimmed to near-black: the dark band under the bar. */
+body.nav-always #scrim{bottom:var(--nav)}
 body.theme-ambient .nav{background:transparent;border-top:0;
   backdrop-filter:none;-webkit-backdrop-filter:none;padding:0 30px 18px}
 body.theme-ambient .nav button{gap:9px;color:var(--ink-ghost)}
 body.theme-ambient .nav svg{width:26px;height:26px;stroke-width:1.5}
 body.theme-ambient .nav b{font-size:19px}
 body.theme-ambient .nav button.on{color:var(--accent)}
-body.theme-ambient .nav button.on svg{background:rgba(242,166,90,.16);border-radius:26px;
+body.theme-ambient .nav button.on svg{background:rgba(238,139,66,.18);border-radius:26px;
   width:74px;height:52px;padding:13px 24px;box-sizing:border-box}
 
-body.theme-ambient .sheet{background:#191410;border-top:0;border-radius:36px 36px 0 0;
+body.theme-ambient .sheet{background:#211913;border-top:0;border-radius:36px 36px 0 0;
   backdrop-filter:none;-webkit-backdrop-filter:none}
-body.theme-ambient #s-browse{background:#191410}
-body.theme-ambient .ov-card{background:#1B1610;border-top:0;border-radius:36px 36px 0 0}
+body.theme-ambient #s-browse{background:#211913}
+body.theme-ambient .ov-card{background:#241B15;border-top:0;border-radius:36px 36px 0 0}
 body.theme-ambient .rows,
 body.theme-ambient .act,
-body.theme-ambient .bitem{background:#241C16!important;border:0!important;border-radius:28px}
+body.theme-ambient .bitem{background:#2F231B!important;border:0!important;border-radius:28px}
 body.theme-ambient .row{border-bottom-color:rgba(247,240,232,.06)}
 body.theme-ambient .slabel .n{color:var(--ink-dim)}
 body.theme-ambient .chk{border-color:rgba(247,240,232,.22)}
 body.theme-ambient .chk.on{background:var(--accent);border-color:var(--accent)}
-body.theme-ambient .chk svg{stroke:#14100D}
-body.theme-ambient #identify{background:var(--accent);color:#14100D}
+body.theme-ambient .chk svg{stroke:#1B1411}
+body.theme-ambient #identify{background:var(--accent);color:#1B1411}
 
 /* ---------- glass tiers (toggled live from Settings) ---------- */
 body.ng-sheets .sheet{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
@@ -848,6 +866,7 @@ function applyTheme(){
 }
 applyTheme();
 if(!(_disp.hide_nav_on_sheets ?? true)) document.body.classList.add("nav-always");
+if(!(_disp.mini_art ?? true)) document.body.classList.add("no-mini-art");
 
 const GLASS_TIERS = [
   {name:"Full",       cls:""},
@@ -1805,6 +1824,7 @@ function paintAll(){
   const show = st.playing || st.title;
   /* strip stays put whether or not anything is playing — it just goes quiet */
   $("#roomMedia").classList.toggle("idle", !show);
+  $("#roomMedia").classList.toggle("playing", !!st.playing);
   $("#idleMedia").classList.toggle("hide",!show);
   $("#rmTitle").textContent = st.title || "Nothing playing";
   $("#rmArtist").textContent = st.artist;

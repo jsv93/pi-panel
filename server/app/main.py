@@ -583,6 +583,7 @@ DISPLAY_KEYS = {
     "glass_tier": int,
     "diagnostics": bool,
     "hide_nav_on_sheets": bool,
+    "mini_art": bool,
 }
 
 
