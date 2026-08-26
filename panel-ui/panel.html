@@ -360,7 +360,7 @@ body.theme-ambient{
   --accent:#F2A65A; --accent-deep:#C97D3A; --accent-line:transparent;
   --warm:#F2A65A; --bad:#C4705A;
   --tile:#1F1813; --tile-line:transparent;
-  --r:32px;
+  --r:32px; --nav:144px; --strip:160px;
   background:#14100D;
   font-family:"Outfit","Helvetica Neue",system-ui,sans-serif;
 }
@@ -369,8 +369,11 @@ body.theme-ambient{
 body.theme-ambient::before{background:none}
 body.theme-ambient .tile{border:0;backdrop-filter:none;-webkit-backdrop-filter:none}
 
-body.theme-ambient .clock{font-size:158px;letter-spacing:-3px;padding-top:96px}
-body.theme-ambient .sub{font-size:22px;letter-spacing:1px;padding-top:18px}
+/* Room and day above the clock, which is the order the theme was drawn in.
+   Reordered rather than moved in the markup, so the default is untouched. */
+body.theme-ambient .head{display:flex;flex-direction:column;padding-top:76px}
+body.theme-ambient .clock{order:2;font-size:158px;letter-spacing:-3px;padding-top:18px}
+body.theme-ambient .sub{order:1;font-size:22px;letter-spacing:1px;padding-top:0}
 
 body.theme-ambient .presets{gap:18px;margin-top:54px}
 body.theme-ambient .preset{height:188px;border-radius:34px;background:#1F1813;gap:16px}
@@ -381,22 +384,40 @@ body.theme-ambient .preset.active svg{stroke:var(--accent)}
 body.theme-ambient .preset.active span{color:var(--accent)}
 
 /* Inset and rounded rather than a full-width band welded to the navbar. */
-body.theme-ambient .strip{left:40px;right:40px;bottom:172px;height:132px;
+body.theme-ambient .strip{left:40px;right:40px;bottom:calc(var(--nav) + 28px);height:132px;
   border-radius:34px;background:#1F1813;border:0}
 body.theme-ambient .strip-row{padding:0 26px;gap:20px}
 body.theme-ambient .art{width:84px;height:84px;border-radius:24px;
   background:linear-gradient(140deg,#4A3527,#2A1E16)}
 body.theme-ambient .strip .prog{background:rgba(247,240,232,.07)}
 
+/* Readings, hidden everywhere else. */
+.readings{display:none}
+body.theme-ambient .readings{display:flex;gap:18px;margin-top:18px}
+body.theme-ambient .readings .tile{flex:1;height:120px;border-radius:30px;background:#1F1813;
+  display:grid;place-items:center;font-size:40px;font-weight:200;font-variant-numeric:tabular-nums}
+body.theme-ambient .readings .tile:last-child{color:var(--ink-quiet)}
+
+/* Each light becomes a card with its own slider inside, which is the single
+   biggest difference from the default and the one that reads at a glance. */
+.lamp{display:contents}
+body.theme-ambient .lamp{display:block;background:#241C16;border-radius:32px;
+  padding:30px 32px 34px;margin-bottom:16px}
+body.theme-ambient .lamp .slabel{margin:0}
+body.theme-ambient .lamp .slabel .n{font-size:28px;color:var(--ink)}
+body.theme-ambient .lamp .slabel .v{font-size:24px;color:var(--accent)}
+body.theme-ambient .lamp .slider{height:14px;border-radius:8px;margin-top:22px;
+  background:rgba(247,240,232,.07)}
+
 body.theme-ambient .slider{height:64px;border-radius:32px;border:0;
   background:rgba(247,240,232,.07)}
 body.theme-ambient .slider.thin{height:28px;border-radius:14px}
-body.theme-ambient .fill{background:linear-gradient(90deg,#C97D3A,#F2A65A)}
+body.theme-ambient .fill{background:linear-gradient(90deg,#C97D3A,#F2A65A);border-radius:8px}
 
 /* Pill behind the active icon instead of a tinted label, and no rule along the
    top -- the whole point of the theme is that nothing is separated by a line. */
 body.theme-ambient .nav{background:transparent;border-top:0;
-  backdrop-filter:none;-webkit-backdrop-filter:none;height:144px;padding:0 30px 18px}
+  backdrop-filter:none;-webkit-backdrop-filter:none;padding:0 30px 18px}
 body.theme-ambient .nav button{gap:9px;color:var(--ink-ghost)}
 body.theme-ambient .nav svg{width:26px;height:26px;stroke-width:1.5}
 body.theme-ambient .nav b{font-size:19px}
@@ -448,8 +469,13 @@ body:not(.diag) .diagonly{display:none}
 
 <div id="scrim"></div>
 <div id="room">
-  <div class="clock" id="clock">--:--</div>
-  <div class="sub" id="datestr">Desk</div>
+  <!-- Wrapped so a theme can reorder these two without moving them in the
+       source. Ambient puts the room and day above the clock; the default keeps
+       them below. Both read the same element, so nothing forks. -->
+  <div class="head">
+    <div class="clock" id="clock">--:--</div>
+    <div class="sub" id="datestr">Desk</div>
+  </div>
   <div class="presets">
     <div class="preset tile press" data-preset="soft">
       <svg viewBox="0 0 24 24"><path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.4-6.4l-.7.7M6.3 17.7l-.7.7m12.8 0l-.7-.7M6.3 6.3l-.7-.7"/><circle cx="12" cy="12" r="4"/></svg>
@@ -457,6 +483,14 @@ body:not(.diag) .diagonly{display:none}
     <div class="preset tile press" data-preset="bright">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 1v3m0 16v3M4.2 4.2l2.1 2.1m11.4 11.4l2.1 2.1M1 12h3m16 0h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
       <span>Bright</span></div>
+  </div>
+  <!-- Ambient shows the room's readings on the home screen as a pair of
+       surfaces; the default theme keeps them in the navbar and hides this.
+       Same two values either way -- no new plumbing, only somewhere else to
+       put what the panel already knows. -->
+  <div class="readings">
+    <div class="tile"><span id="rTemp">–</span></div>
+    <div class="tile"><span id="rHum">–</span></div>
   </div>
   <div class="pdiag" id="pDiag"></div>
 </div>
@@ -1073,7 +1107,13 @@ const lampSliders = [];
     const sl = document.createElement("div");
     sl.className = "slider"; sl.id = "ls"+i;
     sl.innerHTML = '<div class="fill"></div>';
-    host.appendChild(lab); host.appendChild(sl);
+    /* Each light in its own wrapper so a theme can make it a card. The default
+       theme leaves .lamp with no box of its own, so the label and slider sit
+       exactly where they always did. */
+    const lamp = document.createElement("div");
+    lamp.className = "lamp";
+    lamp.appendChild(lab); lamp.appendChild(sl);
+    host.appendChild(lamp);
   });
   host.querySelectorAll("[data-light]").forEach(n=>
     n.addEventListener("click", ()=>openLight(+n.dataset.light)));
@@ -1682,9 +1722,13 @@ function paintAll(){
   mvS.paint(st.vol);
   if(st.temp!=null && !isNaN(st.temp)){
     $("#navTemp").innerHTML = Math.round(st.temp)+"<sup>°</sup>";
+    const rt=$("#rTemp"); if(rt) rt.textContent = st.temp.toFixed(1)+"°";
     $("#cTemp").innerHTML   = st.temp.toFixed(1)+"<sup>°C</sup>";
   }
-  if(st.hum!=null && !isNaN(st.hum)) $("#cHum").innerHTML = Math.round(st.hum)+"<sup>%</sup>";
+  if(st.hum!=null && !isNaN(st.hum)){
+    $("#cHum").innerHTML = Math.round(st.hum)+"<sup>%</sup>";
+    const rh=$("#rHum"); if(rh) rh.textContent = Math.round(st.hum)+"%";
+  }
   const show = st.playing || st.title;
   /* strip stays put whether or not anything is playing — it just goes quiet */
   $("#roomMedia").classList.toggle("idle", !show);
