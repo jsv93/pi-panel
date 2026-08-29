@@ -315,13 +315,22 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
 .pw{height:64px;border-radius:14px;background:rgba(22,22,30,.75);border:1px solid var(--tile-line);
   display:flex;align-items:center;padding:0 20px;font-size:26px;letter-spacing:3px;
   overflow:hidden;white-space:nowrap;direction:rtl;text-align:left}
-.keys{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+/* Explicit rows. This was one wrapping flex container with a 68px minimum on
+   every key, so at 656px of usable width only eight fitted per line and the
+   number row broke after "8" -- every row landed somewhere other than where a
+   keyboard has it. Rows now wrap where a keyboard wraps, and keys divide the
+   width they are given instead of forcing it. */
+.keys{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+.krow{display:flex;gap:8px}
 /* 76 layout px, which is ~51 physical on the smallest panel here. At 62 it was
    ~41 and fiddly — below roughly 45 a key stops being comfortably hittable. */
-.keys div{flex:1 0 8%;min-width:68px;height:76px;display:grid;place-items:center;
+.krow div{flex:1 1 0;min-width:0;height:76px;display:grid;place-items:center;
   border-radius:12px;background:rgba(28,28,38,.85);font-size:24px}
-.keys div.wide{flex:1 0 22%}
-.keys div:active{background:var(--accent-soft)}
+.krow div.wide{flex:1.5 1 0;font-size:20px}
+.krow div:active{background:var(--accent-soft)}
+/* Half-key indents, so the letters stay the same size on the shorter rows
+   rather than growing to fill them. */
+.kgap{flex:.5 1 0}
 .hide{display:none}
 
 .rows{margin-top:26px;padding:6px 26px}
@@ -1989,14 +1998,24 @@ function closeJoin(){
   $("#wifiList").classList.remove("hide");
   wifiSel = null;
 }
-const KEYS_LOWER = "1234567890qwertyuiopasdfghjklzxcvbnm";
-const KEYS_UPPER = "!@#$%^&*()QWERTYUIOPASDFGHJKLZXCVBNM";
+const ROWS_LOWER = ["1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm"];
+const ROWS_UPPER = ["!@#$%^&*()", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"];
+/* Passphrases contain & and " often enough to matter, and both would otherwise
+   go into the markup raw. */
+const esc = c => c.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 function buildKeys(shift){
-  const set = shift ? KEYS_UPPER : KEYS_LOWER;
-  $("#wifiKeys").innerHTML = set.split("").map(c=>`<div data-k="${c}">${c}</div>`).join("")
-    + `<div class="wide" data-k="__shift">${shift ? "abc" : "ABC"}</div>`
-    + `<div class="wide" data-k="__space">space</div>`
-    + `<div class="wide" data-k="__del">⌫</div>`;
+  const rows = shift ? ROWS_UPPER : ROWS_LOWER;
+  const key = c => `<div data-k="${esc(c)}">${esc(c)}</div>`;
+  const keys = r => [...r].map(key).join("");
+  const gap = `<span class="kgap"></span>`;
+  $("#wifiKeys").innerHTML =
+      `<div class="krow">${keys(rows[0])}</div>`
+    + `<div class="krow">${keys(rows[1])}</div>`
+    + `<div class="krow">${gap}${keys(rows[2])}${gap}</div>`
+    + `<div class="krow"><div class="wide" data-k="__shift">${shift ? "abc" : "ABC"}</div>`
+    +   `${keys(rows[3])}`
+    +   `<div class="wide" data-k="__del">⌫</div></div>`
+    + `<div class="krow"><div data-k="__space">space</div></div>`;
   document.querySelectorAll("#wifiKeys [data-k]").forEach(el=>el.addEventListener("click",()=>{
     const k = el.dataset.k, pw = $("#wifiPw");
     if(k === "__shift") return buildKeys(!shift);

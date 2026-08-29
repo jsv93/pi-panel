@@ -46,6 +46,9 @@
       },
       "backlight": {
         "name": "Backlight"
+      },
+      "disk_writes": {
+        "name": "Card writes per day"
       }
     },
     "button": {

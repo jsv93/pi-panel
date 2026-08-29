@@ -65,6 +65,16 @@ SENSORS: tuple[PanelSensor, ...] = (
         value=lambda p, m: m.get("ui_version"),
     ),
     PanelSensor(
+        key="disk_writes",
+        translation_key="disk_writes",
+        native_unit_of_measurement="MB",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        # Graphed over a week this answers the question a spec sheet cannot:
+        # whether this workload writes enough to wear a card out.
+        value=lambda p, m: m.get("disk_mb_per_day"),
+    ),
+    PanelSensor(
         key="backlight",
         translation_key="backlight",
         entity_category=EntityCategory.DIAGNOSTIC,

@@ -265,10 +265,83 @@ def backlight_state():
     return out
 
 
+# Overridable so it can be pointed at a fixture, like BACKLIGHT_SYS.
+DISKSTATS = Path(os.environ.get("PANEL_DISKSTATS", "/proc/diskstats"))
+PROC_MOUNTS = Path(os.environ.get("PANEL_MOUNTS", "/proc/mounts"))
+_disk_base = None          # (MB written, timestamp) at the first reading
+
+
+def _root_device():
+    """The whole device backing /, not the partition.
+
+    Matched by longest prefix against the names diskstats actually lists rather
+    than by stripping digits: mmcblk0p2 -> mmcblk0, nvme0n1p2 -> nvme0n1 and
+    sda2 -> sda do not follow one rule, and a wrong guess reports nothing.
+    """
+    try:
+        part = ""
+        for line in PROC_MOUNTS.read_text().splitlines():
+            f = line.split()
+            if len(f) > 1 and f[1] == "/" and f[0].startswith("/dev/"):
+                part = f[0].rsplit("/", 1)[-1]
+                break
+        if not part:
+            return None
+        names = [l.split()[2] for l in DISKSTATS.read_text().splitlines() if len(l.split()) > 2]
+        # Shortest match, not longest: a name is a prefix of itself, so longest
+        # returns the partition. Wear is a property of the whole card, and the
+        # partition's counters miss everything written to /boot.
+        cands = [n for n in names if part.startswith(n)]
+        return min(cands, key=len) if cands else None
+    except Exception:
+        return None
+
+
+def _sectors_written(dev):
+    try:
+        for line in DISKSTATS.read_text().splitlines():
+            f = line.split()
+            # 3 is the device name, 10 is sectors written; sectors are 512B
+            if len(f) > 9 and f[2] == dev:
+                return int(f[9])
+    except Exception:
+        pass
+    return None
+
+
+def disk_writes():
+    """How much this panel is writing to its card.
+
+    The question behind it is whether SD wear is a real risk here or a folk
+    belief -- worth answering with a number before anyone pays per panel for
+    eMMC. Reported as a rate as well as a total, because the total is
+    meaningless without knowing how long it took.
+    """
+    global _disk_base
+    dev = _root_device()
+    if not dev:
+        return {}
+    sectors = _sectors_written(dev)
+    if sectors is None:
+        return {}
+    mb = sectors * 512 / 1048576
+    out = {"disk_dev": dev, "disk_written_mb": round(mb)}
+    now = time.time()
+    if _disk_base is None:
+        _disk_base = (mb, now)
+    base_mb, base_t = _disk_base
+    hours = (now - base_t) / 3600
+    # Below a quarter hour the rate is mostly boot traffic and says nothing.
+    if hours >= 0.25:
+        out["disk_mb_per_day"] = round((mb - base_mb) / hours * 24, 1)
+    return out
+
+
 def metrics():
     m = {"ui_version": AGENT_VER}
     m.update(kiosk_gpu())
     m.update(backlight_state())
+    m.update(disk_writes())
     m.update(UI_STATE.get("wifi") or {})
     try:
         t = Path("/sys/class/thermal/thermal_zone0/temp").read_text().strip()

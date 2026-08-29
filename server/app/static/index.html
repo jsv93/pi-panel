@@ -646,6 +646,11 @@ async function openPanel(id){
        answer; "off, pending restart" means the update arrived and chromium has
        not been restarted into it yet, which is otherwise indistinguishable
        from a flag that does not work. */
+    /* The number that settles whether SD wear is a real risk here. Rate first
+       -- a total means nothing without knowing how long it took. */
+    ["Card writes", m.disk_mb_per_day !== undefined
+      ? m.disk_mb_per_day + " MB/day"
+      : (m.disk_written_mb !== undefined ? m.disk_written_mb + " MB so far" : "—")],
     ["GPU raster", m.gpu_raster_running === undefined ? "—"
       : m.gpu_raster_running ? "on"
       : m.gpu_raster_on_disk ? "off, pending restart" : "off"],
