@@ -387,7 +387,7 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
   align-items:center;justify-content:center;z-index:60}
 #idle.on{display:flex;animation:fade .5s var(--ease)}
 @keyframes fade{from{opacity:0}to{opacity:1}}
-#idle .clock{color:#4A4A52;padding:0}
+#idle .clock{color:#4A4A52;padding:0;transition:transform 2.4s var(--ease)}
 
 
 #idle .hint{position:absolute;bottom:90px;font-size:19px;color:#24242C}
@@ -2313,6 +2313,24 @@ function gestureLights(){
 })();
 
 /* ---------- idle ---------- */
+/* Standby is the longest-lived image this panel shows, and on an LCD a static
+   image held for hours leaves a retention shadow. Moving it costs nothing and
+   nobody is watching it move. Transform only, so it is a compositor job. */
+let driftT = null;
+function idleDrift(on){
+  clearInterval(driftT); driftT = null;
+  const c = $("#idleClock");
+  if(!c) return;
+  if(!on){ c.style.transform = ""; return; }
+  const step = () => {
+    const x = Math.round((Math.random() * 2 - 1) * 90);
+    const y = Math.round((Math.random() * 2 - 1) * 170);
+    c.style.transform = "translate(" + x + "px," + y + "px)";
+  };
+  step();
+  driftT = setInterval(step, 45000);
+}
+
 function goHome(){
   closeSheet(true);
   ovClose(true);
@@ -2324,9 +2342,22 @@ function goHome(){
 let idleT, offT;
 function bump(){
   clearTimeout(idleT); clearTimeout(offT);
-  if($("#idle").classList.contains("on")){ $("#idle").classList.remove("on"); setBacklight(st.bl); }
+  if($("#idle").classList.contains("on")){
+    $("#idle").classList.remove("on");
+    idleDrift(false);
+    /* Not immediately. The backlight is separate hardware and the panel is
+       still showing the last frame it drew -- the standby clock -- so lighting
+       it before the home screen is composited is what makes that clock flash
+       on wake. Two frames, with a timeout in case nothing is compositing, so
+       it can never get stuck dark. */
+    let lit = false;
+    const light = () => { if(lit) return; lit = true; setBacklight(st.bl); };
+    requestAnimationFrame(() => requestAnimationFrame(light));
+    setTimeout(light, 150);
+  }
   idleT = setTimeout(()=>{
     $("#idle").classList.add("on");
+    idleDrift(true);
     setBacklight(Math.max(10,st.bl*0.25));
     /* Dimmed is not off: this panel still throws real light at its lowest
        setting, which is no good on a bedroom wall. 0 blanks the backlight

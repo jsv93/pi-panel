@@ -430,7 +430,12 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
             <div class="f2">
               <div><div class="lbl">DIM AFTER (SECONDS IDLE)</div><input type="number" id="fIdle"></div>
               <div><div class="lbl">BLANK AFTER (SECONDS IDLE, 0 = NEVER)</div>
-                <input type="number" id="fBlOff"></div>
+                <input type="number" id="fBlOff">
+                <div class="muted" style="font-size:12px;margin-top:5px">Leave this at 0
+                  and the panel shows a dimmed clock indefinitely. These are LCDs, and a
+                  static image held for weeks leaves a retention shadow — one of these
+                  panels has it already. The standby clock drifts to spread the load, but
+                  a few minutes here is the actual fix.</div></div>
               <div><div class="lbl">BACKLIGHT DEFAULT %</div><input type="number" id="fBlDef"></div>
               <div><div class="lbl">BACKLIGHT MINIMUM %</div><input type="number" id="fBlMin"></div>
             </div>
