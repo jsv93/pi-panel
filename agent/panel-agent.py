@@ -342,6 +342,9 @@ def metrics():
     m.update(kiosk_gpu())
     m.update(backlight_state())
     m.update(disk_writes())
+    m["presence"] = PRESENCE_STATE
+    if PRESENCE_SEEN[0]:
+        m["presence"] += f", last seen {round(time.monotonic() - PRESENCE_SEEN[0])}s ago"
     m.update(UI_STATE.get("wifi") or {})
     try:
         t = Path("/sys/class/thermal/thermal_zone0/temp").read_text().strip()
@@ -816,6 +819,100 @@ async def ws_loop(session):
         await asyncio.sleep(10)
 
 
+# Defaults per sensor, used when the config does not override them. A PIR
+# self-retriggers and only needs to be heard from occasionally; an mmWave module
+# holds its output high the whole time someone is there, so the poke repeats and
+# the screen stays up while you stand in front of it.
+PRESENCE_DEFAULTS = {"pir": 30000, "mmwave": 10000, "external": 30000}
+PRESENCE_POLL_S = 0.2
+
+# Reported in metrics so the fault is visible on the server rather than only in
+# the journal. A sensor that silently does nothing is indistinguishable from one
+# that is wired wrong, and reaching the panel over SSH to find out is the part
+# that has never been reliable here.
+PRESENCE_STATE = "off"
+PRESENCE_SEEN = [0.0]        # monotonic time the pin was last high
+
+
+def _presence_cfg():
+    """Read straight from the config on disk, so a change pushed from the server
+    is picked up without restarting the agent."""
+    try:
+        d = json.loads(CONFIG_PATH.read_text()).get("display") or {}
+    except Exception:
+        return None
+    pin = d.get("presence_pin") or 0
+    try:
+        pin = int(pin)
+    except (TypeError, ValueError):
+        return None
+    if pin <= 0:
+        return None
+    sensor = d.get("presence_sensor") or "pir"
+    ms = d.get("presence_debounce_ms")
+    try:
+        ms = int(ms)
+    except (TypeError, ValueError):
+        ms = 0
+    return {"pin": pin, "sensor": sensor,
+            "debounce": (ms if ms > 0 else PRESENCE_DEFAULTS.get(sensor, 30000)) / 1000.0}
+
+
+async def presence_loop():
+    """Watch a GPIO pin and wake the screen when it goes high.
+
+    Polled rather than interrupt-driven: gpiozero's callbacks arrive on their
+    own thread and would have to be marshalled back onto this loop, and five
+    reads a second of one pin costs nothing next to getting that wrong.
+
+    Everything here degrades to doing nothing. A panel with no sensor, no
+    gpiozero, or a pin something else has claimed should carry on being a panel.
+    """
+    global PRESENCE_STATE
+    dev = None
+    active = None
+    last = 0.0
+    while True:
+        cfg = _presence_cfg()
+        if not cfg:
+            PRESENCE_STATE = "off"
+        if not cfg or (active and cfg != active):
+            if dev is not None:
+                try:
+                    dev.close()
+                except Exception:
+                    pass
+                dev = None
+            active = None
+        if cfg and dev is None:
+            try:
+                from gpiozero import DigitalInputDevice
+                dev = DigitalInputDevice(cfg["pin"], pull_up=False)
+                active = cfg
+                PRESENCE_STATE = f"BCM {cfg['pin']} ({cfg['sensor']})"
+                print(f"[agent] presence: watching BCM {cfg['pin']} "
+                      f"({cfg['sensor']}, retrigger {round(cfg['debounce'] * 1000)}ms)")
+            except Exception as e:
+                # ModuleNotFoundError on a panel installed before gpiozero was in
+                # the bootstrap; GPIOBusy if something else already holds the pin.
+                PRESENCE_STATE = f"BCM {cfg['pin']} FAILED: {type(e).__name__}"
+                print(f"[agent] presence: cannot watch BCM {cfg['pin']}: {e}")
+                await asyncio.sleep(30)      # do not spin on a pin that will not open
+                continue
+        if dev is not None:
+            try:
+                high = bool(dev.value)
+            except Exception:
+                high = False
+            now = time.monotonic()
+            if high:
+                PRESENCE_SEEN[0] = now
+            if high and now - last >= active["debounce"]:
+                last = now
+                await tell_pages({"type": "wake"})
+        await asyncio.sleep(PRESENCE_POLL_S)
+
+
 async def main():
     print(f"[agent] {PANEL_ID} ({HOSTNAME}) -> {SERVER}")
     await serve_ui()                      # start serving immediately: the panel
@@ -835,7 +932,8 @@ async def main():
             await asyncio.sleep(15)
         await sync(session)
         await check_bundle(session)
-        await asyncio.gather(ws_loop(session), heartbeat_loop(session), poll_loop(session))
+        await asyncio.gather(ws_loop(session), heartbeat_loop(session),
+                             poll_loop(session), presence_loop())
 
 
 if __name__ == "__main__":

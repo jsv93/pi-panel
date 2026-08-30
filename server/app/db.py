@@ -106,6 +106,20 @@ DEFAULT_TEMPLATE = {
         # "tiles" is two columns with the artwork large enough to recognise,
         # which is most of what makes a music library readable.
         "browse_view": "list",
+        # Presence wake. A sensor on a GPIO pin, read by the agent, poking the
+        # page over the socket it already holds -- no Home Assistant, no
+        # network, and it keeps working when the server does not, which is the
+        # same reasoning as the panel caching its config.
+        # 0 disables it. BCM numbering, which is what gpiozero and every
+        # pinout diagram use; the physical pin numbers differ.
+        "presence_pin": 0,
+        # "pir"      -- fires on movement and self-retriggers, so it only needs
+        #               to be heard from occasionally
+        # "mmwave"   -- holds its output high while someone is there, so the
+        #               poke repeats and the screen stays up while you do
+        # "external" -- anything else; you set the interval
+        "presence_sensor": "pir",
+        "presence_debounce_ms": 30000,
         # dtoverlay line for the panel's DSI display, written to config.txt at
         # provisioning. Stock Raspberry Pi OS auto-detects only the official
         # Touch Display, so a third-party panel with the wrong line here gets

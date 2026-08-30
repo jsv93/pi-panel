@@ -117,6 +117,9 @@ Every one of these cost hours to find:
 - I2C "GPIO 7/8 not usable" warnings on the ESP panel: the HX8394 driver claims
   those pins on a legacy I2C port; touch works regardless.
 - `lcd_panel: swap_xy/mirror not supported`: DPI panels can't rotate in hardware.
+- Presence wake reporting `FAILED: ModuleNotFoundError` in diagnostics: the panel
+  predates `python3-gpiozero` being in the bootstrap. The agent reaches panels by
+  bundle update; apt packages do not. Install it on the panel once.
 
 ## Before proposing hardware changes
 

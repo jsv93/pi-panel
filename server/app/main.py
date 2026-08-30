@@ -84,7 +84,7 @@ fi
 
 echo "==> dependencies"
 apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-aiohttp curl
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-aiohttp curl python3-gpiozero python3-lgpio
 
 echo "==> panel files"
 install -d -m 755 /opt/panel/current
@@ -588,6 +588,9 @@ DISPLAY_KEYS = {
     "touch_hold_ms": int,
     "browse_view": str,
     "theme": str,
+    "presence_pin": int,
+    "presence_debounce_ms": int,
+    "presence_sensor": str,
     "remember_last_state": bool,
     # A string, unlike every other display key. Validated in _patch_display
     # rather than coerced, because str() would accept anything at all.
@@ -616,6 +619,11 @@ async def _patch_display(panel_id: str, values: dict) -> dict:
         if k == "theme":
             if v not in ("default", "ambient"):
                 raise HTTPException(400, "theme must be 'default' or 'ambient'")
+            clean[k] = v
+            continue
+        if k == "presence_sensor":
+            if v not in ("pir", "mmwave", "external"):
+                raise HTTPException(400, "presence_sensor must be 'pir', 'mmwave' or 'external'")
             clean[k] = v
             continue
         try:

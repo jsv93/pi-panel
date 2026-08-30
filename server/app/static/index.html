@@ -80,6 +80,9 @@ h2{font-size:14px;font-weight:600}
 .grp > h3{font-size:12px;letter-spacing:.09em;text-transform:uppercase;
   color:var(--ok);margin:0 0 12px;font-weight:600}
 .grp .hint{font-size:12px;color:var(--faint);margin:-6px 0 12px;max-width:62ch}
+.grp .hint code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;
+  background:var(--line2);border-radius:4px;padding:1px 5px;color:var(--dim);
+  white-space:nowrap}
 .grip{cursor:grab;color:var(--faint);font-size:15px;line-height:1;user-select:none;
   padding:0 2px;flex:none}
 .grip:active{cursor:grabbing}
@@ -445,6 +448,32 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
           </div>
 
           <div class="grp">
+            <h3>Presence wake</h3>
+            <p class="hint">A sensor wired to a GPIO pin, read by the panel itself — no
+              Home Assistant and no network, so it still works when the server does not.
+              BCM numbering, which is what pinout diagrams use. 0 turns it off.</p>
+            <div class="f2">
+              <div><div class="lbl">GPIO PIN (BCM, 0 = OFF)</div>
+                <input type="number" id="fPresPin" min="0" max="27"></div>
+              <div><div class="lbl">SENSOR</div><select id="fPresSensor">
+                <option value="pir">PIR — fires on movement</option>
+                <option value="mmwave">mmWave — holds while someone is present</option>
+                <option value="external">External — anything else</option></select></div>
+              <div id="presDebounceWrap"><div class="lbl">RE-TRIGGER INTERVAL (MS)</div>
+                <input type="number" id="fPresDebounce" min="500" step="500">
+                <div class="muted" style="font-size:12px;margin-top:5px">How often a pin
+                  held high may wake the screen again. PIR and mmWave set this for
+                  you — 30s and 10s.</div></div>
+            </div>
+            <p class="hint" style="margin-bottom:0">Diagnostics reports what the pin is
+              doing and when it last saw movement — aim the sensor by watching that.
+              A panel installed before v0.8.1 needs its GPIO library once:
+              <code>sudo apt install -y python3-gpiozero python3-lgpio</code> then
+              <code>sudo systemctl restart panel-agent</code>. It shows as
+              <em>FAILED: ModuleNotFoundError</em> until you do.</p>
+          </div>
+
+          <div class="grp">
             <h3>Touch gesture</h3>
             <p class="hint">Works from any page and from standby. Whether the panel can
               report this many points is down to its touch controller — switch diagnostics
@@ -728,6 +757,10 @@ function fillConfigForm(){
   $("#fHold").value = d.touch_hold_ms ?? 250;
   $("#fRemember").value = (d.remember_last_state ?? true) ? "1" : "0";
   $("#fBrowseView").value = d.browse_view || "list";
+  $("#fPresPin").value = d.presence_pin ?? 0;
+  $("#fPresSensor").value = d.presence_sensor || "pir";
+  $("#fPresDebounce").value = d.presence_debounce_ms ?? 30000;
+  presenceFields();
   $("#fScreenW").value = d.screen_width ?? 0;
   $("#fScreenH").value = d.screen_height ?? 0;
 }
@@ -773,6 +806,11 @@ async function openPanel(id){
     ["GPU raster", m.gpu_raster_running === undefined ? "—"
       : m.gpu_raster_running ? "on"
       : m.gpu_raster_on_disk ? "off, pending restart" : "off"],
+    /* Says both that the pin opened and when it last saw anything, which is what
+       you want while pointing a sensor at a doorway with no shell on the panel.
+       FAILED here almost always means gpiozero is missing, on a panel installed
+       before it was in the bootstrap. */
+    ["Presence", m.presence || "—"],
   ].map(([k,v])=>`<span>${k} <span style="color:var(--dim)">${v}</span></span>`).join("");
   $("#diagBody").innerHTML = `<div class="f2">
     <div><div class="lbl">IP</div>${CUR.panel.ip||"—"}</div>
@@ -961,6 +999,9 @@ function collect(){
                  touch_hold_ms:+$("#fHold").value || 250,
                  remember_last_state:$("#fRemember").value === "1",
                  browse_view:$("#fBrowseView").value,
+                 presence_pin:+$("#fPresPin").value || 0,
+                 presence_sensor:$("#fPresSensor").value,
+                 presence_debounce_ms:+$("#fPresDebounce").value || 30000,
                  screen_width:+$("#fScreenW").value || 0,
                  screen_height:+$("#fScreenH").value || 0};
   return CFG;
@@ -1315,6 +1356,19 @@ function srcNote(src){
        : src==="env"      ? "from environment variable"
        : "not set";
 }
+const PRESENCE_INTERVALS = {pir: 30000, mmwave: 10000};
+function presenceFields(){
+  const sensor = $("#fPresSensor").value;
+  const known = PRESENCE_INTERVALS[sensor];
+  const box = $("#fPresDebounce");
+  box.disabled = !!known;
+  box.style.opacity = known ? ".5" : "";
+  if(known) box.value = known;
+}
+document.addEventListener("change", e => {
+  if(e.target && e.target.id === "fPresSensor") presenceFields();
+});
+
 async function loadBundleLog(){
   const b = await api("/bundle-log");
   const known = {};
