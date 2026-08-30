@@ -585,6 +585,8 @@ DISPLAY_KEYS = {
     "hide_nav_on_sheets": bool,
     "mini_art": bool,
     "touch_points": int,
+    "touch_hold_ms": int,
+    "remember_last_state": bool,
     # A string, unlike every other display key. Validated in _patch_display
     # rather than coerced, because str() would accept anything at all.
     "touch_gesture": str,

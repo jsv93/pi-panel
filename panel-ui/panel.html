@@ -1849,6 +1849,16 @@ function nudgeSetpoint(dir){
   if(dn) dn.addEventListener("click", ()=>nudgeSetpoint(-1));
 }
 
+/* Settled before it is judged. Turning a room on produces one state_changed
+   per light, and evaluating after each one meant the verdict flipped as the
+   room came up -- which the tile renders as a flash per light. The lights are
+   still driven immediately; only the highlight waits for them to stop moving. */
+let presetSettle = null;
+function paintPresetsSoon(){
+  clearTimeout(presetSettle);
+  presetSettle = setTimeout(paintPresets, 220);
+}
+
 function paintPresets(){
   const notes = [];
   document.querySelectorAll(".preset").forEach(p => {
@@ -1878,7 +1888,7 @@ function paintPresets(){
     "\nconfig v" + (CFG._version ?? "?") + " · " + detail.join(" · ");
 }
 function paintAll(){
-  paintPresets();
+  paintPresetsSoon();
   LIGHTS.forEach((l,i)=>{
     if(lampSliders[i]) lampSliders[i].paint(LSTATE[i].level);
     const v=$("#lv"+i); if(v) v.textContent = LSTATE[i].level ? LSTATE[i].level+"%" : "Off";
@@ -2158,6 +2168,8 @@ addEventListener("resize", fitStage);
    this can be answered by looking rather than by assuming. */
 const GESTURE = (_disp.touch_gesture || "off");
 const GESTURE_POINTS = Math.max(2, Math.min(5, _disp.touch_points ?? 3));
+const GESTURE_HOLD = Math.max(100, Math.min(1500, _disp.touch_hold_ms ?? 250));
+const REMEMBER = !!(_disp.remember_last_state ?? true);
 let touchSeenMax = 0;
 
 function gestureToast(msg){
@@ -2168,14 +2180,34 @@ function gestureToast(msg){
   el._t = setTimeout(()=>el.classList.remove("on"), 1400);
 }
 
+/* What the room was at when it was last turned off, entity id -> level.
+   Kept in localStorage so it survives the nightly reload, and only ever
+   consulted -- Home Assistant remains the authority on what the lights are
+   actually doing, and an empty or stale memory just falls back to Bright. */
+let lastOn = {};
+try{ lastOn = JSON.parse(localStorage.getItem("lastOn") || "{}") || {}; }catch(e){}
+
+function rememberLevels(members){
+  if(!REMEMBER) return;
+  const snap = {};
+  members.forEach(({l,i}) => { const v = (LSTATE[i] && LSTATE[i].level) || 0; if(v > 0) snap[l.entity_id] = v; });
+  /* Only worth keeping if something was on. Turning an already-dark room off
+     would otherwise erase the levels you actually want back. */
+  if(!Object.keys(snap).length) return;
+  lastOn = snap;
+  try{ localStorage.setItem("lastOn", JSON.stringify(snap)); }catch(e){}
+}
+
 function gestureLights(){
   /* Same set the presets act on. A light deliberately kept out of Soft and
      Bright should not be swept up by a gesture either. */
   const members = LIGHTS.map((l,i)=>({l,i})).filter(({l}) => l.include_presets !== false);
   if(!members.length) return;
   const anyOn = members.some(({i}) => (LSTATE[i] && LSTATE[i].level) > 0);
+  if(anyOn) rememberLevels(members);
   members.forEach(({l,i}) => {
-    const pct = anyOn ? 0 : (l.bright ?? 100);
+    const remembered = REMEMBER ? lastOn[l.entity_id] : 0;
+    const pct = anyOn ? 0 : (remembered > 0 ? remembered : (l.bright ?? 100));
     LSTATE[i].level = pct;
     if(lampSliders[i]) lampSliders[i].paint(pct);
     const v = $("#lv"+i); if(v) v.textContent = pct ? pct+"%" : "Off";
@@ -2204,7 +2236,7 @@ function gestureLights(){
     // Held briefly, so a stray two-then-three during a drag does not fire it.
     hold = setTimeout(() => {
       if(!tooMany) gestureLights();
-    }, 250);
+    }, GESTURE_HOLD);
   }, {passive:true});
   document.addEventListener("touchend", e => { if(!e.touches.length) cancel(); }, {passive:true});
   document.addEventListener("touchcancel", cancel, {passive:true});

@@ -66,10 +66,20 @@ h2{font-size:14px;font-weight:600}
 
 /* detail */
 .cols{display:grid;grid-template-columns:190px 1fr;gap:16px;margin-top:16px}
-.nav div{font-size:13px;padding:9px 10px;border-radius:7px;color:var(--quiet);cursor:pointer}
-.nav div.on{background:var(--ok-soft);color:var(--ok)}
+.nav div{font-size:13.5px;padding:10px 11px;border-radius:7px;color:var(--dim);
+  cursor:pointer;transition:color .12s,background .12s}
+.nav div:hover{color:var(--ink);background:rgba(255,255,255,.04)}
+.nav div.on{background:var(--ok-soft);color:var(--ok);font-weight:500}
 .sect{display:none} .sect.on{display:block}
 .f2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+/* Named groups inside a section. Display had grown to fourteen controls in two
+   undifferentiated grids, and finding the one you just added meant reading all
+   of them. */
+.grp{margin-top:22px;padding-top:18px;border-top:1px solid var(--line2)}
+.grp:first-of-type{margin-top:4px;padding-top:0;border-top:0}
+.grp > h3{font-size:12px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--ok);margin:0 0 12px;font-weight:600}
+.grp .hint{font-size:12px;color:var(--faint);margin:-6px 0 12px;max-width:62ch}
 table.lights{width:100%;border-collapse:collapse;border:1px solid var(--line2);border-radius:8px;overflow:hidden}
 table.lights th{font-size:11px;color:var(--faint);text-align:left;padding:8px 10px;background:#12121A;font-weight:400;letter-spacing:.4px}
 table.lights td{padding:7px 10px;border-top:1px solid var(--line2)}
@@ -351,53 +361,89 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
 
         <div class="sect" data-s="display">
           <h2 style="margin-bottom:14px">Display</h2>
-          <div class="f2">
-            <div><div class="lbl">THEME</div><select id="fTheme">
-              <option value="default">Default</option>
-              <option value="ambient">Ambient — warm, borderless</option></select></div>
-            <div><div class="lbl">IDLE TIMEOUT (SECONDS)</div><input type="number" id="fIdle"></div>
-            <div><div class="lbl">GLASS TIER</div><select id="fGlass">
-              <option value="0">Full</option><option value="1">No sheet</option>
-              <option value="2">Tiles only</option><option value="3">Off</option></select></div>
+
+          <div class="grp">
+            <h3>Appearance</h3>
+            <div class="f2">
+              <div><div class="lbl">THEME</div><select id="fTheme">
+                <option value="default">Default</option>
+                <option value="ambient">Ambient — warm, borderless</option></select></div>
+              <div><div class="lbl">GLASS TIER</div><select id="fGlass">
+                <option value="0">Full</option><option value="1">No sheet</option>
+                <option value="2">Tiles only</option><option value="3">Off</option></select></div>
+              <div><div class="lbl">NAVBAR ON SUB-PAGES</div><select id="fHideNav">
+                <option value="1">Hidden — sub-pages cover it</option>
+                <option value="0">Always visible</option></select></div>
+              <div><div class="lbl">ALBUM ART ON THE NOW-PLAYING BAR</div><select id="fMiniArt">
+                <option value="1">Show</option>
+                <option value="0">Hide — title only</option></select></div>
+            </div>
           </div>
-          <div class="f2" style="margin-top:14px">
-            <div><div class="lbl">BACKLIGHT DEFAULT %</div><input type="number" id="fBlDef"></div>
-            <div><div class="lbl">BACKLIGHT MINIMUM %</div><input type="number" id="fBlMin"></div>
-            <div><div class="lbl">BACKLIGHT OFF AFTER (SECONDS IDLE, 0 = NEVER)</div>
-              <input type="number" id="fBlOff"></div>
-            <div><div class="lbl">NAVBAR ON SUB-PAGES</div><select id="fHideNav">
-              <option value="1">Hidden — sub-pages cover it</option>
-              <option value="0">Always visible</option></select></div>
-            <div><div class="lbl">ALBUM ART ON THE NOW-PLAYING BAR</div><select id="fMiniArt">
-              <option value="1">Show</option>
-              <option value="0">Hide — title only</option></select></div>
-            <div><div class="lbl">MULTI-TOUCH GESTURE</div><select id="fGesture">
-              <option value="off">Off</option>
-              <option value="lights">Toggle the room's lights</option></select></div>
-            <div><div class="lbl">FINGERS FOR THE GESTURE</div><select id="fPoints">
-              <option value="3">3</option><option value="4">4</option><option value="5">5</option>
-            </select></div>
-            <div><div class="lbl">DIAGNOSTICS ON THE PANEL</div><select id="fDiag">
-              <option value="0">Off</option><option value="1">Connection status and fps</option>
-            </select></div>
-            <div><div class="lbl">SCREEN</div><select id="fScreen"></select></div>
-            <div><div class="lbl">SCREEN SIZE IN PIXELS (0 = ASK THE BROWSER)</div>
-              <div style="display:flex;gap:10px;align-items:center">
-                <input type="number" id="fScreenW" style="flex:1" placeholder="width">
-                <span class="muted">×</span>
-                <input type="number" id="fScreenH" style="flex:1" placeholder="height">
-              </div>
-              <div class="muted" style="font-size:12px;margin-top:5px">Filled in from
-                the screen above. Needed because Chromium refuses to report a viewport
-                narrower than about 500px, so a 480-wide panel is told it is 500 and
-                the UI overflows the right edge by 20px.</div></div>
-            <div><div class="lbl">DTOVERLAY LINE</div>
+
+          <div class="grp">
+            <h3>Screen and backlight</h3>
+            <div class="f2">
+              <div><div class="lbl">DIM AFTER (SECONDS IDLE)</div><input type="number" id="fIdle"></div>
+              <div><div class="lbl">BLANK AFTER (SECONDS IDLE, 0 = NEVER)</div>
+                <input type="number" id="fBlOff"></div>
+              <div><div class="lbl">BACKLIGHT DEFAULT %</div><input type="number" id="fBlDef"></div>
+              <div><div class="lbl">BACKLIGHT MINIMUM %</div><input type="number" id="fBlMin"></div>
+            </div>
+          </div>
+
+          <div class="grp">
+            <h3>Touch gesture</h3>
+            <p class="hint">Works from any page and from standby. Whether the panel can
+              report this many points is down to its touch controller — switch diagnostics
+              on and the panel reports both what it claims and what it has seen.</p>
+            <div class="f2">
+              <div><div class="lbl">GESTURE</div><select id="fGesture">
+                <option value="off">Off</option>
+                <option value="lights">Toggle the room's lights</option></select></div>
+              <div><div class="lbl">FINGERS</div><select id="fPoints">
+                <option value="3">3</option><option value="4">4</option><option value="5">5</option>
+              </select></div>
+              <div><div class="lbl">HOLD BEFORE IT FIRES (MS)</div>
+                <input type="number" id="fHold" min="100" max="1500" step="50">
+                <div class="muted" style="font-size:12px;margin-top:5px">Longer is harder
+                  to trigger by accident, shorter feels more immediate.</div></div>
+              <div><div class="lbl">RESTORE PREVIOUS LEVELS</div><select id="fRemember">
+                <option value="1">Yes — turn back on where they were</option>
+                <option value="0">No — turn back on at Bright</option></select></div>
+            </div>
+          </div>
+
+          <div class="grp">
+            <h3>Hardware</h3>
+            <div class="f2">
+              <div><div class="lbl">SCREEN</div><select id="fScreen"></select></div>
+              <div><div class="lbl">SCREEN SIZE IN PIXELS (0 = ASK THE BROWSER)</div>
+                <div style="display:flex;gap:10px;align-items:center">
+                  <input type="number" id="fScreenW" style="flex:1" placeholder="width">
+                  <span class="muted">×</span>
+                  <input type="number" id="fScreenH" style="flex:1" placeholder="height">
+                </div>
+                <div class="muted" style="font-size:12px;margin-top:5px">Filled in from
+                  the screen above. Needed because Chromium refuses to report a viewport
+                  narrower than about 500px, so a 480-wide panel is told it is 500 and
+                  the UI overflows the right edge by 20px.</div></div>
+            </div>
+            <div style="margin-top:14px"><div class="lbl">DTOVERLAY LINE</div>
               <input id="fDsiOverlay" placeholder="none — official display auto-detects">
               <div class="muted" style="font-size:12px;margin-top:5px">Written to
                 config.txt when the panel is provisioned, replacing any DSI overlay
                 already there. Append <code>,dsi0</code> for the second connector on a
                 Pi 5 or CM. <code>dtoverlay -h vc4-kms-dsi-waveshare-panel-v2</code> on
                 a panel lists what its firmware supports.</div></div>
+          </div>
+
+          <div class="grp">
+            <h3>Diagnostics</h3>
+            <div class="f2">
+              <div><div class="lbl">DIAGNOSTICS ON THE PANEL</div><select id="fDiag">
+                <option value="0">Off</option><option value="1">Connection status and fps</option>
+              </select></div>
+            </div>
           </div>
         </div>
 
@@ -617,6 +663,8 @@ function fillConfigForm(){
   $("#fMiniArt").value = (d.mini_art ?? true) ? "1" : "0";
   $("#fGesture").value = d.touch_gesture || "off";
   $("#fPoints").value = String(d.touch_points ?? 3);
+  $("#fHold").value = d.touch_hold_ms ?? 250;
+  $("#fRemember").value = (d.remember_last_state ?? true) ? "1" : "0";
   $("#fScreenW").value = d.screen_width ?? 0;
   $("#fScreenH").value = d.screen_height ?? 0;
 }
@@ -803,6 +851,8 @@ function collect(){
                  hide_nav_on_sheets:$("#fHideNav").value === "1",
                  mini_art:$("#fMiniArt").value === "1",
                  touch_gesture:$("#fGesture").value, touch_points:+$("#fPoints").value,
+                 touch_hold_ms:+$("#fHold").value || 250,
+                 remember_last_state:$("#fRemember").value === "1",
                  screen_width:+$("#fScreenW").value || 0,
                  screen_height:+$("#fScreenH").value || 0};
   return CFG;
