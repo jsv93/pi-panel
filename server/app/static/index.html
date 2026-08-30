@@ -371,6 +371,12 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
             <div><div class="lbl">ALBUM ART ON THE NOW-PLAYING BAR</div><select id="fMiniArt">
               <option value="1">Show</option>
               <option value="0">Hide — title only</option></select></div>
+            <div><div class="lbl">MULTI-TOUCH GESTURE</div><select id="fGesture">
+              <option value="off">Off</option>
+              <option value="lights">Toggle the room's lights</option></select></div>
+            <div><div class="lbl">FINGERS FOR THE GESTURE</div><select id="fPoints">
+              <option value="3">3</option><option value="4">4</option><option value="5">5</option>
+            </select></div>
             <div><div class="lbl">DIAGNOSTICS ON THE PANEL</div><select id="fDiag">
               <option value="0">Off</option><option value="1">Connection status and fps</option>
             </select></div>
@@ -609,6 +615,8 @@ function fillConfigForm(){
   $("#fDiag").value = d.diagnostics ? "1" : "0";
   $("#fHideNav").value = (d.hide_nav_on_sheets ?? true) ? "1" : "0";
   $("#fMiniArt").value = (d.mini_art ?? true) ? "1" : "0";
+  $("#fGesture").value = d.touch_gesture || "off";
+  $("#fPoints").value = String(d.touch_points ?? 3);
   $("#fScreenW").value = d.screen_width ?? 0;
   $("#fScreenH").value = d.screen_height ?? 0;
 }
@@ -794,6 +802,7 @@ function collect(){
                  diagnostics:$("#fDiag").value === "1",
                  hide_nav_on_sheets:$("#fHideNav").value === "1",
                  mini_art:$("#fMiniArt").value === "1",
+                 touch_gesture:$("#fGesture").value, touch_points:+$("#fPoints").value,
                  screen_width:+$("#fScreenW").value || 0,
                  screen_height:+$("#fScreenH").value || 0};
   return CFG;

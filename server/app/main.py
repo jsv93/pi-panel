@@ -584,6 +584,10 @@ DISPLAY_KEYS = {
     "diagnostics": bool,
     "hide_nav_on_sheets": bool,
     "mini_art": bool,
+    "touch_points": int,
+    # A string, unlike every other display key. Validated in _patch_display
+    # rather than coerced, because str() would accept anything at all.
+    "touch_gesture": str,
 }
 
 
@@ -595,6 +599,11 @@ async def _patch_display(panel_id: str, values: dict) -> dict:
     for k, v in (values or {}).items():
         if k not in DISPLAY_KEYS:
             raise HTTPException(400, f"'{k}' is not a display setting")
+        if k == "touch_gesture":
+            if v not in ("off", "lights"):
+                raise HTTPException(400, "touch_gesture must be 'off' or 'lights'")
+            clean[k] = v
+            continue
         try:
             clean[k] = DISPLAY_KEYS[k](v)
         except (TypeError, ValueError):
