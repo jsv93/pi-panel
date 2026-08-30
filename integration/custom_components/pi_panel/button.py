@@ -21,6 +21,10 @@ BUTTONS: tuple[ButtonEntityDescription, ...] = (
     # Not diagnostic or config: "which of these is the study one" is a question
     # you ask standing in a hallway, so it belongs on the main card.
     ButtonEntityDescription(key="identify", translation_key="identify"),
+    # Not diagnostic: this is meant to be driven by an automation -- presence,
+    # a door contact, a motion sensor -- so the panel is awake before anyone
+    # has reached it.
+    ButtonEntityDescription(key="wake", translation_key="wake"),
     ButtonEntityDescription(
         key="reload", translation_key="reload", entity_category=EntityCategory.CONFIG
     ),

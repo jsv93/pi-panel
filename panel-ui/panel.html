@@ -993,6 +993,7 @@ function agentConnect(){
       let m; try{ m = JSON.parse(ev.data); }catch(e){ return; }
       if(m.type==="reload") location.reload();
       if(m.type==="identify") identify();
+      if(m.type==="wake") bump();
     };
     agentWS.onclose = ()=>{ agentWS=null; setTimeout(agentConnect, 5000); };
     agentWS.onerror = ()=>{ try{ agentWS.close(); }catch(e){} };
@@ -1812,7 +1813,7 @@ if(str) str.addEventListener("click", ()=>{ scrollTest(); bump(); });
   const b = $("#bView");
   if(b) b.addEventListener("click", ()=>{
     browseView = browseView === "tiles" ? "list" : "tiles";
-    applyBrowseView(); bump();
+    applyBrowseView(); recordDisplay({browse_view: browseView}); bump();
   });
 }
 
@@ -1999,11 +2000,14 @@ function applyGlass(){
 const thr = $("#themeRow");
 if(thr) thr.addEventListener("click",()=>{
   theme = THEMES[(THEMES.findIndex(t=>t.id===theme) + 1) % THEMES.length].id;
-  applyTheme(); bump();
+  applyTheme(); recordDisplay({theme}); bump();
 });
 
 const gr = $("#glassRow");
-if(gr) gr.addEventListener("click",()=>{ glassTier = (glassTier+1) % GLASS_TIERS.length; applyGlass(); bump(); });
+if(gr) gr.addEventListener("click",()=>{
+  glassTier = (glassTier+1) % GLASS_TIERS.length;
+  applyGlass(); recordDisplay({glass_tier: glassTier}); bump();
+});
 applyGlass();
 
 /* ---------- LunaControl ---------- */
@@ -2208,6 +2212,17 @@ fitStage();
    does a browser opened on this URL to debug it. */
 addEventListener("resize", fitStage);
 
+/* Screen choices made on the glass go back to the server, so the config page
+   reports what the panel is actually doing. They used to live only in this
+   browser's localStorage, which meant two records of one setting and the one
+   you were reading was the wrong one. Applied locally first either way: if the
+   server is unreachable the panel still does as it was told. */
+function recordDisplay(patch){
+  fetch("/display", {method:"POST", headers:{"Content-Type":"application/json"},
+                     body:JSON.stringify(patch)})
+    .catch(()=>{});   // a panel with no server still gets to change its own screen
+}
+
 /* ---------- multi-touch gesture ----------
    Three fingers anywhere toggles the room. Whole-screen, so it works from any
    page and from standby without finding a control -- which is the point: it is
@@ -2300,7 +2315,7 @@ function gestureLights(){
 (function watchTouches(){
   let armed = false, hold = null, tooMany = false;
   function cancel(){ clearTimeout(hold); hold = null; armed = false; tooMany = false; }
-  document.addEventListener("touchstart", e => {
+  window.addEventListener("touchstart", e => {
     const n = e.touches.length;
     if(n > touchSeenMax) touchSeenMax = n;
     if(GESTURE === "off") return;
@@ -2314,9 +2329,9 @@ function gestureLights(){
     hold = setTimeout(() => {
       if(!tooMany) gestureLights();
     }, GESTURE_HOLD);
-  }, {passive:true});
-  document.addEventListener("touchend", e => { if(!e.touches.length) cancel(); }, {passive:true});
-  document.addEventListener("touchcancel", cancel, {passive:true});
+  }, {passive:true, capture:true});
+  window.addEventListener("touchend", e => { if(!e.touches.length) cancel(); }, {passive:true, capture:true});
+  window.addEventListener("touchcancel", cancel, {passive:true, capture:true});
 })();
 
 /* ---------- idle ---------- */
@@ -2390,6 +2405,33 @@ function bump(){
     }, OFF_MS);
   }, IDLE_MS);
 }
+/* The first touch on a sleeping panel wakes it and nothing else. Walking up
+   and tapping the glass should not press whatever happens to be under your
+   finger -- and on a dim screen you cannot see what that is, which is how you
+   turn the lights off by waking the panel to check the time.
+
+   The gesture is exempt: it listens on window in the capture phase, which runs
+   before this, so three fingers still work from a dark screen. That is the one
+   input meant to act without looking.
+
+   The grace window covers the tap that follows: touchstart wakes the panel, so
+   by the time touchend and click arrive it is no longer asleep and they would
+   sail through to the control underneath. */
+let wokeAt = 0;
+function wakeGuard(e){
+  const asleep = $("#idle").classList.contains("on");
+  if(asleep){
+    wokeAt = Date.now();
+    bump();
+  } else if(Date.now() - wokeAt >= 450){
+    return;
+  }
+  e.stopPropagation();
+  if(e.cancelable) e.preventDefault();
+}
+["pointerdown","pointerup","touchstart","touchend","click"].forEach(ev =>
+  document.addEventListener(ev, wakeGuard, true));
+
 ["pointerdown","touchstart","keydown"].forEach(ev=>window.addEventListener(ev,bump,{passive:true}));
 $("#idle").addEventListener("click",bump);
 
@@ -2481,7 +2523,9 @@ function flashRow(row, msg){
 });
 
 const dgr=$("#diagRow");
-if(dgr) dgr.addEventListener("click",()=>{ diag=!diag; applyDiag(); bump(); });
+if(dgr) dgr.addEventListener("click",()=>{
+  diag = !diag; applyDiag(); recordDisplay({diagnostics: diag}); bump();
+});
 applyDiag();
 
 connect(); paintAll(); bump(); setBacklight(st.bl);

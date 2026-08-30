@@ -80,6 +80,12 @@ h2{font-size:14px;font-weight:600}
 .grp > h3{font-size:12px;letter-spacing:.09em;text-transform:uppercase;
   color:var(--ok);margin:0 0 12px;font-weight:600}
 .grp .hint{font-size:12px;color:var(--faint);margin:-6px 0 12px;max-width:62ch}
+.grip{cursor:grab;color:var(--faint);font-size:15px;line-height:1;user-select:none;
+  padding:0 2px;flex:none}
+.grip:active{cursor:grabbing}
+.sprow:hover .grip,.lrow:hover .grip{color:var(--dim)}
+.griptd{padding-right:0!important;text-align:center}
+[draggable="true"]{transition:opacity .1s}
 table.lights{width:100%;border-collapse:collapse;border:1px solid var(--line2);border-radius:8px;overflow:hidden}
 table.lights th{font-size:11px;color:var(--faint);text-align:left;padding:8px 10px;background:#12121A;font-weight:400;letter-spacing:.4px}
 table.lights td{padding:7px 10px;border-top:1px solid var(--line2)}
@@ -342,7 +348,7 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
               set. Untick PRESETS to leave a light out of them — a lamp that is always on
               otherwise stops either preset ever highlighting.</p>
             <table class="lights">
-              <thead><tr><th style="width:32%">ENTITY</th><th style="width:24%">DISPLAY NAME</th>
+              <thead><tr><th style="width:26px"></th><th style="width:30%">ENTITY</th><th style="width:22%">DISPLAY NAME</th>
                 <th style="width:12%">SOFT %</th><th style="width:12%">BRIGHT %</th>
                 <th style="width:12%" title="Whether the Soft and Bright buttons on the panel move this light">PRESETS</th>
                 <th></th></tr></thead>
@@ -427,15 +433,12 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
 
           <div class="grp">
             <h3>Screen and backlight</h3>
+            <p class="hint">Set Blank after — at 0 the panel holds a dimmed clock
+              indefinitely, which is how an LCD picks up a retention shadow.</p>
             <div class="f2">
               <div><div class="lbl">DIM AFTER (SECONDS IDLE)</div><input type="number" id="fIdle"></div>
               <div><div class="lbl">BLANK AFTER (SECONDS IDLE, 0 = NEVER)</div>
-                <input type="number" id="fBlOff">
-                <div class="muted" style="font-size:12px;margin-top:5px">Leave this at 0
-                  and the panel shows a dimmed clock indefinitely. These are LCDs, and a
-                  static image held for weeks leaves a retention shadow — one of these
-                  panels has it already. The standby clock drifts to spread the load, but
-                  a few minutes here is the actual fix.</div></div>
+                <input type="number" id="fBlOff"></div>
               <div><div class="lbl">BACKLIGHT DEFAULT %</div><input type="number" id="fBlDef"></div>
               <div><div class="lbl">BACKLIGHT MINIMUM %</div><input type="number" id="fBlMin"></div>
             </div>
@@ -638,7 +641,11 @@ async function loadFleet(){
       ? `<span style="color:var(--warn)">v${p.config_version} drift</span>`
       : `<span style="color:var(--ok)">v${p.latest_version} ✓</span>`;
     const action = p.claimed
-      ? `<button class="btn" data-open="${p.id}">Configure</button>`
+      /* Identify sits here as well as on the detail page: "which of these is
+         study-rp3" is a question you ask while looking at the list. */
+      ? `<span style="display:flex;gap:6px;justify-content:flex-end">
+           <button class="btn" data-ident="${p.id}"${p.online?"":" disabled style=\"opacity:.4\""}>Identify</button>
+           <button class="btn" data-open="${p.id}">Configure</button></span>`
       : `<button class="btn primary" data-claim="${p.id}">Claim</button>`;
     return `<div class="grid ${cls}">
       <span style="display:flex;align-items:center;gap:9px"><i class="dot" style="background:${dot}"></i>${p.hostname}</span>
@@ -650,6 +657,11 @@ async function loadFleet(){
       <span>${action}</span></div>`;
   }).join("") || '<div class="grid"><span class="muted">No panels have registered yet</span></div>';
 
+  document.querySelectorAll("[data-ident]").forEach(b=>b.onclick=async()=>{
+    const r = await api(`/panels/${b.dataset.ident}/action`,
+                        {method:"POST",body:JSON.stringify({action:"identify"})});
+    toast(r.sent ? "Look for the flashing panel" : "That panel is not connected");
+  });
   document.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>openPanel(b.dataset.open));
   document.querySelectorAll("[data-claim]").forEach(b=>b.onclick=()=>claimPanel(b.dataset.claim));
 }
@@ -844,7 +856,8 @@ $("#fDsiOverlay").oninput = ()=>{
   $("#fScreen").value = SCREENS.some(s=>s.ov===v) ? v : "__custom";
 };
 function renderLights(){
-  const rows = (CFG.lights||[]).map((l,i)=>`<tr>
+  const rows = (CFG.lights||[]).map((l,i)=>`<tr class="lrow">
+    <td class="griptd"><span class="grip" title="Drag to reorder">⠿</span></td>
     <td><select data-l="${i}" data-k="entity_id">${opts(ENTITIES.light, l.entity_id)}</select></td>
     <td><input data-l="${i}" data-k="name" value="${l.name||""}"></td>
     <td><input type="number" data-l="${i}" data-k="soft" value="${l.soft??30}"></td>
@@ -852,7 +865,7 @@ function renderLights(){
     <td style="text-align:center"><input type="checkbox" data-l="${i}" data-k="include_presets"
       ${l.include_presets===false?"":"checked"} style="width:18px;height:18px"></td>
     <td><button class="btn danger" data-del="${i}" style="padding:5px 9px">✕</button></td></tr>`).join("");
-  $("#lightRows").innerHTML = rows || `<tr><td colspan="6" class="muted" style="padding:14px">No lights configured</td></tr>`;
+  $("#lightRows").innerHTML = rows || `<tr><td colspan="7" class="muted" style="padding:14px">No lights configured</td></tr>`;
   $("#lightRows").querySelectorAll("[data-l]").forEach(el=>el.onchange=()=>{
     const l = CFG.lights[+el.dataset.l], k = el.dataset.k;
     /* Unticked means "the Soft and Bright buttons leave this alone". A hallway
@@ -863,14 +876,56 @@ function renderLights(){
   });
   $("#lightRows").querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
     CFG.lights.splice(+b.dataset.del,1); renderLights(); });
+  makeReorderable($("#lightRows"), ".lrow", CFG.lights, renderLights);
 }
 $("#addLight").onclick=()=>{ (CFG.lights=CFG.lights||[]).push({entity_id:"",name:"",soft:30,bright:100,include_presets:true}); renderLights(); };
+
+/* Order is meaningful in both lists -- it is the order the panel shows them --
+   so it needs to be editable, and a pair of arrows on every row is a lot of
+   chrome for something done rarely. One helper, used by both.
+
+   The array is reordered and the list re-rendered; nothing is saved until Save
+   & push, exactly like every other edit on this page. */
+function makeReorderable(host, rowSel, arr, onDone){
+  let from = null;
+  host.querySelectorAll(rowSel).forEach((row, i) => {
+    row.draggable = true;
+    row.dataset.idx = i;
+    row.addEventListener("dragstart", e => {
+      from = i;
+      row.style.opacity = ".4";
+      e.dataTransfer.effectAllowed = "move";
+      // Firefox will not start a drag without data on the transfer
+      e.dataTransfer.setData("text/plain", String(i));
+    });
+    row.addEventListener("dragend", () => { row.style.opacity = ""; clearMarks(); });
+    row.addEventListener("dragover", e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      clearMarks();
+      row.style.boxShadow = "inset 0 2px 0 var(--ok)";
+    });
+    row.addEventListener("drop", e => {
+      e.preventDefault();
+      clearMarks();
+      const to = +row.dataset.idx;
+      if(from === null || from === to) return;
+      arr.splice(to, 0, arr.splice(from, 1)[0]);
+      from = null;
+      onDone();
+    });
+  });
+  function clearMarks(){
+    host.querySelectorAll(rowSel).forEach(r => r.style.boxShadow = "");
+  }
+}
 
 function renderSpeakers(){
   const sp = (CFG.media||{}).speakers||[];
   $("#speakerList").innerHTML = sp.map((s,i)=>{
     const eid = typeof s==="string"?s:s.entity_id, nm = typeof s==="string"?"":(s.name||"");
-    return `<div style="display:flex;gap:8px;margin-bottom:8px">
+    return `<div class="sprow" style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+      <span class="grip" title="Drag to reorder">⠿</span>
       <select data-sp="${i}" style="flex:2">${opts(ENTITIES.media, eid)}</select>
       <input data-spn="${i}" placeholder="Label" value="${nm}" style="flex:1">
       <button class="btn danger" data-spd="${i}" style="padding:5px 11px">✕</button></div>`;
@@ -882,6 +937,7 @@ function renderSpeakers(){
     CFG.media.speakers[+el.dataset.spn].name = el.value; });
   $("#speakerList").querySelectorAll("[data-spd]").forEach(b=>b.onclick=()=>{
     CFG.media.speakers.splice(+b.dataset.spd,1); renderSpeakers(); });
+  makeReorderable($("#speakerList"), ".sprow", CFG.media.speakers, renderSpeakers);
 }
 $("#addSpeaker").onclick=()=>{
   CFG.media = CFG.media||{speakers:[]}; (CFG.media.speakers=CFG.media.speakers||[]).push({entity_id:"",name:""});

@@ -643,6 +643,10 @@ async def save_light(request):
     return await _to_server(request, "light", "light setting")
 
 
+async def save_display(request):
+    return await _to_server(request, "display", "display setting")
+
+
 async def save_preset(request):
     """Store the levels currently on screen as this panel's Soft or Bright."""
     return await _to_server(request, "presets", "preset save")
@@ -714,6 +718,7 @@ async def serve_ui():
     app.router.add_post("/wifi/connect", wifi_connect)
     app.router.add_post("/presets", save_preset)
     app.router.add_post("/light", save_light)
+    app.router.add_post("/display", save_display)
     app.router.add_static("/", str(root), show_index=True)
     runner = web.AppRunner(app)
     await runner.setup()
@@ -795,6 +800,10 @@ async def ws_loop(session):
                             await check_bundle(session)
                     elif t == "reload":
                         await reload_ui()
+                    elif t == "wake":
+                        # Presence, a doorbell, anything Home Assistant knows
+                        # about that means someone is in front of this panel.
+                        await tell_pages({"type": "wake"})
                     elif t == "identify":
                         # Straight through to the page: the panel has to show
                         # something a person standing in front of it can see,

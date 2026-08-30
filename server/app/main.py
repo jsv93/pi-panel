@@ -587,6 +587,7 @@ DISPLAY_KEYS = {
     "touch_points": int,
     "touch_hold_ms": int,
     "browse_view": str,
+    "theme": str,
     "remember_last_state": bool,
     # A string, unlike every other display key. Validated in _patch_display
     # rather than coerced, because str() would accept anything at all.
@@ -610,6 +611,11 @@ async def _patch_display(panel_id: str, values: dict) -> dict:
         if k == "browse_view":
             if v not in ("list", "tiles"):
                 raise HTTPException(400, "browse_view must be 'list' or 'tiles'")
+            clean[k] = v
+            continue
+        if k == "theme":
+            if v not in ("default", "ambient"):
+                raise HTTPException(400, "theme must be 'default' or 'ambient'")
             clean[k] = v
             continue
         try:
@@ -679,6 +685,30 @@ async def panel_presets(panel_id: str, request: Request):
     # not inherit these levels and has nothing to be told about.
     await notify(panel_id, {"type": "config_updated", "version": version})
     return {"version": version, "changed": changed}
+
+
+# What a panel may change about its own screen. Narrower than DISPLAY_KEYS on
+# purpose: these are the four with a control on the panel, and a panel has no
+# business setting its own screen size or dtoverlay.
+PANEL_DISPLAY_KEYS = {"theme", "glass_tier", "diagnostics", "browse_view"}
+
+
+@app.post("/api/panel/{panel_id}/display")
+async def panel_display(panel_id: str, request: Request):
+    """A panel recording a change made on its own glass.
+
+    Without this the panel kept those choices to itself in localStorage, so the
+    server went on reporting whatever it last pushed -- switch the library to
+    tiles on the wall and the config page still said List. Two records of one
+    setting, and the one you were reading was the wrong one.
+    """
+    if not db.get_panel(panel_id):
+        raise HTTPException(404, "unknown panel")
+    b = await request.json()
+    bad = set(b) - PANEL_DISPLAY_KEYS
+    if bad:
+        raise HTTPException(400, f"a panel may not set {', '.join(sorted(bad))}")
+    return await _patch_display(panel_id, b)
 
 
 @app.post("/api/panel/{panel_id}/light")
@@ -814,7 +844,7 @@ async def action(panel_id: str, request: Request):
     # identify: which of these is the one on the landing? Panels are named in
     # the GUI and unlabelled on the wall, and a fleet page listing study-rp3
     # and study-e98b is no help at all when you are standing in front of them.
-    if act not in ("reload", "restart", "sync", "identify"):
+    if act not in ("reload", "restart", "sync", "identify", "wake"):
         raise HTTPException(400, "unknown action")
     ok = await notify(panel_id, {"type": act})
     return {"sent": ok}

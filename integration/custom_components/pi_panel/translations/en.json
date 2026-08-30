@@ -63,6 +63,9 @@
       },
       "identify": {
         "name": "Identify"
+      },
+      "wake": {
+        "name": "Wake screen"
       }
     },
     "number": {
