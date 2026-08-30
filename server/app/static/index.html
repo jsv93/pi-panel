@@ -312,49 +312,94 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
 
         <div class="sect on" data-s="identity">
           <h2 style="margin-bottom:14px">Identity</h2>
-          <div class="f2">
-            <div><div class="lbl">HOSTNAME</div><input id="fHostname" disabled></div>
-            <div><div class="lbl">ROOM LABEL (shown under the clock)</div><input id="fRoomLabel"></div>
+
+          <div class="grp">
+            <h3>This panel</h3>
+            <div class="f2">
+              <div><div class="lbl">HOSTNAME</div><input id="fHostname" disabled></div>
+              <div><div class="lbl">ROOM</div><input id="fRoom"></div>
+              <div><div class="lbl">ROOM LABEL (shown under the clock)</div><input id="fRoomLabel"></div>
+              <div><div class="lbl">TEMPLATE</div><select id="fTemplate"></select></div>
+            </div>
+            <p class="hint" style="margin-top:12px">Choosing a template loads its values
+              into this page. Nothing is written until you save, and Revert puts it back.</p>
           </div>
-          <div class="f2" style="margin-top:14px">
-            <div><div class="lbl">ROOM</div><input id="fRoom"></div>
-            <div><div class="lbl">TEMPLATE</div><select id="fTemplate"></select></div>
+
+          <div class="grp">
+            <h3>Home Assistant</h3>
+            <p class="hint">The address this panel uses. The panel talks to Home Assistant
+              directly — the config server is never in the path of a light turning on.</p>
+            <div><div class="lbl">HOME ASSISTANT URL</div><input id="fHaUrl"></div>
           </div>
-          <div style="margin-top:14px"><div class="lbl">HOME ASSISTANT URL</div><input id="fHaUrl"></div>
         </div>
 
         <div class="sect" data-s="lights">
           <h2 style="margin-bottom:14px">Lights &amp; presets</h2>
-          <table class="lights">
-            <thead><tr><th style="width:32%">ENTITY</th><th style="width:24%">DISPLAY NAME</th>
-              <th style="width:12%">SOFT %</th><th style="width:12%">BRIGHT %</th>
-              <th style="width:12%" title="Whether the Soft and Bright buttons on the panel move this light">PRESETS</th>
-              <th></th></tr></thead>
-            <tbody id="lightRows"></tbody>
-          </table>
-          <button class="btn" style="margin-top:12px;color:var(--ok);border-color:var(--ok-line)"
-            id="addLight">+ Add light</button>
+
+          <div class="grp">
+            <h3>Lights on this panel</h3>
+            <p class="hint">Soft and Bright are the levels the panel's two preset buttons
+              set. Untick PRESETS to leave a light out of them — a lamp that is always on
+              otherwise stops either preset ever highlighting.</p>
+            <table class="lights">
+              <thead><tr><th style="width:32%">ENTITY</th><th style="width:24%">DISPLAY NAME</th>
+                <th style="width:12%">SOFT %</th><th style="width:12%">BRIGHT %</th>
+                <th style="width:12%" title="Whether the Soft and Bright buttons on the panel move this light">PRESETS</th>
+                <th></th></tr></thead>
+              <tbody id="lightRows"></tbody>
+            </table>
+            <button class="btn" style="margin-top:12px;color:var(--ok);border-color:var(--ok-line)"
+              id="addLight">+ Add light</button>
+          </div>
         </div>
 
         <div class="sect" data-s="media">
           <h2 style="margin-bottom:14px">Media</h2>
-          <div><div class="lbl">DEFAULT SPEAKER</div><select id="fSpeaker"></select></div>
-          <div><div class="lbl">DEFAULT SPEAKER LABEL (shown on the panel)</div>
-            <input id="fSpeakerName" placeholder="defaults to the entity id"></div>
-          <div class="lbl" style="margin-top:16px">SELECTABLE SPEAKERS</div>
-          <div id="speakerList"></div>
-          <button class="btn" style="margin-top:10px;color:var(--ok);border-color:var(--ok-line)"
-            id="addSpeaker">+ Add speaker</button>
+
+          <div class="grp">
+            <h3>Speaker</h3>
+            <div class="f2">
+              <div><div class="lbl">DEFAULT SPEAKER</div><select id="fSpeaker"></select></div>
+              <div><div class="lbl">DEFAULT SPEAKER LABEL (shown on the panel)</div>
+                <input id="fSpeakerName" placeholder="defaults to the entity id"></div>
+            </div>
+          </div>
+
+          <div class="grp">
+            <h3>Selectable speakers</h3>
+            <p class="hint">What the speaker picker on the panel offers.</p>
+            <div id="speakerList"></div>
+            <button class="btn" style="margin-top:10px;color:var(--ok);border-color:var(--ok-line)"
+              id="addSpeaker">+ Add speaker</button>
+          </div>
+
+          <div class="grp">
+            <h3>Library</h3>
+            <div class="f2">
+              <div><div class="lbl">BROWSE LAYOUT</div><select id="fBrowseView">
+                <option value="list">List — one row per item</option>
+                <option value="tiles">Tiles — two columns with artwork</option></select></div>
+            </div>
+          </div>
         </div>
 
         <div class="sect" data-s="sensors">
           <h2 style="margin-bottom:14px">Sensors</h2>
-          <div class="f2">
-            <div><div class="lbl">TEMPERATURE</div><select id="fTemp"></select></div>
-            <div><div class="lbl">HUMIDITY</div><select id="fHum"></select></div>
+
+          <div class="grp">
+            <h3>Readings</h3>
+            <p class="hint">Shown on the climate page, and the temperature also appears
+              in the navbar.</p>
+            <div class="f2">
+              <div><div class="lbl">TEMPERATURE</div><select id="fTemp"></select></div>
+              <div><div class="lbl">HUMIDITY</div><select id="fHum"></select></div>
+            </div>
           </div>
-          <div style="margin-top:14px">
-            <div class="lbl">THERMOSTAT — ITS SETPOINT IS THE HOME SCREEN TILE</div>
+
+          <div class="grp">
+            <h3>Thermostat</h3>
+            <p class="hint">Its setpoint is the tile on the panel's home screen, with plus
+              and minus. Leave empty and the tile is hidden.</p>
             <select id="fClimate"></select>
           </div>
         </div>
@@ -665,6 +710,7 @@ function fillConfigForm(){
   $("#fPoints").value = String(d.touch_points ?? 3);
   $("#fHold").value = d.touch_hold_ms ?? 250;
   $("#fRemember").value = (d.remember_last_state ?? true) ? "1" : "0";
+  $("#fBrowseView").value = d.browse_view || "list";
   $("#fScreenW").value = d.screen_width ?? 0;
   $("#fScreenH").value = d.screen_height ?? 0;
 }
@@ -853,6 +899,7 @@ function collect(){
                  touch_gesture:$("#fGesture").value, touch_points:+$("#fPoints").value,
                  touch_hold_ms:+$("#fHold").value || 250,
                  remember_last_state:$("#fRemember").value === "1",
+                 browse_view:$("#fBrowseView").value,
                  screen_width:+$("#fScreenW").value || 0,
                  screen_height:+$("#fScreenH").value || 0};
   return CFG;

@@ -102,6 +102,10 @@ DEFAULT_TEMPLATE = {
         # Home Assistant remains the authority on what the lights are actually
         # doing, and an empty memory just falls back to Bright.
         "remember_last_state": True,
+        # How the media library lists things. "list" is one row per item;
+        # "tiles" is two columns with the artwork large enough to recognise,
+        # which is most of what makes a music library readable.
+        "browse_view": "list",
         # dtoverlay line for the panel's DSI display, written to config.txt at
         # provisioning. Stock Raspberry Pi OS auto-detects only the official
         # Touch Display, so a third-party panel with the wrong line here gets

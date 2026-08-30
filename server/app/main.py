@@ -586,6 +586,7 @@ DISPLAY_KEYS = {
     "mini_art": bool,
     "touch_points": int,
     "touch_hold_ms": int,
+    "browse_view": str,
     "remember_last_state": bool,
     # A string, unlike every other display key. Validated in _patch_display
     # rather than coerced, because str() would accept anything at all.
@@ -604,6 +605,11 @@ async def _patch_display(panel_id: str, values: dict) -> dict:
         if k == "touch_gesture":
             if v not in ("off", "lights"):
                 raise HTTPException(400, "touch_gesture must be 'off' or 'lights'")
+            clean[k] = v
+            continue
+        if k == "browse_view":
+            if v not in ("list", "tiles"):
+                raise HTTPException(400, "browse_view must be 'list' or 'tiles'")
             clean[k] = v
             continue
         try:
