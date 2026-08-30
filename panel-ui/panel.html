@@ -391,6 +391,13 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
 
 
 #idle .hint{position:absolute;bottom:90px;font-size:19px;color:#24242C}
+/* Blanked: nothing but black. The backlight is separate hardware, so whatever
+   was last painted is what the panel is still holding and what you see the
+   instant the light comes up. Trying to repaint fast enough on wake did not
+   work -- with the light off there may be no compositing to hook onto. Leaving
+   black on the glass removes the race instead of trying to win it, and a
+   uniform black frame is also the kindest thing to hold for hours. */
+#idle.blanked .clock, #idle.blanked .hint{visibility:hidden}
 
 /* ================= theme: Ambient =================
    Warm near-black, no borders anywhere, surfaces separated by tone and radius
@@ -2318,17 +2325,24 @@ function gestureLights(){
    nobody is watching it move. Transform only, so it is a compositor job. */
 let driftT = null;
 function idleDrift(on){
-  clearInterval(driftT); driftT = null;
+  clearTimeout(driftT); driftT = null;
   const c = $("#idleClock");
   if(!c) return;
-  if(!on){ c.style.transform = ""; return; }
+  c.style.transform = "";
+  if(!on) return;
+  /* Centred to begin with, and the first move is two minutes away. Retention
+     needs hours, so there is nothing to spread in the first minute -- and on a
+     panel that blanks after a few seconds the drift is never seen at all,
+     which is the point. */
   const step = () => {
     const x = Math.round((Math.random() * 2 - 1) * 90);
     const y = Math.round((Math.random() * 2 - 1) * 170);
     c.style.transform = "translate(" + x + "px," + y + "px)";
   };
-  step();
-  driftT = setInterval(step, 45000);
+  driftT = setTimeout(function again(){
+    step();
+    driftT = setTimeout(again, 60000);
+  }, 120000);
 }
 
 function goHome(){
@@ -2344,6 +2358,7 @@ function bump(){
   clearTimeout(idleT); clearTimeout(offT);
   if($("#idle").classList.contains("on")){
     $("#idle").classList.remove("on");
+    $("#idle").classList.remove("blanked");
     idleDrift(false);
     /* Not immediately. The backlight is separate hardware and the panel is
        still showing the last frame it drew -- the standby clock -- so lighting
@@ -2363,6 +2378,8 @@ function bump(){
        setting, which is no good on a bedroom wall. 0 blanks the backlight
        outright rather than just writing a low brightness. */
     if(OFF_MS > 0) offT = setTimeout(()=>{
+      $("#idle").classList.add("blanked");
+      idleDrift(false);
       setBacklight(0);
       /* Back to the home page while nobody is looking. Waking a panel into
          whatever sheet was left open means the next person has to find their
