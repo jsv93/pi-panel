@@ -1174,20 +1174,27 @@ function showSheet(name){
   if(name==="browse" && !browseStack.length) browse(null,null,"Library");
   bump();
 }
-function closeSheet(){
+function closeSheet(silent){
   document.querySelectorAll(".sheet").forEach(x=>x.classList.remove("on"));
   document.body.classList.remove("sheet-open");
   document.querySelectorAll(".nav button").forEach(b=>b.classList.remove("on"));
-  openSheet = null; bump();
+  openSheet = null;
+  /* silent when the panel is putting itself to sleep: bump() restores the
+     backlight and cancels the idle timers, so closing a sheet on the way down
+     would wake the screen it had just blanked. */
+  if(!silent) bump();
 }
 document.querySelectorAll(".nav button").forEach(b=>b.addEventListener("click",()=>{
   if(openSheet===b.dataset.sheet) closeSheet(); else showSheet(b.dataset.sheet);
 }));
-document.querySelectorAll("[data-close]").forEach(b=>b.addEventListener("click",closeSheet));
+document.querySelectorAll("[data-close]").forEach(b=>b.addEventListener("click",()=>closeSheet()));
 $("#roomMedia").addEventListener("click", e=>{ if(!e.target.closest(".slider")) showSheet("media"); });
 function ovOpen(id){ $(id).classList.add("on"); bump(); }
-function ovClose(){ document.querySelectorAll(".ov").forEach(o=>o.classList.remove("on")); bump(); }
-document.querySelectorAll("[data-ovclose]").forEach(e=>e.addEventListener("click",ovClose));
+function ovClose(silent){
+  document.querySelectorAll(".ov").forEach(o=>o.classList.remove("on"));
+  if(!silent) bump();
+}
+document.querySelectorAll("[data-ovclose]").forEach(e=>e.addEventListener("click",()=>ovClose()));
 $("#icoSearch").addEventListener("click",()=>{ browseStack.length=0; showSheet("browse"); });
 $("#icoSpk").addEventListener("click",()=>ovOpen("#ovSpk"));
 $("#icoMore").addEventListener("click",()=>{ buildQueue(); ovOpen("#ovQueue"); });
@@ -2306,6 +2313,14 @@ function gestureLights(){
 })();
 
 /* ---------- idle ---------- */
+function goHome(){
+  closeSheet(true);
+  ovClose(true);
+  browseStack.length = 0;
+  const l = $("#bList"); if(l) l.scrollTop = 0;
+  const st2 = $("#s-settings"); if(st2) st2.scrollTop = 0;
+}
+
 let idleT, offT;
 function bump(){
   clearTimeout(idleT); clearTimeout(offT);
@@ -2316,7 +2331,15 @@ function bump(){
     /* Dimmed is not off: this panel still throws real light at its lowest
        setting, which is no good on a bedroom wall. 0 blanks the backlight
        outright rather than just writing a low brightness. */
-    if(OFF_MS > 0) offT = setTimeout(()=>setBacklight(0), OFF_MS);
+    if(OFF_MS > 0) offT = setTimeout(()=>{
+      setBacklight(0);
+      /* Back to the home page while nobody is looking. Waking a panel into
+         whatever sheet was left open means the next person has to find their
+         way out of it first, and on a wall panel the next person is often not
+         the one who left it there. Done at blank rather than at dim: the
+         screen is off, so nothing is seen to move. */
+      goHome();
+    }, OFF_MS);
   }, IDLE_MS);
 }
 ["pointerdown","touchstart","keydown"].forEach(ev=>window.addEventListener(ev,bump,{passive:true}));
