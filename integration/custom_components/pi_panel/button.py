@@ -25,6 +25,11 @@ BUTTONS: tuple[ButtonEntityDescription, ...] = (
     # a door contact, a motion sensor -- so the panel is awake before anyone
     # has reached it.
     ButtonEntityDescription(key="wake", translation_key="wake"),
+    # Its counterpart, and on the main card for the same reason: a goodnight
+    # scene that leaves every panel lit has not finished. Sleeping honours the
+    # panel's own blank-after setting rather than forcing the screen black, so
+    # a panel deliberately left showing a clock keeps showing one.
+    ButtonEntityDescription(key="sleep", translation_key="sleep"),
     ButtonEntityDescription(
         key="reload", translation_key="reload", entity_category=EntityCategory.CONFIG
     ),

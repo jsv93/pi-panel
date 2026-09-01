@@ -66,6 +66,9 @@
       },
       "wake": {
         "name": "Wake screen"
+      },
+      "sleep": {
+        "name": "Sleep screen"
       }
     },
     "number": {

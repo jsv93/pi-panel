@@ -807,6 +807,12 @@ async def ws_loop(session):
                         # Presence, a doorbell, anything Home Assistant knows
                         # about that means someone is in front of this panel.
                         await tell_pages({"type": "wake"})
+                    elif t == "sleep":
+                        # The counterpart to wake: goodnight routines, an alarm
+                        # arming, the last person leaving. The panel decides what
+                        # sleeping means for it -- dim or dark -- from its own
+                        # blank-after setting.
+                        await tell_pages({"type": "sleep"})
                     elif t == "identify":
                         # Straight through to the page: the panel has to show
                         # something a person standing in front of it can see,

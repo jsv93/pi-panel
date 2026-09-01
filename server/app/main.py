@@ -852,7 +852,7 @@ async def action(panel_id: str, request: Request):
     # identify: which of these is the one on the landing? Panels are named in
     # the GUI and unlabelled on the wall, and a fleet page listing study-rp3
     # and study-e98b is no help at all when you are standing in front of them.
-    if act not in ("reload", "restart", "sync", "identify", "wake"):
+    if act not in ("reload", "restart", "sync", "identify", "wake", "sleep"):
         raise HTTPException(400, "unknown action")
     ok = await notify(panel_id, {"type": act})
     return {"sent": ok}

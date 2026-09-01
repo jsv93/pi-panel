@@ -994,6 +994,7 @@ function agentConnect(){
       if(m.type==="reload") location.reload();
       if(m.type==="identify") identify();
       if(m.type==="wake") bump();
+      if(m.type==="sleep") sleepNow();
     };
     agentWS.onclose = ()=>{ agentWS=null; setTimeout(agentConnect, 5000); };
     agentWS.onerror = ()=>{ try{ agentWS.close(); }catch(e){} };
@@ -2369,6 +2370,37 @@ function goHome(){
 }
 
 let idleT, offT;
+/* The two standby steps, named because they are reached two ways: by the idle
+   timers below, and by a sleep command from Home Assistant. Duplicating either
+   one is how the timed path and the commanded path drift into leaving the panel
+   in states that differ by a backlight write nobody remembers making. */
+function goIdle(){
+  $("#idle").classList.add("on");
+  idleDrift(true);
+  setBacklight(Math.max(10,st.bl*0.25));
+}
+function goBlank(){
+  $("#idle").classList.add("blanked");
+  idleDrift(false);
+  setBacklight(0);
+  /* Back to the home page while nobody is looking. Waking a panel into
+     whatever sheet was left open means the next person has to find their
+     way out of it first, and on a wall panel the next person is often not
+     the one who left it there. Done at blank rather than at dim: the
+     screen is off, so nothing is seen to move. */
+  goHome();
+}
+/* Stand down now, on command -- "everyone has gone to bed", not a timeout.
+   Follows this panel's own configuration rather than forcing black: a panel
+   with blanking switched off is one somebody wanted showing a clock, and an
+   automation asking it to sleep is not asking to overrule that. Where blanking
+   is allowed it happens immediately, because a sleep command means now and not
+   in another backlight_off_s. */
+function sleepNow(){
+  clearTimeout(idleT); clearTimeout(offT);
+  goIdle();
+  if(OFF_MS > 0) goBlank();
+}
 function bump(){
   clearTimeout(idleT); clearTimeout(offT);
   if($("#idle").classList.contains("on")){
@@ -2386,23 +2418,11 @@ function bump(){
     setTimeout(light, 150);
   }
   idleT = setTimeout(()=>{
-    $("#idle").classList.add("on");
-    idleDrift(true);
-    setBacklight(Math.max(10,st.bl*0.25));
+    goIdle();
     /* Dimmed is not off: this panel still throws real light at its lowest
        setting, which is no good on a bedroom wall. 0 blanks the backlight
        outright rather than just writing a low brightness. */
-    if(OFF_MS > 0) offT = setTimeout(()=>{
-      $("#idle").classList.add("blanked");
-      idleDrift(false);
-      setBacklight(0);
-      /* Back to the home page while nobody is looking. Waking a panel into
-         whatever sheet was left open means the next person has to find their
-         way out of it first, and on a wall panel the next person is often not
-         the one who left it there. Done at blank rather than at dim: the
-         screen is off, so nothing is seen to move. */
-      goHome();
-    }, OFF_MS);
+    if(OFF_MS > 0) offT = setTimeout(goBlank, OFF_MS);
   }, IDLE_MS);
 }
 /* The first touch on a sleeping panel wakes it and nothing else. Walking up
