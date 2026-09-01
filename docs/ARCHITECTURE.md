@@ -48,6 +48,10 @@ giving it a network-independent control path. Worth having as a *degraded mode*
 only: contacts can express toggle/dim/scene, not "set to 47%", and give no state
 feedback. Primary control should go via the gateway's local API.
 
+Both halves of that — the gateway's API and the degraded path — are sketched in
+`DALI-INTEGRATION.md`, with the endpoint shapes, the coupler to use, and the one
+property of it that has to be confirmed before buying.
+
 ## Platform
 
 Two panel platforms, both viable:
