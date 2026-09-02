@@ -11,15 +11,47 @@
 <style>
 
 :root{
-  --bg-top:#151522; --bg-bot:#07070B;
-  --ink:#E8E8E4; --ink-dim:#B8B8BF; --ink-quiet:#6F6F77; --ink-ghost:#3D3D46;
-  --accent:#5DCAA5; --accent-deep:#0F6E56; --accent-line:#1D9E75;
-  --accent-soft:rgba(29,158,117,.16); --accent-text:#9FE1CB;
-  --warm:#F0997B; --bad:#C4705A;
-  --tile:rgba(30,30,40,.42); --tile-line:rgba(120,125,150,.22);
-  --r:24px; --nav:132px; --strip:104px; --dur:.22s; --dur-fill:.30s;
-  --ease:cubic-bezier(.22,.61,.36,1); --sheet-ease:cubic-bezier(.16,.84,.32,1);
+  /* Structure. A theme overrides these; a palette never touches them. */
+  --r:24px;--nav:132px;--strip:104px;
+  --dur:.22s;--dur-fill:.30s;
+  --ease:cubic-bezier(.22,.61,.36,1);--sheet-ease:cubic-bezier(.16,.84,.32,1);
+  /* Colour: Midnight, copied from .pal-midnight below. Duplicated on purpose --
+     it is the fallback when no palette class is on the element, which is what a
+     panel looks like if the script that applies one never runs. A wall panel
+     that fails to a readable screen is worth one repeated block. */
+  --bg-top:#151522;--bg-bot:#07070B;--glow-a:rgba(29,158,117,.16);--glow-b:rgba(120,110,220,.13);--ink:#E8E8E4;--ink-dim:#B8B8BF;--ink-quiet:#6F6F77;--ink-ghost:#3D3D46;--accent:#5DCAA5;--accent-deep:#0F6E56;--accent-line:#1D9E75;--accent-soft:rgba(29,158,117,.16);--accent-text:#9FE1CB;--on-accent:#08110D;--ok:#2E7F68;--warm:#F0997B;--bad:#C4705A;--tile:rgba(28,28,38,.74);--tile-line:rgba(120,125,150,.22);--line:rgba(120,125,150,.22);--line-soft:rgba(120,125,150,.16);--surface:rgba(20,20,28,.7);--surface-2:rgba(28,28,38,.85);--track:rgba(22,22,30,.75);--sheet-bg:rgba(11,11,18,.985);--ov-bg:rgba(17,17,25,.985);--nav-bg:rgba(9,9,14,.97);--preset-a:#23303A;--preset-b:#182028;--art-a:rgba(20,20,28,.7);--art-b:rgba(20,20,28,.7);--scrim:#05050A;--idle-hint:#24242C;--idle-clock:#4A4A52
 }
+
+/* ---------- palettes ----------
+   A theme is structure -- geometry, type, whether a surface has an edge. A
+   palette is colour and nothing else. The two were fused, which is why Ambient
+   shipped as a single take-it-or-leave-it look. Split, every palette works
+   under either theme.
+
+   Written out in full rather than derived from a seed. color-mix() would be
+   shorter and would put every colour on this wall panel behind one feature
+   query: a browser without it renders an unreadable screen and the panel has
+   no way to say why. Explicit values cannot fail that way, and they let each
+   palette be judged rather than computed.
+
+   Same specificity as :root and declared after it, so these win. The class goes
+   on <html> as well as <body> -- html is not a body descendant, and the ground
+   behind the scaled stage is painted from it.
+
+   Exempt on purpose: the colour-temperature gradient in .slider.ct. That is
+   2700K to 6500K, what the lamp will actually do, not decoration. It must not
+   move when someone picks a different palette. */
+/* Midnight */
+.pal-midnight{--bg-top:#151522;--bg-bot:#07070B;--glow-a:rgba(29,158,117,.16);--glow-b:rgba(120,110,220,.13);--ink:#E8E8E4;--ink-dim:#B8B8BF;--ink-quiet:#6F6F77;--ink-ghost:#3D3D46;--accent:#5DCAA5;--accent-deep:#0F6E56;--accent-line:#1D9E75;--accent-soft:rgba(29,158,117,.16);--accent-text:#9FE1CB;--on-accent:#08110D;--ok:#2E7F68;--warm:#F0997B;--bad:#C4705A;--tile:rgba(28,28,38,.74);--tile-line:rgba(120,125,150,.22);--line:rgba(120,125,150,.22);--line-soft:rgba(120,125,150,.16);--surface:rgba(20,20,28,.7);--surface-2:rgba(28,28,38,.85);--track:rgba(22,22,30,.75);--sheet-bg:rgba(11,11,18,.985);--ov-bg:rgba(17,17,25,.985);--nav-bg:rgba(9,9,14,.97);--preset-a:#23303A;--preset-b:#182028;--art-a:rgba(20,20,28,.7);--art-b:rgba(20,20,28,.7);--scrim:#05050A;--idle-hint:#24242C;--idle-clock:#4A4A52}
+/* Ember */
+.pal-ember{--bg-top:#1B1411;--bg-bot:#1B1411;--glow-a:rgba(238,139,66,.10);--glow-b:rgba(200,110,60,.07);--ink:#F9F0E7;--ink-dim:#E0CCBA;--ink-quiet:#AD9585;--ink-ghost:#7C6555;--accent:#EE8B42;--accent-deep:#BF6529;--accent-line:transparent;--accent-soft:rgba(238,139,66,.18);--accent-text:#EE8B42;--on-accent:#1B1411;--ok:#7FB069;--warm:#EE8B42;--bad:#C4705A;--tile:#271D17;--tile-line:transparent;--line:rgba(247,240,232,.22);--line-soft:rgba(247,240,232,.06);--surface:#271D17;--surface-2:#2F231B;--track:#211913;--sheet-bg:#211913;--ov-bg:#241B15;--nav-bg:transparent;--preset-a:#4A3020;--preset-b:#301F16;--art-a:#5A3B26;--art-b:#33211A;--scrim:#120D0B;--idle-hint:#33261E;--idle-clock:#5A4636}
+/* Slate */
+.pal-slate{--bg-top:#16181C;--bg-bot:#0A0B0E;--glow-a:rgba(90,140,190,.12);--glow-b:rgba(110,120,150,.09);--ink:#E6E8EB;--ink-dim:#B4B9C0;--ink-quiet:#71777F;--ink-ghost:#414750;--accent:#6FA8DC;--accent-deep:#2C5A85;--accent-line:#3E7BAE;--accent-soft:rgba(111,168,220,.16);--accent-text:#A9CDEE;--on-accent:#0A0B0E;--ok:#5F9E86;--warm:#E0A177;--bad:#C4705A;--tile:#1D2026;--tile-line:rgba(140,150,170,.18);--line:rgba(140,150,170,.20);--line-soft:rgba(140,150,170,.12);--surface:#1B1E23;--surface-2:#23272E;--track:#16191E;--sheet-bg:#14161A;--ov-bg:#191C21;--nav-bg:#111318;--preset-a:#2A3A4A;--preset-b:#1C2530;--art-a:#2A3038;--art-b:#1A1E24;--scrim:#08090B;--idle-hint:#262A30;--idle-clock:#4B525C}
+/* Heath */
+.pal-heath{--bg-top:#1A141C;--bg-bot:#0D0A0F;--glow-a:rgba(190,110,150,.12);--glow-b:rgba(120,90,170,.10);--ink:#F0E8EE;--ink-dim:#CDBCC7;--ink-quiet:#9A8794;--ink-ghost:#6B5A66;--accent:#D98BA8;--accent-deep:#8E4A66;--accent-line:#B0658A;--accent-soft:rgba(217,139,168,.16);--accent-text:#EBB4C8;--on-accent:#0D0A0F;--ok:#6FA890;--warm:#E5A07E;--bad:#C4705A;--tile:#241B27;--tile-line:rgba(200,170,195,.16);--line:rgba(200,170,195,.20);--line-soft:rgba(200,170,195,.10);--surface:#221A25;--surface-2:#2B2130;--track:#1B1420;--sheet-bg:#1A131D;--ov-bg:#1F1723;--nav-bg:#140F17;--preset-a:#3E2840;--preset-b:#261A2A;--art-a:#33243A;--art-b:#1F1624;--scrim:#0A070C;--idle-hint:#2C2130;--idle-clock:#574459}
+/* Mono */
+.pal-mono{--bg-top:#161616;--bg-bot:#080808;--glow-a:rgba(255,255,255,.05);--glow-b:rgba(255,255,255,.03);--ink:#EDEDED;--ink-dim:#BDBDBD;--ink-quiet:#7A7A7A;--ink-ghost:#474747;--accent:#F2F2F2;--accent-deep:#8A8A8A;--accent-line:#B5B5B5;--accent-soft:rgba(255,255,255,.12);--accent-text:#FFFFFF;--on-accent:#0A0A0A;--ok:#8FB58F;--warm:#D8B08A;--bad:#C48A7A;--tile:#1E1E1E;--tile-line:rgba(255,255,255,.14);--line:rgba(255,255,255,.18);--line-soft:rgba(255,255,255,.09);--surface:#1C1C1C;--surface-2:#262626;--track:#171717;--sheet-bg:#141414;--ov-bg:#1A1A1A;--nav-bg:#101010;--preset-a:#333333;--preset-b:#1E1E1E;--art-a:#2A2A2A;--art-b:#181818;--scrim:#060606;--idle-hint:#292929;--idle-clock:#505050}
+
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 /* The layout is authored at 720 CSS px wide and scaled to whatever the panel
    actually is. Scaling by width alone, rather than fitting the whole
@@ -44,8 +76,8 @@ body{width:720px;height:var(--stage-h,1280px);overflow:hidden;position:relative;
 /* no filter: a blurred 40px surface under backdrop-filter layers is the single
    most expensive thing on this page. Soft radial gradients look the same. */
 body::before{content:"";position:fixed;inset:0;pointer-events:none;
-  background:radial-gradient(46% 32% at 22% 16%, rgba(29,158,117,.16), transparent 72%),
-             radial-gradient(40% 28% at 82% 72%, rgba(120,110,220,.13), transparent 72%)}
+  background:radial-gradient(46% 32% at 22% 16%, var(--glow-a), transparent 72%),
+             radial-gradient(40% 28% at 82% 72%, var(--glow-b), transparent 72%)}
 .tile{background:var(--tile);border:1px solid var(--tile-line);border-radius:var(--r);
   backdrop-filter:blur(14px) saturate(1.2);-webkit-backdrop-filter:blur(14px) saturate(1.2)}
 .press{transition:transform .12s var(--ease),background .18s var(--ease),border-color .18s var(--ease)}
@@ -56,7 +88,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
   transition:transform var(--dur) var(--sheet-ease)}
 body.sheet-open #room{transform:scale(.955) translateZ(0)}
 /* scrim instead of an animated blur filter: opacity animation is compositor-only */
-#scrim{position:absolute;inset:0;background:#05050A;opacity:0;pointer-events:none;z-index:20;
+#scrim{position:absolute;inset:0;background:var(--scrim);opacity:0;pointer-events:none;z-index:20;
   transition:opacity var(--dur) var(--ease)}
 body.sheet-open #scrim{opacity:.55}
 .clock{font-size:112px;font-weight:200;letter-spacing:4px;line-height:1;text-align:center;
@@ -79,12 +111,12 @@ body.sheet-open #scrim{opacity:.55}
 .strip-row{display:flex;align-items:center;gap:18px;height:100%;padding:0 28px}
 .strip.idle .meta .t{color:var(--ink-quiet)}
 .strip.idle .pp{opacity:.3}
-.strip .prog{position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(255,255,255,.07)}
+.strip .prog{position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--line-soft)}
 .strip .prog i{display:block;height:100%;width:0;background:var(--accent);
   transform-origin:left center;transition:width .5s linear}
 .media-row{display:flex;align-items:center;gap:18px}
-.art{width:72px;height:72px;border-radius:14px;background:rgba(20,20,28,.7);
-  border:1px solid rgba(120,125,150,.18);display:grid;place-items:center;flex:none;overflow:hidden}
+.art{width:72px;height:72px;border-radius:14px;background:var(--surface);
+  border:1px solid var(--line-soft);display:grid;place-items:center;flex:none;overflow:hidden}
 .art img{width:100%;height:100%;object-fit:cover}
 .art svg{width:26px;height:26px;stroke:var(--ink-quiet);fill:none;stroke-width:1.5}
 .meta{flex:1;min-width:0}
@@ -96,7 +128,7 @@ body.sheet-open #scrim{opacity:.55}
 .slabel{display:flex;justify-content:space-between;align-items:baseline;margin:34px 4px 12px}
 .slabel .n{font-size:26px;color:var(--ink-dim)}
 .slabel .v{font-size:22px;color:var(--ink-quiet);font-variant-numeric:tabular-nums}
-.slider{height:64px;border-radius:32px;background:rgba(22,22,30,.75);
+.slider{height:64px;border-radius:32px;background:var(--track);
   border:1px solid var(--tile-line);position:relative}
 /* The fill needs clipping to the rounded track; the handle needs to escape it.
    They cannot both live under one overflow, so the fill gets its own clipping
@@ -113,14 +145,14 @@ body.sheet-open #scrim{opacity:.55}
 .slider.thin .knob{width:20px;height:20px}
 body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
 .fill{position:absolute;inset:0;width:100%;transform:scaleX(0);transform-origin:left center;
-  background:linear-gradient(180deg,#17886B,var(--accent-deep));
+  background:linear-gradient(180deg,var(--accent-line),var(--accent-deep));
   will-change:transform;
   transition:transform var(--dur-fill) var(--sheet-ease)}
 .slider.live .fill{transition:none}
 
 .nav{position:absolute;left:0;right:0;bottom:0;height:var(--nav);display:flex;z-index:40;
-  background:rgba(9,9,14,.66);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
-  border-top:1px solid rgba(120,125,150,.14)}
+  background:var(--nav-bg);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  border-top:1px solid var(--line-soft)}
 .nav button{flex:1;background:none;border:0;color:var(--ink-ghost);font:inherit;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;
   transition:color .2s var(--ease)}
@@ -131,9 +163,9 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
 .nav .temp sup{font-size:15px;vertical-align:super}
 
 .sheet{position:absolute;left:0;right:0;top:0;bottom:0;z-index:45;padding:0 32px;
-  border-radius:34px 34px 0 0;background:rgba(11,11,18,.90);
+  border-radius:34px 34px 0 0;background:var(--sheet-bg);
   backdrop-filter:blur(16px) saturate(1.15);-webkit-backdrop-filter:blur(16px) saturate(1.15);
-  border-top:1px solid rgba(120,125,150,.16);
+  border-top:1px solid var(--line-soft);
   transform:translateY(102%);opacity:0;pointer-events:none;
   will-change:transform,opacity;
   transition:transform var(--dur) var(--sheet-ease),opacity .16s var(--ease)}
@@ -160,7 +192,7 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
 .chk{width:48px;height:48px;border-radius:13px;flex:none;display:grid;place-items:center;
   border:2px solid var(--ink-ghost);
   transition:background .16s var(--ease),border-color .16s var(--ease)}
-.chk svg{width:28px;height:28px;stroke:#08110D;fill:none;stroke-width:3;
+.chk svg{width:28px;height:28px;stroke:var(--on-accent);fill:none;stroke-width:3;
   stroke-linecap:round;stroke-linejoin:round;opacity:0;transition:opacity .16s var(--ease)}
 .chk.on{background:var(--accent);border-color:var(--accent)}
 .chk.on svg{opacity:1}
@@ -173,7 +205,7 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
 /* Full-screen and unmissable: the whole point is to be seen from across a
    room by someone who does not know which panel is which. */
 #identify{position:absolute;inset:0;z-index:120;display:none;place-items:center;
-  background:var(--accent);color:#08110D;font-size:64px;font-weight:600;
+  background:var(--accent);color:var(--on-accent);font-size:64px;font-weight:600;
   letter-spacing:1px;text-align:center;padding:0 40px}
 #identify.on{display:grid;animation:idpulse .9s steps(1,end) infinite}
 #gtoast{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) scale(.9);
@@ -184,7 +216,7 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
 @keyframes idpulse{0%,49%{opacity:1}50%,100%{opacity:.35}}
 .fx{display:flex;flex-wrap:wrap;gap:12px;margin-top:24px}
 .fx div{padding:14px 22px;border-radius:20px;font-size:20px;color:var(--ink-quiet);
-  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background:rgba(28,28,38,.72)}
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background:var(--tile)}
 .fx div.on{border-color:var(--accent-line);color:var(--accent-text);background:var(--accent-soft)}
 
 .readout{display:flex;gap:20px;margin-top:30px}
@@ -204,8 +236,8 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
    never noticed. */
 .ov-card{position:absolute;left:0;right:0;bottom:0;max-height:76%;overflow-y:auto;scrollbar-width:none;
   will-change:transform;
-  background:rgba(17,17,25,.985);border-radius:32px 32px 0 0;padding:0 28px 34px;
-  border-top:1px solid rgba(120,125,150,.16);
+  background:var(--ov-bg);border-radius:32px 32px 0 0;padding:0 28px 34px;
+  border-top:1px solid var(--line-soft);
   transform:translateY(100%);transition:transform .24s var(--sheet-ease)}
 .ov-card::-webkit-scrollbar{display:none}
 .ov.on .ov-card{transform:translateY(0)}
@@ -226,20 +258,20 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
    to start under the button -- and since the button is the full width of its
    112px target, the top-left corner of the album art dismissed the sheet. */
 .mp-art{width:560px;height:560px;margin:104px auto 0;border-radius:18px;overflow:hidden;position:relative;
-  background:rgba(20,20,28,.7);border:1px solid rgba(120,125,150,.18);display:grid;place-items:center}
+  background:var(--surface);border:1px solid var(--line-soft);display:grid;place-items:center}
 .mp-art img{width:100%;height:100%;object-fit:cover}
 .mp-art>svg{width:96px;height:96px;stroke:var(--ink-ghost);fill:none;stroke-width:1.2}
 .mp-badge{position:absolute;top:16px;right:16px;width:56px;height:56px;border-radius:28px;
   background:rgba(240,240,245,.92);display:grid;place-items:center;overflow:hidden}
 .mp-badge img{width:100%;height:100%;object-fit:cover}
-.mp-badge svg{width:28px;height:28px;stroke:#15151f;fill:none;stroke-width:1.6}
+.mp-badge svg{width:28px;height:28px;stroke:var(--on-accent);fill:none;stroke-width:1.6}
 .mp-title{text-align:center;font-size:31px;font-weight:500;margin-top:30px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mp-sub{text-align:center;font-size:22px;color:var(--ink-quiet);margin-top:12px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mp-bar{height:5px;border-radius:3px;background:rgba(255,255,255,.13);position:relative;
   overflow:hidden;margin-top:28px}
-.mp-bar i{position:absolute;inset:0;width:0;background:#E9E9EC;transition:width .5s linear}
+.mp-bar i{position:absolute;inset:0;width:0;background:var(--ink);transition:width .5s linear}
 .mp-times{display:flex;justify-content:space-between;margin-top:14px;font-size:19px;
   color:var(--ink-quiet);font-variant-numeric:tabular-nums}
 .mp-transport{display:flex;align-items:center;justify-content:space-between;margin-top:26px;padding:0 6px}
@@ -247,13 +279,13 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
 .mp-btn svg{width:30px;height:30px;fill:var(--ink);stroke:none}
 .mp-btn.edge svg{width:27px;height:27px;fill:none;stroke:var(--ink-ghost);stroke-width:1.9}
 .mp-btn.edge.on svg{stroke:var(--accent)}
-.mp-play{width:104px;height:104px;border-radius:52px;background:#E9E9EC;display:grid;place-items:center}
-.mp-play svg{width:44px;height:44px;fill:#15151f;stroke:none}
+.mp-play{width:104px;height:104px;border-radius:52px;background:var(--ink);display:grid;place-items:center}
+.mp-play svg{width:44px;height:44px;fill:var(--on-accent);stroke:none}
 .mp-vol{position:absolute;left:32px;right:32px;bottom:150px;display:flex;align-items:center;gap:16px}
 .mp-vol svg{width:26px;height:26px;stroke:var(--ink-quiet);fill:none;stroke-width:1.6;flex:none}
 .mp-vol .slider{flex:1;height:64px;border-radius:32px}
 .mp-bottom{position:absolute;left:32px;right:32px;bottom:28px;height:104px;border-radius:26px;
-  background:rgba(28,28,38,.80);display:flex;align-items:center;justify-content:space-around;padding:0 10px}
+  background:var(--surface);display:flex;align-items:center;justify-content:space-around;padding:0 10px}
 .mp-ico{width:78px;height:78px;display:grid;place-items:center;border-radius:22px;color:var(--ink-dim)}
 .mp-ico svg{width:30px;height:30px;stroke:currentColor;fill:none;stroke-width:1.7}
 .mp-ico.on{color:var(--accent);background:var(--accent-soft)}
@@ -276,7 +308,7 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
    that made a list of blurred tiles unscrollable, one level further out. The
    sheet is already 90% opaque, so behind a list of opaque rows the blur was
    buying almost nothing. */
-#s-browse{backdrop-filter:none;-webkit-backdrop-filter:none;background:rgba(11,11,18,.97)}
+#s-browse{backdrop-filter:none;-webkit-backdrop-filter:none;background:var(--sheet-bg)}
 /* will-change is what takes this list from 14fps to 64. The whole stage sits
    under a transform: scale(), and a scroller inside a transformed ancestor is
    not given its own compositing layer -- so every frame of a flick repainted
@@ -298,7 +330,7 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
    the padding made every unseen row 28px too tall, which is a scroll extent
    that shifts under the finger, i.e. the jank this is here to remove. */
 .bitem{display:flex;align-items:center;gap:18px;padding:14px;margin-bottom:12px;border-radius:18px;
-  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background:rgba(28,28,38,.72);
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background:var(--tile);
   content-visibility:auto;contain-intrinsic-size:auto 64px}
 .bitem:active{background:rgba(42,42,56,.9)}
 /* Tiles. The row layout is fine for folders with names but poor for music,
@@ -321,8 +353,8 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
    already fills that job and the glyph only crowds it. */
 .blist.tiles .bgo{display:none}
 .blist.tiles .hint2{grid-column:1/-1}
-.bthumb{width:64px;height:64px;border-radius:12px;flex:none;background:rgba(20,20,28,.7);
-  border:1px solid rgba(120,125,150,.18);display:grid;place-items:center;overflow:hidden}
+.bthumb{width:64px;height:64px;border-radius:12px;flex:none;background:var(--surface);
+  border:1px solid var(--line-soft);display:grid;place-items:center;overflow:hidden}
 .bthumb img{width:100%;height:100%;object-fit:cover}
 .bthumb svg{width:24px;height:24px;stroke:var(--ink-ghost);fill:none;stroke-width:1.5}
 .bmeta{flex:1;min-width:0}
@@ -333,14 +365,14 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
 
 /* ---------- wifi ---------- */
 .wnet{display:flex;align-items:center;gap:16px;padding:18px 14px;border-radius:16px;
-  font-size:22px;background:rgba(28,28,38,.72);margin-bottom:10px}
+  font-size:22px;background:var(--tile);margin-bottom:10px}
 .wnet .s{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wnet .g{font-size:18px;color:var(--ink-quiet);font-variant-numeric:tabular-nums}
 .wnet.on{background:var(--accent-soft);color:var(--accent-text)}
 .wnet .lock{width:18px;height:18px;stroke:var(--ink-quiet);fill:none;stroke-width:1.8}
 /* A wall panel has no keyboard, so a WPA passphrase cannot be typed without
    one on screen. Keys are sized for a finger at this panel's smallest scale. */
-.pw{height:64px;border-radius:14px;background:rgba(22,22,30,.75);border:1px solid var(--tile-line);
+.pw{height:64px;border-radius:14px;background:var(--track);border:1px solid var(--tile-line);
   display:flex;align-items:center;padding:0 20px;font-size:26px;letter-spacing:3px;
   overflow:hidden;white-space:nowrap;direction:rtl;text-align:left}
 /* Explicit rows. This was one wrapping flex container with a 68px minimum on
@@ -353,7 +385,7 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
 /* 76 layout px, which is ~51 physical on the smallest panel here. At 62 it was
    ~41 and fiddly — below roughly 45 a key stops being comfortably hittable. */
 .krow div{flex:1 1 0;min-width:0;height:76px;display:grid;place-items:center;
-  border-radius:12px;background:rgba(28,28,38,.85);font-size:24px}
+  border-radius:12px;background:var(--surface-2);font-size:24px}
 .krow div.wide{flex:1.5 1 0;font-size:20px}
 .krow div:active{background:var(--accent-soft)}
 /* Half-key indents, so the letters stay the same size on the shorter rows
@@ -363,7 +395,7 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
 
 .rows{margin-top:26px;padding:6px 26px}
 .row{display:flex;justify-content:space-between;align-items:center;padding:22px 0;font-size:22px;
-  border-bottom:1px solid rgba(120,125,150,.10)}
+  border-bottom:1px solid var(--line-soft)}
 .row:last-child{border-bottom:0}
 .row .k{color:var(--ink-quiet)}
 .dot{display:inline-block;width:10px;height:10px;border-radius:5px;margin-right:10px;vertical-align:middle}
@@ -387,10 +419,10 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
   align-items:center;justify-content:center;z-index:60}
 #idle.on{display:flex;animation:fade .5s var(--ease)}
 @keyframes fade{from{opacity:0}to{opacity:1}}
-#idle .clock{color:#4A4A52;padding:0;transition:transform 2.4s var(--ease)}
+#idle .clock{color:var(--idle-clock);padding:0;transition:transform 2.4s var(--ease)}
 
 
-#idle .hint{position:absolute;bottom:90px;font-size:19px;color:#24242C}
+#idle .hint{position:absolute;bottom:90px;font-size:19px;color:var(--idle-hint)}
 /* Blanked: nothing but black. The backlight is separate hardware, so whatever
    was last painted is what the panel is still holding and what you see the
    instant the light comes up. Trying to repaint fast enough on wake did not
@@ -416,24 +448,16 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
 @font-face{font-family:"Outfit";src:url("outfit-300.woff2") format("woff2");font-weight:300;font-display:swap}
 @font-face{font-family:"Outfit";src:url("outfit-400.woff2") format("woff2");font-weight:400;font-display:swap}
 @font-face{font-family:"Outfit";src:url("outfit-500.woff2") format("woff2");font-weight:500;font-display:swap}
-body.theme-ambient{
-  --ink:#F9F0E7; --ink-dim:#E0CCBA; --ink-quiet:#AD9585; --ink-ghost:#7C6555;
-  --accent:#EE8B42; --accent-deep:#BF6529; --accent-line:transparent;
-  --accent-soft:rgba(238,139,66,.18); --accent-text:#EE8B42;
-  --warm:#EE8B42; --bad:#C4705A;
-  --bg-top:#1B1411; --bg-bot:#1B1411;
-  --tile:#271D17; --tile-line:transparent;
-  --r:32px; --nav:144px; --strip:160px;
-  background:#1B1411;
-  font-family:"Outfit","Helvetica Neue",system-ui,sans-serif;
-}
+body.theme-ambient{--r:32px;--nav:144px;--strip:160px;
+  background:var(--bg-top);
+  font-family:"Outfit","Helvetica Neue",system-ui,sans-serif}
 /* Flat ground and no coloured wash: the warmth comes from the surfaces, and a
    green-and-violet gradient underneath fights it. */
 body.theme-ambient::before{background:none}
 /* html paints the ground behind the scaled stage, and it is not a descendant
    of body -- so the tokens set on body never reach it and it stayed the
    default near-black. That is the ring of cold grey around a warm panel. */
-html.theme-ambient{background:#1B1411}
+html.theme-ambient{background:var(--bg-top)}
 body.theme-ambient .tile{border:0;backdrop-filter:none;-webkit-backdrop-filter:none}
 
 /* Room and day above the clock, which is the order the theme was drawn in.
@@ -443,27 +467,27 @@ body.theme-ambient .clock{order:2;font-size:158px;letter-spacing:-3px;padding-to
 body.theme-ambient .sub{order:1;font-size:22px;letter-spacing:1px;padding-top:0}
 
 body.theme-ambient .presets{gap:18px;margin-top:54px}
-body.theme-ambient .preset{height:188px;border-radius:34px;background:#271D17;gap:16px}
+body.theme-ambient .preset{height:188px;border-radius:34px;background:var(--surface);gap:16px}
 body.theme-ambient .preset svg{width:34px;height:34px;stroke:var(--ink-quiet);stroke-width:1.4}
 body.theme-ambient .preset span{font-size:26px;color:var(--ink-quiet)}
-body.theme-ambient .preset::before{background:linear-gradient(160deg,#4A3020,#301F16)}
+body.theme-ambient .preset::before{background:linear-gradient(160deg,var(--preset-a),var(--preset-b))}
 body.theme-ambient .preset.active svg{stroke:var(--accent)}
 body.theme-ambient .preset.active span{color:var(--accent)}
 
 /* Inset and rounded rather than a full-width band welded to the navbar. */
 body.theme-ambient .strip{left:40px;right:40px;bottom:calc(var(--nav) + 28px);height:132px;
-  border-radius:34px;background:#271D17;border:0}
+  border-radius:34px;background:var(--surface);border:0}
 body.theme-ambient .strip-row{padding:0 26px;gap:20px}
 body.theme-ambient .art{width:84px;height:84px;border-radius:24px;
-  background:linear-gradient(140deg,#5A3B26,#33211A)}
-body.theme-ambient .strip .prog{background:rgba(249,240,231,.08)}
+  background:linear-gradient(140deg,var(--art-a),var(--art-b))}
+body.theme-ambient .strip .prog{background:var(--line-soft)}
 
 /* The setpoint, not the reading: what the room is set to is the thing anyone
    walks up to a panel to change. What it actually is belongs on the climate
    page, where you go to find out rather than to act. */
 .readings{display:none}
 body.theme-ambient .readings{display:block;margin-top:18px}
-body.theme-ambient .setpoint{height:120px;border-radius:30px;background:#271D17;
+body.theme-ambient .setpoint{height:120px;border-radius:30px;background:var(--surface);
   display:flex;align-items:center;justify-content:space-between;padding:0 14px}
 body.theme-ambient .sp-btn{width:92px;height:92px;border-radius:26px;display:grid;place-items:center;flex:none}
 body.theme-ambient .sp-btn svg{width:32px;height:32px;stroke:var(--ink-quiet);fill:none;
@@ -498,26 +522,26 @@ body.theme-ambient .strip .prog{display:none}
 /* Each light becomes a card with its own slider inside, which is the single
    biggest difference from the default and the one that reads at a glance. */
 .lamp{display:contents}
-body.theme-ambient .lamp{display:block;background:#2F231B;border-radius:32px;
+body.theme-ambient .lamp{display:block;background:var(--surface-2);border-radius:32px;
   padding:30px 32px 34px;margin-bottom:16px}
 body.theme-ambient .lamp .slabel{margin:0}
 body.theme-ambient .lamp .slabel .n{font-size:28px;color:var(--ink)}
 body.theme-ambient .lamp .slabel .v{font-size:24px;color:var(--accent)}
 body.theme-ambient .lamp .slider{height:14px;border-radius:8px;margin-top:22px;
-  background:rgba(249,240,231,.08)}
+  background:var(--line-soft)}
 /* Volume is a level like any other; it was the last control still wearing the
    original pill. */
 body.theme-ambient .mp-vol .slider{height:14px;border-radius:8px}
 body.theme-ambient .mp-vol .slider .knob{width:20px;height:20px}
 
 body.theme-ambient .slider{height:64px;border-radius:32px;border:0;
-  background:rgba(249,240,231,.08)}
+  background:var(--line-soft)}
 body.theme-ambient .slider.thin{height:28px;border-radius:14px}
 /* Restored: body.theme-ambient .slider outranks .slider.ct, so the theme was
    painting a flat track over the one control whose whole job is to show the
    colour it is about to set. */
 body.theme-ambient .slider.ct{background:linear-gradient(90deg,#FFB25E,#FFE9CC,#CFE3FF)}
-body.theme-ambient .fill{background:linear-gradient(180deg,#EE8B42,#BF6529);border-radius:8px}
+body.theme-ambient .fill{background:linear-gradient(180deg,var(--accent),var(--accent-deep));border-radius:8px}
 
 /* Pill behind the active icon instead of a tinted label, and no rule along the
    top -- the whole point of the theme is that nothing is separated by a line. */
@@ -537,34 +561,48 @@ body.theme-ambient .nav button{gap:9px;color:var(--ink-ghost)}
 body.theme-ambient .nav svg{width:26px;height:26px;stroke-width:1.5}
 body.theme-ambient .nav b{font-size:19px}
 body.theme-ambient .nav button.on{color:var(--accent)}
-body.theme-ambient .nav button.on svg{background:rgba(238,139,66,.18);border-radius:26px;
+body.theme-ambient .nav button.on svg{background:var(--accent-soft);border-radius:26px;
   width:74px;height:52px;padding:13px 24px;box-sizing:border-box}
 
-body.theme-ambient .sheet{background:#211913;border-top:0;border-radius:36px 36px 0 0;
+body.theme-ambient .sheet{background:var(--sheet-bg);border-top:0;border-radius:36px 36px 0 0;
   backdrop-filter:none;-webkit-backdrop-filter:none}
-body.theme-ambient #s-browse{background:#211913}
-body.theme-ambient .ov-card{background:#241B15;border-top:0;border-radius:36px 36px 0 0}
+body.theme-ambient #s-browse{background:var(--sheet-bg)}
+body.theme-ambient .ov-card{background:var(--ov-bg);border-top:0;border-radius:36px 36px 0 0}
 body.theme-ambient .rows,
 body.theme-ambient .act,
-body.theme-ambient .bitem{background:#2F231B!important;border:0!important;border-radius:28px}
-body.theme-ambient .row{border-bottom-color:rgba(247,240,232,.06)}
+body.theme-ambient .bitem{background:var(--surface-2)!important;border:0!important;border-radius:28px}
+body.theme-ambient .row{border-bottom-color:var(--line-soft)}
 body.theme-ambient .slabel .n{color:var(--ink-dim)}
-body.theme-ambient .chk{border-color:rgba(247,240,232,.22)}
+body.theme-ambient .chk{border-color:var(--line)}
 body.theme-ambient .chk.on{background:var(--accent);border-color:var(--accent)}
-body.theme-ambient .chk svg{stroke:#1B1411}
-body.theme-ambient #identify{background:var(--accent);color:#1B1411}
+body.theme-ambient .chk svg{stroke:var(--on-accent)}
+body.theme-ambient #identify{background:var(--accent);color:var(--on-accent)}
+
+/* Ambient's surfaces are opaque, so a backdrop-filter behind them composites a
+   blur nobody can see. Rather than offer a control that provably does nothing,
+   the row is not there. The tier still exists and still A/Bs the default theme,
+   which is what CLAUDE.md keeps it for. */
+body.theme-ambient #glassRow{display:none}
 
 /* ---------- glass tiers (toggled live from Settings) ---------- */
-body.ng-sheets .sheet{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
-  background:rgba(11,11,18,.985)}
-body.ng-nav .nav{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
-  background:rgba(9,9,14,.97)}
-body.ng-tiles .tile{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
-  background:rgba(28,28,38,.74)}
+/* :not(.theme-ambient) is load-bearing, not tidiness. These carry the same
+   specificity as Ambient's own chrome rules and are declared after them, so
+   without it they win on source order and repaint the transparent navbar and
+   borderless sheets that Ambient is. That only showed up once glass started
+   defaulting to off, which is to say it would have shipped. */
+body.ng-sheets:not(.theme-ambient) .sheet{
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+  background:var(--sheet-bg)}
+body.ng-nav:not(.theme-ambient) .nav{
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+  background:var(--nav-bg)}
+body.ng-tiles:not(.theme-ambient) .tile{
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+  background:var(--tile)}
 
 #conn{position:absolute;top:8px;left:12px;font-size:15px;z-index:99;letter-spacing:.4px}
-#conn.ok{color:#2E7F68} #conn.bad{color:var(--bad)} #conn.wait{color:var(--ink-quiet)}
-#fps{position:absolute;top:8px;right:12px;font-size:15px;color:#2E7F68;z-index:99;font-variant-numeric:tabular-nums}
+#conn.ok{color:var(--ok)} #conn.bad{color:var(--bad)} #conn.wait{color:var(--ink-quiet)}
+#fps{position:absolute;top:8px;right:12px;font-size:15px;color:var(--ok);z-index:99;font-variant-numeric:tabular-nums}
 /* Off unless a panel asks for them. They are for bring-up, and a finished
    panel on a wall should not be showing a frame counter. */
 body:not(.diag) #conn, body:not(.diag) #fps, body:not(.diag) #pDiag,
@@ -572,7 +610,7 @@ body:not(.diag) .diagonly{display:none}
 /* Wraps rather than truncating: the second line names every light and its
    targets, which is the part worth reading, and an ellipsis would cut off
    exactly the light being asked about. */
-#pDiag{margin-top:14px;font-size:15px;line-height:1.5;color:#2E7F68;
+#pDiag{margin-top:14px;font-size:15px;line-height:1.5;color:var(--ok);
   text-align:center;white-space:pre-wrap;word-break:break-word}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
@@ -696,6 +734,9 @@ body:not(.diag) .diagonly{display:none}
       <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
     <div class="act tile press" id="themeRow">
       <span class="t">Theme</span><span class="v" id="themeV">Default</span>
+      <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="act tile press" id="paletteRow">
+      <span class="t">Palette</span><span class="v" id="paletteV">Midnight</span>
       <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
     <div class="act tile press" id="diagRow">
       <span class="t">Diagnostics</span><span class="v" id="diagV">Off</span>
@@ -913,7 +954,7 @@ try{
 if(diag) document.body.classList.add("diag");
 const BL_MIN   = _disp.backlight_min ?? 5;
 const BL_DEF   = _disp.backlight_default ?? 100;
-const GLASS_DEFAULT = _disp.glass_tier ?? 0;
+const GLASS_DEFAULT = _disp.glass_tier ?? 3;
 const BL_URL   = "http://127.0.0.1:8081";
 /* Applied straight away rather than in a paint pass: the theme changes the
    ground colour, and a frame of the default palette before the ambient one
@@ -944,6 +985,43 @@ function applyTheme(){
   }catch(e){}
 }
 applyTheme();
+
+/* ---------- palette ----------
+   Colour, chosen independently of the theme. Each theme has a palette it was
+   drawn against, and that is what a panel gets when nobody has said otherwise,
+   so an existing panel looks exactly as it did before palettes existed. */
+const PALETTES = [
+  {id:"midnight", name:"Midnight"},
+  {id:"ember",    name:"Ember"},
+  {id:"slate",    name:"Slate"},
+  {id:"heath",    name:"Heath"},
+  {id:"mono",     name:"Mono"},
+];
+const THEME_PALETTE = {default:"midnight", ambient:"ember"};
+const PALETTE_DEFAULT = _disp.palette || THEME_PALETTE[THEME_DEFAULT] || "midnight";
+let palette = PALETTE_DEFAULT;
+try{
+  const v = localStorage.getItem("palette");
+  const base = localStorage.getItem("paletteBase");
+  if(v !== null && base !== null && base === PALETTE_DEFAULT) palette = v;
+  else { localStorage.removeItem("palette"); localStorage.setItem("paletteBase", PALETTE_DEFAULT); }
+}catch(e){}
+function applyPalette(){
+  if(!PALETTES.some(p => p.id === palette)) palette = PALETTE_DEFAULT;
+  PALETTES.forEach(p => {
+    document.body.classList.toggle("pal-" + p.id, p.id === palette);
+    document.documentElement.classList.toggle("pal-" + p.id, p.id === palette);
+  });
+  const p = PALETTES.find(p => p.id === palette) || PALETTES[0];
+  const el = $("#paletteV"); if(el) el.textContent = p.name;
+  const st = $("#stPalette"); if(st) st.textContent = p.name;
+  try{
+    localStorage.setItem("palette", palette);
+    localStorage.setItem("paletteBase", PALETTE_DEFAULT);
+  }catch(e){}
+}
+applyPalette();
+
 if(!(_disp.hide_nav_on_sheets ?? true)) document.body.classList.add("nav-always");
 if(!(_disp.mini_art ?? true)) document.body.classList.add("no-mini-art");
 
@@ -2002,6 +2080,12 @@ const thr = $("#themeRow");
 if(thr) thr.addEventListener("click",()=>{
   theme = THEMES[(THEMES.findIndex(t=>t.id===theme) + 1) % THEMES.length].id;
   applyTheme(); recordDisplay({theme}); bump();
+});
+
+const par = $("#paletteRow");
+if(par) par.addEventListener("click",()=>{
+  palette = PALETTES[(PALETTES.findIndex(p=>p.id===palette) + 1) % PALETTES.length].id;
+  applyPalette(); recordDisplay({palette}); bump();
 });
 
 const gr = $("#glassRow");

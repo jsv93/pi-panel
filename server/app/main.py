@@ -588,6 +588,7 @@ DISPLAY_KEYS = {
     "touch_hold_ms": int,
     "browse_view": str,
     "theme": str,
+    "palette": str,
     "presence_pin": int,
     "presence_debounce_ms": int,
     "presence_sensor": str,
@@ -619,6 +620,13 @@ async def _patch_display(panel_id: str, values: dict) -> dict:
         if k == "theme":
             if v not in ("default", "ambient"):
                 raise HTTPException(400, "theme must be 'default' or 'ambient'")
+            clean[k] = v
+            continue
+        if k == "palette":
+            # "" is legal and means the theme's own palette, which is how a
+            # panel configured before palettes existed keeps its look.
+            if v not in ("", "midnight", "ember", "slate", "heath", "mono"):
+                raise HTTPException(400, "unknown palette")
             clean[k] = v
             continue
         if k == "presence_sensor":
@@ -698,7 +706,7 @@ async def panel_presets(panel_id: str, request: Request):
 # What a panel may change about its own screen. Narrower than DISPLAY_KEYS on
 # purpose: these are the four with a control on the panel, and a panel has no
 # business setting its own screen size or dtoverlay.
-PANEL_DISPLAY_KEYS = {"theme", "glass_tier", "diagnostics", "browse_view"}
+PANEL_DISPLAY_KEYS = {"theme", "palette", "glass_tier", "diagnostics", "browse_view"}
 
 
 @app.post("/api/panel/{panel_id}/display")

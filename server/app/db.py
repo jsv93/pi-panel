@@ -74,7 +74,18 @@ DEFAULT_TEMPLATE = {
         # Seconds after going idle before the backlight is blanked outright.
         # 0 = never; dimming alone still glows noticeably on this panel.
         "backlight_off_s": 0,
-        "glass_tier": 0,
+        # 3 = off. Measured: the three glass surfaces (.tile, .nav, .sheet)
+        # cost 24 composited blur passes a frame and are invisible against this
+        # UI's own content -- near-black, with two very soft radial gradients and
+        # nothing high-frequency to smear. The effect only appears against high
+        # contrast, which the panel never shows. Tier 0 is still selectable and
+        # still worth having as an A/B, it is just not what a panel should ship
+        # doing. See GLASS-MEASUREMENT in docs/.
+        "glass_tier": 3,
+        # Colour, independent of the theme. Blank means "whatever this theme was
+        # drawn against" -- midnight for default, ember for ambient -- so a panel
+        # that predates palettes looks exactly as it did.
+        "palette": "",
         # Visual theme. "default" is the build as shipped; "ambient" is the
         # warm, borderless one. A theme changes only appearance -- every
         # measurement and every control is the same in both.

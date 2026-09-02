@@ -74,7 +74,16 @@ The Pi 5 renders 720x1280 with `backdrop-filter` glass. Frame budget is tight:
   `transform: scaleX()` for this reason.
 - Blur radius costs scale with radius. Lists of many `backdrop-filter` elements
   will tank frame rate; keep glass on hero elements only.
-- The glass tier toggle in Settings exists to A/B this. Don't remove it.
+- The glass tier toggle in Settings exists to A/B this. Don't remove it. It now
+  ships at "Off": measured, the three glass surfaces (.tile, .nav, .sheet) cost
+  24 composited blur passes a frame and produce nothing visible, because every
+  one of them sits at 74-98% opacity over a near-black page whose only detail is
+  two very soft radial gradients. A blur needs high-frequency content behind it
+  and this UI has none. Ambient never had glass at all, which is the whole of
+  why it measured faster.
+- Theme and palette are separate. A theme is structure -- geometry, type,
+  whether a surface has an edge. A palette is colour. Anything colour-shaped in
+  a theme block is a bug; put it in the palette tokens so it works under both.
 - **Every scrolling container needs `will-change: transform`.** The whole stage
   sits under a `transform: scale()`, and a scroller inside a transformed
   ancestor is not given its own compositing layer — so each frame of a flick
