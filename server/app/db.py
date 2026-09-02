@@ -65,6 +65,15 @@ CREATE TABLE IF NOT EXISTS provisioning (
 DEFAULT_TEMPLATE = {
     "room_label": "Room",
     "lights": [],
+    # Lunatone DALI-2 IoT gateway, spoken to directly on the LAN so Home
+    # Assistant is not in the path of a light turning on. Blank disables it and
+    # lights fall back to HA exactly as before -- this is opt-in per panel, one
+    # room at a time, with the old path intact underneath.
+    #
+    # poll_s 0 means trust the gateway's websocket to push level changes. Set it
+    # only if measurement shows it does not; the manual contradicts itself and
+    # the hardware is the arbiter. See docs/DALI-INTEGRATION.md.
+    "dali": {"gateway": "", "poll_s": 0},
     "media": {"default_speaker": "", "default_speaker_name": "", "speakers": []},
     "sensors": {"temperature": "", "humidity": "", "climate": ""},
     "display": {

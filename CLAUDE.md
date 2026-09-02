@@ -34,6 +34,7 @@ Corollaries:
     pi-os/        Pi OS Lite kiosk boot: cage + systemd, no desktop session
     esphome/      ESP32-P4 panel firmware (panel-poc.yaml) — retired, see below
     docs/         Architecture decisions and hardware findings
+                  DALI-INTEGRATION.md — gateway API, and the degraded path
 
 ## Conventions
 

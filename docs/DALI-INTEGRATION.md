@@ -1,7 +1,9 @@
 # DALI integration: gateway API and degraded mode
 
-Sketch, not built. Extends the topology already settled in `ARCHITECTURE.md`:
-one application controller, panels as clients.
+The agent-side client is **built** (`agent/panel-agent.py`, `dali_*`) and tested
+against a stub gateway; the per-light mapping and the panel UI switch are not.
+Degraded mode is design only. Extends the topology already settled in
+`ARCHITECTURE.md`: one application controller, panels as clients.
 
 ## What is wrong with the path today
 
@@ -289,13 +291,39 @@ optional — the coupler's inputs are referenced to the bus side.
 The panel's rear footprint is already spoken for by the PoE HAT. The MC is
 small, but budget for it and the optos before committing to an enclosure.
 
+## State of it
+
+**Done.** The agent holds the gateway's websocket, primes its cache from
+`GET /devices`, folds `devices` events into it, reports `daliStatus` separately
+from an unreachable gateway, and exposes `POST /dali/control` and
+`GET /dali/state` on localhost for the page. Configured per panel from the
+server (`dali.gateway`, `dali.poll_s`); blank disables it and lights keep going
+through Home Assistant. Status appears in Diagnostics as **DALI**.
+
+Verified against a stub gateway built to the manual's shapes, 18 checks: config
+parsing, cache priming, DT8 detection from `daliTypes`, dim, colour temperature,
+scene recall to a group, bus power loss and recovery, bad targets, an
+unreachable gateway, and reconfiguration while connected.
+
+One thing that only showed up in testing: the loop originally read config once
+per connection and iterated the socket. A healthy socket never drops, so a
+gateway address pushed from the server would have taken effect only if the
+connection happened to fail. It now receives with a timeout and re-reads on a
+one-second tick.
+
+**Not done.** Per-light DALI targets in the config, and the panel UI choosing
+the gateway over Home Assistant for a light that has one. Both want the hardware
+in front of them.
+
 ## Order of work
 
-1. **Gateway API in the agent.** Removes HA from the light path. Zero hardware,
-   and it takes out the component that actually fails.
-2. **Measure.** Run it and find out how often layer 0 fails at all. The case for
-   layer 1 is an assumption until there is a number against it.
-3. **Degraded mode**, if the number justifies it.
+1. ~~Gateway API in the agent.~~ Done.
+2. **Answer the push question** (§Open questions, item 1) the moment the gateway
+   is on the bench. It decides whether the per-light work needs polling.
+3. **Per-light targets and the UI switch.**
+4. **Measure.** Find out how often layer 0 fails at all. The case for layer 1 is
+   an assumption until there is a number against it.
+5. **Degraded mode**, if the number justifies it.
 
-Doing 3 before 2 would be building a fallback for a failure that has not been
+Doing 5 before 4 would be building a fallback for a failure that has not been
 observed, at the cost of board space that is already tight.

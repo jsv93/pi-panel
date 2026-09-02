@@ -343,6 +343,10 @@ def metrics():
     m.update(backlight_state())
     m.update(disk_writes())
     m["presence"] = PRESENCE_STATE
+    # Same reasoning as presence: a gateway that is not answering should say
+    # so where it can be read, not only in the journal.
+    m["dali"] = DALI_STATE["status"] + (
+        ", " + DALI_STATE["bus"] if DALI_STATE["bus"] else "")
     if PRESENCE_SEEN[0]:
         m["presence"] += f", last seen {round(time.monotonic() - PRESENCE_SEEN[0])}s ago"
     m.update(UI_STATE.get("wifi") or {})
@@ -722,6 +726,8 @@ async def serve_ui():
     app.router.add_post("/presets", save_preset)
     app.router.add_post("/light", save_light)
     app.router.add_post("/display", save_display)
+    app.router.add_post("/dali/control", dali_control)
+    app.router.add_get("/dali/state", dali_state_ep)
     app.router.add_static("/", str(root), show_index=True)
     runner = web.AppRunner(app)
     await runner.setup()
@@ -919,6 +925,255 @@ async def presence_loop():
         await asyncio.sleep(PRESENCE_POLL_S)
 
 
+# ---------------------------------------------------------------------------
+# Lunatone DALI-2 IoT gateway
+#
+# Talks to the gateway on the LAN instead of going through Home Assistant. HA
+# stays a client of the same gateway for automations and voice; it just stops
+# being load bearing for the panel, which is the whole point -- it is the least
+# reliable link in the chain and it sits upstream of the reliable ones.
+#
+# Lives in the agent rather than the page: the page reloads, the agent does not,
+# and one socket per panel beats one per browser tab. Endpoint shapes are from
+# Lunatone's API documentation M0023; see docs/DALI-INTEGRATION.md.
+#
+# Every failure here is contained. A panel with no gateway configured, an
+# unreachable one, or a firmware that answers differently still has to be a
+# panel -- and, per the rule this project is built on, the guaranteed path to a
+# light is still the bus hardware, never this.
+# ---------------------------------------------------------------------------
+DALI_STATE = {"status": "off", "devices": {}, "bus": "", "gateway": ""}
+DALI_RECONNECT_S = 10
+# How often the loop surfaces to re-read config while the socket is idle.
+DALI_TICK_S = 1.0
+
+
+def _dali_cfg():
+    """Gateway settings, read from disk each time so a pushed config change is
+    picked up without restarting the agent."""
+    try:
+        cfg = json.loads(CONFIG_PATH.read_text()).get("dali") or {}
+    except Exception:
+        return None
+    url = (cfg.get("gateway") or "").strip().rstrip("/")
+    if not url:
+        return None
+    if not url.startswith(("http://", "https://")):
+        url = "http://" + url
+    try:
+        poll = int(cfg.get("poll_s") or 0)
+    except (TypeError, ValueError):
+        poll = 0
+    return {"url": url, "poll_s": max(0, poll)}
+
+
+def _dali_ws_url(http_url):
+    return "ws" + http_url[4:] + "/" if http_url.startswith("http") else http_url
+
+
+def _dali_ingest(devices):
+    """Fold a device list -- from GET /devices or from a devices event, which
+    carry the same shape -- into the cache the page reads."""
+    for d in devices or []:
+        try:
+            did = int(d["id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        f = d.get("features") or {}
+
+        def stat(name, default=None):
+            v = f.get(name)
+            return v.get("status") if isinstance(v, dict) else default
+
+        DALI_STATE["devices"][did] = {
+            "id": did,
+            "name": d.get("name") or ("DALI " + str(did)),
+            "on": bool(stat("switchable", False)),
+            "level": stat("dimmable", 0),
+            "kelvin": stat("colorKelvin"),
+            # daliTypes 8 is DT8, the colour-capable gear. The panel decides
+            # whether to draw a colour control from this rather than from
+            # configuration, because the bus already knows the answer.
+            "dt8": 8 in (d.get("daliTypes") or []),
+            "groups": d.get("groups") or [],
+        }
+
+
+def dali_public():
+    return {"status": DALI_STATE["status"], "bus": DALI_STATE["bus"],
+            "gateway": DALI_STATE["gateway"],
+            "devices": list(DALI_STATE["devices"].values())}
+
+
+async def dali_send(target_type, target_id, control):
+    """POST one ControlData object. Returns (ok, detail)."""
+    cfg = _dali_cfg()
+    if not cfg:
+        return False, "no gateway configured"
+    if target_type == "broadcast":
+        path = "/broadcast/control"
+    elif target_type in ("device", "group", "zone") and target_id is not None:
+        try:
+            path = "/%s/%d/control" % (target_type, int(target_id))
+        except (TypeError, ValueError):
+            return False, "bad target id"
+    else:
+        return False, "bad target " + repr(target_type)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(cfg["url"] + path, json=control,
+                              timeout=aiohttp.ClientTimeout(total=5)) as r:
+                if r.status >= 400:
+                    return False, "gateway said %d" % r.status
+                return True, ""
+    except Exception as e:
+        return False, "%s: %s" % (type(e).__name__, e)
+
+
+async def dali_prime(session, cfg):
+    async with session.get(cfg["url"] + "/devices",
+                           timeout=aiohttp.ClientTimeout(total=10)) as r:
+        data = await r.json()
+    _dali_ingest(data.get("devices"))
+    return len(DALI_STATE["devices"])
+
+
+async def dali_loop():
+    """Hold the gateway's websocket, keep the device cache, tell the pages.
+
+    Polling exists but is off by default. Whether a level set by another
+    controller arrives as a devices event is the one thing about this API that
+    has to be measured on real hardware rather than read out of the manual,
+    which contradicts itself on the point: the introduction says level changes
+    are signalled, section 6.3.2 describes devices events as firing when devices
+    are added. If pushes turn out not to arrive, set dali.poll_s and the cache
+    is refreshed on a timer instead.
+    """
+    while True:
+        cfg = _dali_cfg()
+        if not cfg:
+            if DALI_STATE["status"] != "off":
+                DALI_STATE["devices"].clear()
+                DALI_STATE.update(status="off", gateway="", bus="")
+                await tell_pages({"type": "dali", "state": dali_public()})
+            await asyncio.sleep(DALI_TICK_S)
+            continue
+        DALI_STATE["gateway"] = cfg["url"]
+        reconfigured = False
+        try:
+            async with aiohttp.ClientSession() as session:
+                n = await dali_prime(session, cfg)
+                async with session.ws_connect(_dali_ws_url(cfg["url"]),
+                                              heartbeat=30) as ws:
+                    DALI_STATE["status"] = "connected, %d devices" % n
+                    print("[agent] dali: %s up, %d devices" % (cfg["url"], n))
+                    # daliMonitor is one message per frame on the bus, carrying
+                    # undecoded address/opcode integers. On a busy bus it buries
+                    # everything worth reading.
+                    await ws.send_json({"type": "filtering",
+                                        "data": {"daliMonitor": True}})
+                    await tell_pages({"type": "dali", "state": dali_public()})
+                    poll_at = (time.monotonic() + cfg["poll_s"]) if cfg["poll_s"] else None
+                    while True:
+                        # Received with a timeout rather than "async for msg in
+                        # ws", so the config on disk is re-read on a tick. A
+                        # healthy socket never drops, so the plain iterator meant
+                        # a gateway address pushed from the server took effect
+                        # only if the connection happened to fail -- which, when
+                        # it is working, is never.
+                        try:
+                            msg = await asyncio.wait_for(ws.receive(), DALI_TICK_S)
+                        except asyncio.TimeoutError:
+                            msg = None
+                        if _dali_cfg() != cfg:
+                            reconfigured = True
+                            break
+                        if msg is not None:
+                            if msg.type in (aiohttp.WSMsgType.CLOSED,
+                                            aiohttp.WSMsgType.CLOSING,
+                                            aiohttp.WSMsgType.ERROR):
+                                break
+                            if msg.type == aiohttp.WSMsgType.TEXT:
+                                await _dali_event(msg.data)
+                        if poll_at and time.monotonic() >= poll_at:
+                            try:
+                                await dali_prime(session, cfg)
+                                await tell_pages({"type": "dali", "state": dali_public()})
+                            except Exception:
+                                pass
+                            poll_at = time.monotonic() + cfg["poll_s"]
+        except Exception as e:
+            DALI_STATE["status"] = "unreachable: " + type(e).__name__
+            print("[agent] dali: %s down (%s); retrying" % (cfg["url"], e))
+            try:
+                await tell_pages({"type": "dali", "state": dali_public()})
+            except Exception:
+                pass
+        # A new address should be tried at once; a dead one should not be
+        # hammered.
+        await asyncio.sleep(0 if reconfigured else DALI_RECONNECT_S)
+
+
+async def _dali_event(raw):
+    try:
+        ev = json.loads(raw)
+    except Exception:
+        return
+    t = ev.get("type")
+    if t in ("devices", "devicesDeleted"):
+        _dali_ingest((ev.get("data") or {}).get("devices"))
+    elif t == "daliStatus":
+        code = (ev.get("data") or {}).get("status")
+        # 2 is powered. 0 and 5 mean the bus itself is gone, which is a
+        # different failure from an unreachable gateway and must not be
+        # reported as the same thing -- one is a wiring fault in the building,
+        # the other is a network problem.
+        DALI_STATE["bus"] = {
+            0: "bus unpowered", 1: "interface failure",
+            2: "", 3: "send buffer full", 5: "bus power low",
+        }.get(code, "status %s" % code)
+    else:
+        return
+    await tell_pages({"type": "dali", "state": dali_public()})
+
+
+async def dali_control(request):
+    """What the page calls instead of Home Assistant for a light on the bus."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad request"}, status=400)
+    control = body.get("control")
+    if not isinstance(control, dict) or not control:
+        return web.json_response({"error": "control must be a non-empty object"},
+                                 status=400)
+    ok, detail = await dali_send(body.get("target") or "broadcast",
+                                 body.get("id"), control)
+    if not ok:
+        print("[agent] dali control failed: " + detail)
+        return web.json_response({"error": detail}, status=502)
+    # Reflect it locally rather than waiting for the gateway to say so. The
+    # slider has to track the finger, and a round trip in that path is felt.
+    try:
+        if body.get("target") == "device":
+            d = DALI_STATE["devices"].get(int(body.get("id")))
+            if d:
+                if "dimmable" in control:
+                    d["level"] = control["dimmable"]
+                    d["on"] = control["dimmable"] > 0
+                if "switchable" in control:
+                    d["on"] = bool(control["switchable"])
+                if "colorKelvin" in control:
+                    d["kelvin"] = control["colorKelvin"]
+    except (TypeError, ValueError):
+        pass
+    return web.json_response({"ok": True})
+
+
+async def dali_state_ep(request):
+    return web.json_response(dali_public())
+
+
 async def main():
     print(f"[agent] {PANEL_ID} ({HOSTNAME}) -> {SERVER}")
     await serve_ui()                      # start serving immediately: the panel
@@ -939,7 +1194,7 @@ async def main():
         await sync(session)
         await check_bundle(session)
         await asyncio.gather(ws_loop(session), heartbeat_loop(session),
-                             poll_loop(session), presence_loop())
+                             poll_loop(session), presence_loop(), dali_loop())
 
 
 if __name__ == "__main__":
