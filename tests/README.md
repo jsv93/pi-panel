@@ -3,6 +3,7 @@
     stub_dali_gateway.py   a Lunatone DALI-2 IoT gateway, to the shapes in
                            Lunatone's API documentation M0023
     test_dali_client.py    exercises the agent's gateway client against it
+    test_slider_drag.html  the slider's drag/state race, in a browser
 
 The stub exists because the client had to be written before the hardware
 arrived, and because it can be made to misbehave in ways the real gateway
@@ -18,3 +19,16 @@ Run it:
 
 18 checks. The stub is not a conformance test — it is only as right as the
 manual, and the manual is wrong about at least one thing.
+
+## test_slider_drag.html
+
+Serve this next to a copy of `panel.html` and open it. It lifts `slider()` out
+of the page at run time and drives it, so it tests the shipped source rather
+than a copy that can drift out of step with it.
+
+    cp ../panel-ui/panel.html .
+    python -m http.server 8840
+
+14 checks, covering the two ways a slider used to move while you were holding
+it: an external repaint mid-drag, and a stale echo arriving in the window
+between letting go and the light confirming.

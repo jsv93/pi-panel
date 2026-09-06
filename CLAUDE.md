@@ -97,6 +97,12 @@ The Pi 5 renders 720x1280 with `backdrop-filter` glass. Frame budget is tight:
   content-visibility, chunked rendering, dropping a sheet's `backdrop-filter` —
   were each worth one or two frames, against 4.5x for one line of CSS about
   compositing. Don't remove it either.
+- **A control under a finger is not a readout.** State arriving from anywhere
+  else must not repaint it while it is being dragged, nor in the window between
+  letting go and the change being confirmed -- the level is committed on release,
+  so until then the panel's own copy is stale and repainting from it snaps the
+  bar back. `slider()` holds both windows; a new control needs the same, and
+  `tests/test_slider_drag.html` covers it.
 - Once a list is promoted the panel tops out around 65fps, and removals of
   unrelated things (text, thumbnails, borders, content-visibility) all land
   within ~10% of each other. That flatness means the ceiling, not four
