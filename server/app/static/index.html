@@ -1078,9 +1078,12 @@ $("#revertBtn").onclick = ()=>openPanel(CUR.panel.id);
    that lives on this machine -- the file has to still mean something on another
    server, or in a year. */
 $("#exportBtn").onclick = async ()=>{
-  const r = await fetch(`/api/panels/${CUR.panel.id}/config/export`);
-  if(!r.ok){ toast("Export failed"); return; }
-  const doc = await r.json();
+  /* api(), not fetch() -- see BASE above. Behind ingress the page is served
+     from /api/hassio_ingress/<token>/, so an absolute /api/... path leaves the
+     add-on entirely and asks Home Assistant, which has no such route. */
+  let doc;
+  try{ doc = await api(`/panels/${CUR.panel.id}/config/export`); }
+  catch(err){ toast(err.message || "Export failed"); return; }
   const name = `${CUR.panel.id}-config-${new Date().toISOString().slice(0,10)}.json`;
   const url = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)],
                                            {type:"application/json"}));
@@ -1105,10 +1108,11 @@ $("#importFile").onchange = async e=>{
     `<p class="note">Every setting on this panel is overwritten and pushed. The version
      it is on now stays in the panel's history, so Revert undoes this.</p>`,
     async ()=>{
-      const r = await fetch(`/api/panels/${CUR.panel.id}/config/import`,
-        {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(doc)});
-      const out = await r.json().catch(()=>({}));
-      if(!r.ok){ toast(out.detail || "Import failed"); return; }
+      let out;
+      try{
+        out = await api(`/panels/${CUR.panel.id}/config/import`,
+                        {method:"POST", body:JSON.stringify(doc)});
+      }catch(err){ toast(err.message || "Import failed"); return; }
       toast(`Imported — now v${out.version}${out.pushed ? ", pushed" : " (panel offline)"}`);
       openPanel(CUR.panel.id);
     });

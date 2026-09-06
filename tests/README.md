@@ -6,6 +6,8 @@
     test_slider_drag.html  the slider's drag/state race, in a browser
     test_hacs_layout.py    the repo layout HACS needs, checked here rather
                            than at install time in someone else's HA
+    serve_under_ingress.py runs the config server under an ingress path,
+                           which is how it actually runs
 
 The stub exists because the client had to be written before the hardware
 arrived, and because it can be made to misbehave in ways the real gateway
@@ -45,3 +47,14 @@ at the root, exactly one directory under `custom_components/`, the manifest keys
 it needs, that the domain matches its directory, that the version has moved off
 the scaffold default (it never offers an update otherwise), and that every
 platform the integration declares has a file behind it.
+
+## serve_under_ingress.py
+
+    PANEL_SERVER_DIR=../server PANEL_DB=/tmp/x.db ADMIN_PASSWORD=testpw       python -m uvicorn serve_under_ingress:outer --port 8851
+    # then open http://127.0.0.1:8851/api/hassio_ingress/testtoken/
+
+Home Assistant serves the add-on from `/api/hassio_ingress/<token>/`, never from
+the root. Running it at the root during development hides a whole class of bug:
+an absolute `/api/...` path in the GUI is correct there and 404s against Home
+Assistant itself once it is behind ingress. That is exactly how Export shipped
+broken. Anything touching a URL in `index.html` is worth a minute here.

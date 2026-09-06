@@ -138,6 +138,15 @@ Every one of these cost hours to find:
 - `SPIRAM_XIP_FROM_PSRAM` took an LVGL benchmark from 7 to 63 fps by executing
   code from 200MHz PSRAM instead of 40MHz DIO flash.
 
+## Testing the server GUI
+
+Home Assistant serves the add-on from `/api/hassio_ingress/<token>/`, never from
+the root, and `index.html` builds every URL from `BASE`. An absolute `/api/...`
+path is therefore correct in development and wrong in production -- it leaves
+the add-on and asks Home Assistant, which 404s. Export shipped that way. Use
+`api()` for calls, and `tests/serve_under_ingress.py` before believing a URL
+works.
+
 ## Things that look like bugs but aren't
 
 - I2C "GPIO 7/8 not usable" warnings on the ESP panel: the HX8394 driver claims
