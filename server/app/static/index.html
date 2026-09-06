@@ -300,6 +300,9 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
         <button class="btn" id="reinstallBtn" style="display:none">Reinstall</button>
         <button class="btn" id="previewBtn">Preview</button>
         <button class="btn" id="saveTplBtn">Save as template</button>
+        <button class="btn" id="exportBtn" title="Download this panel's complete config as a file">Export</button>
+        <button class="btn" id="importBtn" title="Replace this panel's config from an exported file">Import</button>
+        <input type="file" id="importFile" accept="application/json,.json" style="display:none">
         <button class="btn" id="revertBtn">Revert</button>
         <button class="btn primary" id="saveBtn">Save &amp; push</button>
       </div>
@@ -1070,6 +1073,46 @@ $("#saveBtn").onclick = async ()=>{
   }
 };
 $("#revertBtn").onclick = ()=>openPanel(CUR.panel.id);
+
+/* Export downloads what the panel actually gets, not a diff against a template
+   that lives on this machine -- the file has to still mean something on another
+   server, or in a year. */
+$("#exportBtn").onclick = async ()=>{
+  const r = await fetch(`/api/panels/${CUR.panel.id}/config/export`);
+  if(!r.ok){ toast("Export failed"); return; }
+  const doc = await r.json();
+  const name = `${CUR.panel.id}-config-${new Date().toISOString().slice(0,10)}.json`;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)],
+                                           {type:"application/json"}));
+  const a = document.createElement("a");
+  a.href = url; a.download = name; document.body.appendChild(a); a.click();
+  a.remove(); setTimeout(()=>URL.revokeObjectURL(url), 5000);
+  toast(`Exported ${name}`);
+};
+
+$("#importBtn").onclick = ()=>$("#importFile").click();
+$("#importFile").onchange = async e=>{
+  const f = e.target.files && e.target.files[0];
+  e.target.value = "";                       // so the same file can be picked twice
+  if(!f) return;
+  let doc;
+  try{ doc = JSON.parse(await f.text()); }
+  catch(err){ toast("Not valid JSON"); return; }
+  const ex = doc._export || {};
+  const from = ex.panel_id ? `<b>${ex.panel_id}</b>${ex.room ? " (" + ex.room + ")" : ""}` : "an unknown panel";
+  confirmModal("Import configuration",
+    `<p>Replace <b>${CUR.panel.id}</b>'s configuration with the file from ${from}?</p>` +
+    `<p class="note">Every setting on this panel is overwritten and pushed. The version
+     it is on now stays in the panel's history, so Revert undoes this.</p>`,
+    async ()=>{
+      const r = await fetch(`/api/panels/${CUR.panel.id}/config/import`,
+        {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(doc)});
+      const out = await r.json().catch(()=>({}));
+      if(!r.ok){ toast(out.detail || "Import failed"); return; }
+      toast(`Imported — now v${out.version}${out.pushed ? ", pushed" : " (panel offline)"}`);
+      openPanel(CUR.panel.id);
+    });
+};
 
 /* ---------------- templates ----------------
    Picking a template loads its values into the form rather than only changing

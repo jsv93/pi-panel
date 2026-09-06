@@ -4,6 +4,8 @@
                            Lunatone's API documentation M0023
     test_dali_client.py    exercises the agent's gateway client against it
     test_slider_drag.html  the slider's drag/state race, in a browser
+    test_hacs_layout.py    the repo layout HACS needs, checked here rather
+                           than at install time in someone else's HA
 
 The stub exists because the client had to be written before the hardware
 arrived, and because it can be made to misbehave in ways the real gateway
@@ -33,3 +35,13 @@ than a copy that can drift out of step with it.
 throughout it, that external state is believed again the moment the finger is
 off, and that a cancelled touch does not leave the slider deaf to updates for
 the life of the page.
+
+## test_hacs_layout.py
+
+    python tests/test_hacs_layout.py
+
+No dependencies. Checks the things HACS is silently strict about: `hacs.json`
+at the root, exactly one directory under `custom_components/`, the manifest keys
+it needs, that the domain matches its directory, that the version has moved off
+the scaffold default (it never offers an update otherwise), and that every
+platform the integration declares has a file behind it.

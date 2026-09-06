@@ -11,8 +11,14 @@ keeping.
 
 ## Install
 
-Copy `custom_components/pi_panel` into your Home Assistant `config/custom_components/`,
-restart, then **Settings → Devices & Services → Add Integration → Pi Panel**.
+Through HACS: **HACS → Integrations → ⋮ → Custom repositories**, add
+`https://github.com/jsv93/pi-panel` as an *Integration*, then install Pi Panel
+from the list and restart Home Assistant.
+
+By hand: copy `custom_components/pi_panel` into your Home Assistant
+`config/custom_components/` and restart.
+
+Either way, then **Settings → Devices & Services → Add Integration → Pi Panel**.
 
 It asks for three things:
 

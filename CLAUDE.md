@@ -29,6 +29,12 @@ Corollaries:
 
     server/       FastAPI + SQLite config server (Docker, runs on Unraid)
     agent/        Panel-side sync agent; also serves the UI over localhost
+    custom_components/pi_panel/
+                  The HA integration. At the repo root because HACS requires
+                  custom_components/<domain>/ there and offers no way to point
+                  it elsewhere -- it is not free to move back under integration/
+    addon/        Add-on packaging; addon/sync.sh copies it to its own repo,
+                  which is where HA needs repository.yaml to sit
     panel-ui/     panel.html — the Pi panel UI (single file, vanilla JS)
                   backlight.py — localhost sysfs brightness helper (systemd)
     pi-os/        Pi OS Lite kiosk boot: cage + systemd, no desktop session

@@ -841,6 +841,70 @@ async def put_config(panel_id: str, request: Request):
     return {"version": v, "pushed": pushed}
 
 
+@app.get("/api/panels/{panel_id}/config/export", dependencies=[Depends(require_admin)])
+async def export_config(panel_id: str):
+    """The complete effective config, as a file worth keeping.
+
+    Effective rather than the panel's own overrides: an export is for reading,
+    diffing, and moving to another server, and none of those work if half the
+    document lives in a template on the machine you are moving away from.
+    """
+    p = db.get_panel(panel_id)
+    if not p:
+        raise HTTPException(404, "unknown panel")
+    cfg = db.merged_config(panel_id)
+    cfg.pop("_version", None)
+    return {
+        "_export": {
+            "panel_id": panel_id,
+            "room": p.get("room"),
+            "template": p.get("template"),
+            "config_version": p.get("config_version"),
+            "exported_at": time.time(),
+        },
+        "config": cfg,
+    }
+
+
+@app.post("/api/panels/{panel_id}/config/import",
+          dependencies=[Depends(require_admin), Depends(require_config_owner)])
+async def import_config(panel_id: str, request: Request):
+    """Take an exported document back in, as this panel's own config.
+
+    Accepts either the wrapper an export produces or a bare config object, so
+    someone who has pulled the inner document out by hand is not punished for
+    it. The _export block is metadata about where the file came from and is
+    deliberately not applied: importing must not silently rename a panel or move
+    it to a template that may not exist here.
+    """
+    if not db.get_panel(panel_id):
+        raise HTTPException(404, "unknown panel")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "not valid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(400, "expected a JSON object")
+    cfg = body.get("config") if isinstance(body.get("config"), dict) else body
+    cfg = dict(cfg)
+    cfg.pop("_version", None)
+    cfg.pop("_export", None)
+    if not cfg:
+        raise HTTPException(400, "no config in that file")
+    # Cheap shape check. Not a schema -- the point is to catch a file that is
+    # plainly not a panel config before it is written and pushed to a wall.
+    if not any(k in cfg for k in ("display", "lights", "media", "sensors")):
+        raise HTTPException(400, "that does not look like a panel config")
+    for k in ("display", "media", "sensors", "dali"):
+        if k in cfg and not isinstance(cfg[k], dict):
+            raise HTTPException(400, f"{k} must be an object")
+    if "lights" in cfg and not isinstance(cfg["lights"], list):
+        raise HTTPException(400, "lights must be a list")
+    v = db.save_config(panel_id, cfg)
+    pushed = await notify(panel_id, {"type": "config_updated", "version": v})
+    return {"version": v, "pushed": pushed}
+
+
 @app.post("/api/panels/{panel_id}/rollback", dependencies=[Depends(require_admin), Depends(require_config_owner)])
 async def rollback(panel_id: str, request: Request):
     b = await request.json()

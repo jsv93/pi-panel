@@ -172,6 +172,24 @@ def conn():
         c.close()
 
 
+def fill_missing(stored, defaults):
+    """Add keys `defaults` has and `stored` lacks, recursively. Never changes a
+    value that is already there.
+
+    Deliberately not deep_merge, which is the other direction and would undo
+    every choice the operator has made."""
+    out = dict(stored)
+    added = []
+    for k, v in (defaults or {}).items():
+        if k not in out:
+            out[k] = json.loads(json.dumps(v))     # no shared mutable defaults
+            added.append(k)
+        elif isinstance(v, dict) and isinstance(out[k], dict):
+            out[k], sub = fill_missing(out[k], v)
+            added += [k + "." + s for s in sub]
+    return out, added
+
+
 def init():
     with conn() as c:
         c.executescript(SCHEMA)
@@ -181,6 +199,27 @@ def init():
                 "INSERT INTO templates(name,data,updated_at) VALUES(?,?,?)",
                 ("default", json.dumps(DEFAULT_TEMPLATE), time.time()),
             )
+        # Templates are written once, at first install, and then never again --
+        # so a server that has been running a while is serving whatever shape
+        # DEFAULT_TEMPLATE had on the day it was installed. Every setting added
+        # since has been quietly absent from every panel: nothing breaks, because
+        # the UI reads each key with a fallback, which is exactly why it went
+        # unnoticed. The code and the running system disagreed and nothing said
+        # so.
+        #
+        # Additive only. A value the operator has set is never touched, so this
+        # cannot walk over a deliberate choice -- including on a saved template,
+        # which has the same problem and is easier to forget.
+        for r in c.execute("SELECT name, data FROM templates").fetchall():
+            try:
+                stored = json.loads(r["data"])
+            except Exception:
+                continue
+            filled, added = fill_missing(stored, DEFAULT_TEMPLATE)
+            if added:
+                c.execute("UPDATE templates SET data=?, updated_at=? WHERE name=?",
+                          (json.dumps(filled), time.time(), r["name"]))
+                print(f"[db] template {r['name']!r}: added {', '.join(added)}")
 
 
 # ---------------------------------------------------------------- panels
