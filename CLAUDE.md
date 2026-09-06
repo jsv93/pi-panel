@@ -97,12 +97,16 @@ The Pi 5 renders 720x1280 with `backdrop-filter` glass. Frame budget is tight:
   content-visibility, chunked rendering, dropping a sheet's `backdrop-filter` —
   were each worth one or two frames, against 4.5x for one line of CSS about
   compositing. Don't remove it either.
-- **A control under a finger is not a readout.** State arriving from anywhere
-  else must not repaint it while it is being dragged, nor in the window between
-  letting go and the change being confirmed -- the level is committed on release,
-  so until then the panel's own copy is stale and repainting from it snaps the
-  bar back. `slider()` holds both windows; a new control needs the same, and
-  `tests/test_slider_drag.html` covers it.
+- **A control under a finger is not a readout.** The level is committed on
+  release, so while a drag is in progress the panel's own copy is stale, and any
+  state update -- about any entity -- repaints every slider from it and snaps the
+  bar back. `slider()` ignores external paints while dragging; a new control
+  needs the same. `tests/test_slider_drag.html` covers it.
+  Holding the value *after* release until Home Assistant confirms it was tried
+  and reverted: it turns an immediate, small correction into a jump arriving a
+  second later with nothing on screen to explain it, which reads as broken where
+  the small correction read as tracking. Don't add it back without an instrument
+  on the panel showing which is actually happening.
 - Once a list is promoted the panel tops out around 65fps, and removals of
   unrelated things (text, thumbnails, borders, content-visibility) all land
   within ~10% of each other. That flatness means the ceiling, not four

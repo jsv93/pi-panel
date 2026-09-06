@@ -1335,37 +1335,26 @@ function slider(el,get,set){
   }
   paint(get());
   let dragging=false;
-  /* A slider under a finger is not a readout, and state arriving from anywhere
-     else must not move it.
+  /* A slider under a finger is not a readout. The level is only committed on
+     release, so for as long as the finger is down the state this panel holds is
+     still the old value -- and any update from Home Assistant, about any entity,
+     repaints every slider from it. The bar snapped back to where the drag
+     started and then jumped forward again on the next move.
 
-     Two ways it did. During a drag the level is only committed on release, so
-     the state this panel holds stays at the old value for as long as the finger
-     is down -- and any update from Home Assistant, about any entity, repaints
-     every slider from it. The bar snapped back to where the drag started and
-     then jumped forward again on the next move.
+     One rule, and it is the whole fix: while dragging, nothing outside this
+     closure moves the bar. Once the finger is off, external state is simply
+     believed again.
 
-     After release there is a second window. The service call is away, but the
-     next state event can still carry the old brightness because Home Assistant
-     has not applied it yet, or an intermediate one because the light is
-     transitioning. So the value asked for is held until something confirms it,
-     and only for as long as a round trip could reasonably take -- if the light
-     genuinely lands somewhere else, having clamped or refused the value, that
-     has to become visible quickly rather than being hidden by this. */
-  const SETTLE_MS = 1500, SETTLE_TOL = 2;
-  let wanted = null, holdUntil = 0;
+     An earlier attempt also held the committed value after release until Home
+     Assistant confirmed it, to swallow a stale echo. That was worse. It turned
+     a correction that had been immediate and small into one that arrived a
+     second and a half later, as a jump with nothing on screen to explain it.
+     A slider that is briefly wrong and then right reads as a slider tracking a
+     light. A slider that is right, then jumps, reads as broken. Don't add it
+     back without a way to see which is actually happening on the panel. */
   function paintExternal(v){
-    if(dragging) return;                       // the finger wins, always
-    if(holdUntil){
-      if(performance.now() > holdUntil) holdUntil = 0;
-      else if(wanted != null && Math.abs(v - wanted) <= SETTLE_TOL) holdUntil = 0;
-      else return;                             // still settling; ignore the echo
-    }
+    if(dragging) return;
     paint(v);
-  }
-  function commit(v){
-    wanted = v;
-    holdUntil = performance.now() + SETTLE_MS;
-    set(v);
   }
   function val(e){
     const r=el.getBoundingClientRect();
@@ -1377,19 +1366,25 @@ function slider(el,get,set){
   el.addEventListener("touchstart",d=>{dragging=true;el.classList.add("live");paint(val(d));bump();d.preventDefault();},{passive:false});
   window.addEventListener("mousemove",m=>{if(dragging){paint(val(m));bump();}});
   window.addEventListener("touchmove",m=>{if(dragging){paint(val(m));bump();}},{passive:false});
-  window.addEventListener("mouseup",u=>{if(!dragging)return;dragging=false;el.classList.remove("live");commit(val(u));bump();});
+  window.addEventListener("mouseup",u=>{if(!dragging)return;dragging=false;el.classList.remove("live");set(val(u));bump();});
   /* touchend carries no touches, so the last painted value is the only record
      of where the finger was. */
-  window.addEventListener("touchend",u=>{if(!dragging)return;dragging=false;el.classList.remove("live");commit(parseInt(fill.dataset.to));bump();});
+  function release(){
+    if(!dragging) return;
+    dragging = false;
+    el.classList.remove("live");
+    set(parseInt(fill.dataset.to));
+    bump();
+  }
+  window.addEventListener("touchend", release);
+  /* A touch the browser takes away -- a wipe across the glass, the gesture
+     watcher, the window losing focus -- fires touchcancel and never touchend.
+     Without this the slider stays flagged as dragging and then ignores every
+     state update for the life of the page. */
+  window.addEventListener("touchcancel", release, {passive:true});
   /* Everything outside this closure gets the guarded painter. Handing out the
-     raw one is how the finger stops winning.
-
-     force() is for a deliberate local change -- a preset tile, a group action --
-     which must land even inside a settle window left by a drag a moment ago, and
-     which then owns the window itself. Without it, tapping Bright just after
-     dragging a light would do nothing visible for a second and a half. */
-  return {paint: paintExternal,
-          force(v){ wanted = v; holdUntil = performance.now() + SETTLE_MS; paint(v); }};
+     raw one is how the finger stops winning. */
+  return {paint: paintExternal};
 }
 /* one slider per configured light */
 const LSTATE = LIGHTS.map(()=>({level:0, seen:false}));
@@ -1451,7 +1446,7 @@ document.querySelectorAll(".preset").forEach(p=>p.addEventListener("click",()=>{
     if(l.include_presets === false) return;   // excluded on the server; leave it alone
     const pct = (which==="bright" ? l.bright : l.soft) ?? (which==="bright"?100:30);
     LSTATE[i].level = pct;
-    if(lampSliders[i]) lampSliders[i].force(pct);
+    if(lampSliders[i]) lampSliders[i].paint(pct);
     const v=$("#lv"+i); if(v) v.textContent = pct+"%";
     if(live) call("light","turn_on",{entity_id:l.entity_id, brightness_pct:pct});
   });
@@ -2428,7 +2423,7 @@ function gestureLights(){
     const remembered = REMEMBER ? lastOn[l.entity_id] : 0;
     const pct = anyOn ? 0 : (remembered > 0 ? remembered : (l.bright ?? 100));
     LSTATE[i].level = pct;
-    if(lampSliders[i]) lampSliders[i].force(pct);
+    if(lampSliders[i]) lampSliders[i].paint(pct);
     const v = $("#lv"+i); if(v) v.textContent = pct ? pct+"%" : "Off";
     if(live){
       if(pct) call("light","turn_on",{entity_id:l.entity_id, brightness_pct:pct});

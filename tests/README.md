@@ -29,6 +29,7 @@ than a copy that can drift out of step with it.
     cp ../panel-ui/panel.html .
     python -m http.server 8840
 
-14 checks, covering the two ways a slider used to move while you were holding
-it: an external repaint mid-drag, and a stale echo arriving in the window
-between letting go and the light confirming.
+12 checks: external state arriving mid-drag, a long hold with state arriving
+throughout it, that external state is believed again the moment the finger is
+off, and that a cancelled touch does not leave the slider deaf to updates for
+the life of the page.
