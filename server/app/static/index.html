@@ -738,6 +738,11 @@ async function loadFleet(){
     const cfg = !p.claimed ? "" : drift
       ? html`<span style="color:var(--warn)">v${p.config_version} drift</span>`
       : html`<span style="color:var(--ok)">v${p.latest_version} ✓</span>`;
+    /* Temporary by design: every panel should move to secured on its own
+       within seconds of updating. One that stays here has not updated. */
+    const unsecured = p.claimed && !p.secured
+      ? raw(' <span style="color:var(--warn);font-size:11px" title="No panel token yet — see its detail page">unsecured</span>')
+      : "";
     const action = p.claimed
       /* Identify sits here as well as on the detail page: "which of these is
          study-rp3" is a question you ask while looking at the list. */
@@ -751,7 +756,7 @@ async function loadFleet(){
       <span class="muted">${p.kind}</span>
       <span>${haState}</span>
       <span class="muted">${ago(p.last_seen)}</span>
-      <span>${cfg}</span>
+      <span>${cfg}${unsecured}</span>
       <span>${action}</span></div>`;
   }).join("") || '<div class="grid"><span class="muted">No panels have registered yet</span></div>';
 
@@ -895,7 +900,31 @@ async function openPanel(id){
     <div><div class="lbl">IP</div>${CUR.panel.ip||"—"}</div>
     <div><div class="lbl">MAC</div>${CUR.panel.mac||"—"}</div>
     <div style="margin-top:10px"><div class="lbl">AGENT VERSION</div>${CUR.panel.agent_version||"—"}</div>
-    <div style="margin-top:10px"><div class="lbl">LAST SEEN</div>${ago(CUR.panel.last_seen)}</div></div>`;
+    <div style="margin-top:10px"><div class="lbl">LAST SEEN</div>${ago(CUR.panel.last_seen)}</div></div>
+    <div style="margin-top:14px"><div class="lbl">PANEL TOKEN</div>${
+      CUR.panel.secured
+        ? html`<span style="color:var(--ok)">Secured</span>
+               <span class="muted" style="font-size:13px"> — claimed ${
+                 new Date((CUR.panel.token_claimed_at||0)*1000).toLocaleString()} from ${
+                 CUR.panel.token_claimed_from||"?"}</span>
+               <button class="btn" id="tokReset" style="margin-left:10px;padding:3px 10px">Reset token</button>`
+        : raw(`<span style="color:var(--warn)">Not yet claimed</span>
+               <span class="muted" style="font-size:13px"> — accepted without one until its
+               agent updates and presents one. Normally within seconds of the update.</span>`)}</div>`;
+  /* Shown with where the claim came from, because that is how a claim that was
+     not this panel's gets noticed: an address that is not the panel's own. */
+  const tr = $("#tokReset");
+  if(tr) tr.onclick = ()=>confirmModal("Reset panel token",
+    html`<p>Forget <b>${CUR.panel.hostname}</b>'s token?</p>
+     <p class="muted" style="margin-top:10px;font-size:13px">Use this when a claim came
+     from an address that is not this panel's, or when the panel's token was lost with
+     its SD card. The panel claims again within one heartbeat — about 30 seconds — and
+     nothing about its lights or configuration changes meanwhile.</p>`,
+    async ()=>{
+      await api(`/panels/${CUR.panel.id}/token/reset`, {method:"POST"});
+      toast("Token reset — the panel will claim again shortly");
+      openPanel(CUR.panel.id);
+    });
   $("#history").innerHTML = html`${(CUR.history||[]).map(h=>
     html`<div style="display:flex;gap:12px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line2)">
       <span>v${h.version}</span><span class="muted">${new Date(h.created_at*1000).toLocaleString()}</span>

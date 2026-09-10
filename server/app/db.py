@@ -26,7 +26,10 @@ CREATE TABLE IF NOT EXISTS panels (
     first_seen      REAL,
     last_seen       REAL,
     config_version  INTEGER NOT NULL DEFAULT 0,   -- version the panel reports running
-    metrics         TEXT                          -- JSON blob from heartbeat
+    metrics         TEXT,                         -- JSON blob from heartbeat
+    token           TEXT,                         -- the panel's own; NULL = not yet claimed
+    token_claimed_at   REAL,
+    token_claimed_from TEXT
 );
 
 CREATE TABLE IF NOT EXISTS configs (
@@ -190,9 +193,29 @@ def fill_missing(stored, defaults):
     return out, added
 
 
+# Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS does
+# nothing to a table that already exists, so on any server installed before
+# these arrived they have to be added by hand -- or the first query naming
+# them fails, on exactly the machines that were already working.
+LATE_COLUMNS = {
+    "panels": [("token", "TEXT"), ("token_claimed_at", "REAL"),
+               ("token_claimed_from", "TEXT")],
+}
+
+
+def _add_late_columns(c):
+    for table, cols in LATE_COLUMNS.items():
+        have = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
+        for name, kind in cols:
+            if name not in have:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+                print(f"[db] {table}: added column {name}")
+
+
 def init():
     with conn() as c:
         c.executescript(SCHEMA)
+        _add_late_columns(c)
         row = c.execute("SELECT 1 FROM templates WHERE name='default'").fetchone()
         if not row:
             c.execute(
@@ -223,6 +246,37 @@ def init():
 
 
 # ---------------------------------------------------------------- panels
+def get_panel_token(panel_id):
+    with conn() as c:
+        r = c.execute("SELECT token FROM panels WHERE id=?", (panel_id,)).fetchone()
+    return (r["token"] or "") if r else ""
+
+
+def claim_panel_token(panel_id, token, peer):
+    """Record a panel's token, but only if it has none -- trust on first use.
+
+    The WHERE clause is the whole guarantee. Two claims racing each other
+    cannot both land: the second finds a token already there and changes
+    nothing, and the caller learns which one won by reading it back.
+    """
+    with conn() as c:
+        c.execute("""UPDATE panels SET token=?, token_claimed_at=?, token_claimed_from=?
+                     WHERE id=? AND (token IS NULL OR token='')""",
+                  (token, time.time(), peer, panel_id))
+    return get_panel_token(panel_id) == token
+
+
+def reset_panel_token(panel_id):
+    with conn() as c:
+        c.execute("""UPDATE panels SET token=NULL, token_claimed_at=NULL,
+                     token_claimed_from=NULL WHERE id=?""", (panel_id,))
+
+
+def count_unclaimed():
+    with conn() as c:
+        return c.execute("SELECT COUNT(*) n FROM panels WHERE claimed=0").fetchone()["n"]
+
+
 def upsert_panel(panel_id, hostname, mac, ip, kind, agent_version):
     now = time.time()
     with conn() as c:
@@ -258,6 +312,11 @@ def _panel_row(r):
         d["metrics"] = json.loads(d["metrics"]) if d["metrics"] else {}
     except Exception:
         d["metrics"] = {}
+    # The panel's token is a credential. Every panel row the admin API, the
+    # integration or an export sees passes through here, so dropping it here
+    # is the one place that guarantees none of them can leak it. Read it with
+    # get_panel_token(), which nothing outside authentication calls.
+    d["secured"] = bool(d.pop("token", None))
     return d
 
 
@@ -279,11 +338,18 @@ def list_panels():
     return out
 
 
+def _int_or_zero(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
 def touch(panel_id, metrics, config_version):
     with conn() as c:
         c.execute(
             "UPDATE panels SET last_seen=?, metrics=?, config_version=? WHERE id=?",
-            (time.time(), json.dumps(metrics or {}), config_version or 0, panel_id),
+            (time.time(), json.dumps(metrics or {}), _int_or_zero(config_version), panel_id),
         )
 
 

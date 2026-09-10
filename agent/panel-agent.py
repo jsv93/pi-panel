@@ -17,6 +17,7 @@ import asyncio
 import hashlib
 import json
 import os
+import secrets
 import shutil
 import socket
 import subprocess
@@ -67,6 +68,55 @@ def _panel_id():
 
 
 PANEL_ID = _panel_id()
+
+TOKEN_PATH = PANEL_DIR / "panel-token"
+
+
+def _panel_token():
+    """This panel's credential with the config server, made here on first run.
+
+    Generated on the panel rather than issued by the server so that nothing
+    has to carry it across the network to get here; it goes the other way,
+    once, when this agent first registers. See docs/SECURITY.md, "Panel
+    tokens".
+
+    Owned by root and mode 600. The kiosk runs as another user and never
+    needs it -- the browser talks to this agent on localhost, not to the
+    server.
+    """
+    try:
+        t = TOKEN_PATH.read_text().strip()
+        if t:
+            return t
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"[agent] cannot read {TOKEN_PATH}: {e}")
+    t = secrets.token_urlsafe(32)
+    try:
+        # Created at 600 in one call, not written and then chmodded, so there
+        # is no moment at which it exists readable by anyone else.
+        fd = os.open(TOKEN_PATH, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(t)
+    except FileExistsError:
+        return TOKEN_PATH.read_text().strip()
+    except Exception as e:
+        # Degrades to how every panel worked before tokens: accepted by the
+        # server in legacy mode. Worse than having one, much better than a
+        # panel that will not start.
+        print(f"[agent] cannot write {TOKEN_PATH}: {e}; carrying on without a token")
+        return ""
+    return t
+
+
+TOKEN = _panel_token()
+
+
+def server_headers():
+    """Sent with every request to the config server, and only to it -- never
+    to the DALI gateway or anything else this agent talks to."""
+    return {"X-Panel-Token": TOKEN} if TOKEN else {}
 
 
 def mac():
@@ -634,7 +684,7 @@ async def _to_server(request, path, label):
     except Exception:
         return web.json_response({"error": "bad request"}, status=400)
     try:
-        async with aiohttp.ClientSession() as s:
+        async with aiohttp.ClientSession(headers=server_headers()) as s:
             async with s.post(f"{SERVER}/api/panel/{PANEL_ID}/{path}",
                               json=body, timeout=10) as r:
                 data = await r.json()
@@ -745,8 +795,18 @@ async def register(session):
     try:
         async with session.post(f"{SERVER}/api/register", json=body, timeout=10) as r:
             if r.status == 200:
-                print(f"[agent] registered: {await r.json()}")
+                data = await r.json()
+                print(f"[agent] registered: {data}")
+                if data.get("token") == "claimed":
+                    print("[agent] panel token accepted: this panel is secured")
                 return True
+            if r.status == 401:
+                # The server holds a different token for this id. Either
+                # something else claimed it first, or this panel's token was
+                # lost with its card. Neither is fixed from here: the server's
+                # Reset token reopens the claim, and the next attempt takes it.
+                print("[agent] register refused: the server holds a different "
+                      "token for this panel. Use Reset token on the server.")
     except Exception as e:
         print(f"[agent] register failed: {e}")
     return False
@@ -766,8 +826,14 @@ async def heartbeat_loop(session):
         try:
             async with session.post(f"{SERVER}/api/heartbeat", timeout=10, json={
                     "panel_id": PANEL_ID, "metrics": metrics(),
-                    "config_version": local_version()}):
-                pass
+                    "config_version": local_version()}) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    # The server forgot this panel's token -- a Reset on the
+                    # server, most likely. Claim it again now rather than at
+                    # the next restart, which on a wall panel may be months.
+                    if TOKEN and data.get("token") == "none":
+                        await register(session)
         except Exception:
             pass
         await asyncio.sleep(HEARTBEAT_S)
@@ -786,7 +852,8 @@ async def ws_loop(session):
     url = SERVER.replace("http", "ws", 1) + f"/api/ws/{PANEL_ID}"
     while True:
         try:
-            async with session.ws_connect(url, heartbeat=20) as ws:
+            async with session.ws_connect(url, heartbeat=20,
+                                          headers=server_headers()) as ws:
                 print("[agent] server socket up")
                 await sync(session)
                 # The socket drops when the server restarts, and the server
@@ -1185,16 +1252,36 @@ async def main():
     # agent reports "Domain name not found" for the very same host. Installing
     # aiohttp from pip has no aiodns, which is why this worked before apt.
     connector = aiohttp.TCPConnector(resolver=aiohttp.ThreadedResolver())
-    async with aiohttp.ClientSession(connector=connector) as session:
+    # This session talks to the config server and nothing else, which is what
+    # makes it safe to give it the token as a default header. The DALI client
+    # opens its own sessions, so the token cannot reach the gateway.
+    async with aiohttp.ClientSession(connector=connector,
+                                     headers=server_headers()) as session:
         # Before anything else: if this process is a just-installed agent,
         # prove it works or put the old one back.
         await confirm_update(session)
-        while not await register(session):
-            await asyncio.sleep(15)
-        await sync(session)
-        await check_bundle(session)
-        await asyncio.gather(ws_loop(session), heartbeat_loop(session),
-                             poll_loop(session), presence_loop(), dali_loop())
+        # Presence and the DALI gateway need neither the config server nor
+        # Home Assistant, and were written to keep working without them. They
+        # used to sit in the same gather as everything else, behind the
+        # register loop below -- so with the server down at boot, neither ever
+        # started. Now they start here, whatever the server is doing.
+        await asyncio.gather(server_side(session), presence_loop(), dali_loop())
+
+
+async def server_side(session):
+    """Everything that needs the config server, in the order it needs it."""
+    # Deliberately no bundle check in this loop. A panel refused here is
+    # locked out, and a new agent cannot fix that -- only Reset token on the
+    # server can. Worse, a new agent installed now would fail its own
+    # confirm_update for the same reason and roll back, and the old one would
+    # then find the new one again: an install-and-revert cycle every minute
+    # or so, doing nothing but wearing the card.
+    while not await register(session):
+        await asyncio.sleep(15)
+    await sync(session)
+    await check_bundle(session)
+    await asyncio.gather(ws_loop(session), heartbeat_loop(session),
+                         poll_loop(session))
 
 
 if __name__ == "__main__":

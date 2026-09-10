@@ -588,6 +588,43 @@ def _clean_metrics(m):
     return out
 
 
+# ---------------------------------------------------------------- panel auth
+# Every panel-facing request carries X-Panel-Token. docs/SECURITY.md, "Panel
+# tokens", has the reasoning; the part that shapes this code is the migration.
+#
+# A panel the server holds no token for is in legacy mode and is accepted
+# without one. That is not a gap left open, it is what makes the rollout safe:
+# a panel running an agent from before tokens existed has to keep working long
+# enough to fetch the agent that knows about them, and refusing it would strand
+# it on the old one for good. Its first register that presents a token claims
+# it, and from then on the token is required everywhere.
+PANEL_TOKEN_HEADER = "X-Panel-Token"
+_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
+# Anything can still register an unknown id and appear as unclaimed -- that is
+# the flow for a panel set up before provisioning existed. Bounded, so it
+# cannot be used to fill the fleet page.
+UNCLAIMED_MAX = 20
+
+
+def _presented_token(headers):
+    t = headers.get(PANEL_TOKEN_HEADER, "") or ""
+    return t if _TOKEN_RE.match(t) else ""
+
+
+def _token_ok(headers, panel_id):
+    """True for a matching token, or for a panel still in legacy mode."""
+    have = db.get_panel_token(panel_id)
+    if not have:
+        return True
+    got = _presented_token(headers)
+    return bool(got) and hmac.compare_digest(got, have)
+
+
+def panel_auth(request: Request, panel_id: str):
+    if not _token_ok(request.headers, panel_id):
+        raise HTTPException(401, "panel token required")
+
+
 # ---------------------------------------------------------------- panel-facing
 @app.post("/api/register")
 async def register(request: Request):
@@ -597,15 +634,35 @@ async def register(request: Request):
         raise HTTPException(400, "panel_id, mac or hostname required")
     if not _valid_id(pid):
         raise HTTPException(400, "that is not a valid panel id")
+    presented = _presented_token(request.headers)
+    peer = request.client.host if request.client else ""
+    known = db.get_panel(pid) is not None
+    have = db.get_panel_token(pid) if known else ""
+    # Checked before anything is written, so a secured panel cannot be renamed
+    # or have its address changed by something that does not hold its token.
+    if have and not (presented and hmac.compare_digest(presented, have)):
+        raise HTTPException(401, "panel token does not match")
+    if not known and db.count_unclaimed() >= UNCLAIMED_MAX:
+        raise HTTPException(429, "too many unclaimed panels")
     p = db.upsert_panel(
         pid, _clean(b.get("hostname"), _HOST_RE) or pid,
         _clean(b.get("mac"), _MAC_RE) or None, _clean_ip(b.get("ip")) or None,
         _clean(b.get("kind"), _WORD_RE) or "pi", _clean(b.get("version"), _WORD_RE) or None,
     )
+    state = "active" if have else "none"
+    if not have and presented:
+        if not db.claim_panel_token(pid, presented, peer):
+            # Lost a race between the read above and the write: something else
+            # claimed this panel in between. Refuse rather than let two
+            # holders both believe they are it.
+            raise HTTPException(401, "panel token already claimed")
+        state = "claimed"
+        print(f"[server] {pid}: panel token claimed from {peer}")
     return {
         "panel_id": pid,
         "claimed": bool(p["claimed"]),
         "config_version": db.latest_version(pid),
+        "token": state,
     }
 
 
@@ -615,15 +672,20 @@ async def heartbeat(request: Request):
     pid = b.get("panel_id")
     if not pid or not db.get_panel(pid):
         raise HTTPException(404, "unknown panel")
+    panel_auth(request, pid)
     db.touch(pid, _clean_metrics(b.get("metrics")), b.get("config_version"))
-    return {"config_version": db.latest_version(pid)}
+    # "none" is how a panel learns its token was reset and should claim again,
+    # without waiting for a restart that on a wall may be months away.
+    return {"config_version": db.latest_version(pid),
+            "token": "active" if db.get_panel_token(pid) else "none"}
 
 
 @app.get("/api/config/{panel_id}")
-async def panel_config(panel_id: str):
+async def panel_config(panel_id: str, request: Request):
     p = db.get_panel(panel_id)
     if not p:
         raise HTTPException(404, "unknown panel")
+    panel_auth(request, panel_id)
     cfg = db.merged_config(panel_id)
     cfg["_version"] = db.latest_version(panel_id)
     cfg["_panel_id"] = panel_id
@@ -723,12 +785,15 @@ async def patch_display(panel_id: str, request: Request):
 async def panel_presets(panel_id: str, request: Request):
     """A panel saving the levels someone just dialled in on the wall.
 
-    Unauthenticated, like register, heartbeat and config: the panel has no
-    credentials and never has. It writes nothing but soft/bright numbers on
-    lights this panel already has, so the worst a stranger on the LAN can do
-    with it is change what Soft means in someone's living room -- the same
-    thing they could do by walking in and touching the panel.
+    Authenticated by the panel's own token, like everything panel-facing. It
+    writes nothing but soft/bright numbers on lights this panel already has.
+    That was once the argument for leaving it open -- the worst a stranger on
+    the LAN could do was change what Soft meant in someone's living room -- but
+    an open write next to an unescaped GUI was the start of the chain the 2026
+    security audit found, and "harmless on its own" is not a property anything
+    here gets to rely on.
     """
+    panel_auth(request, panel_id)
     p = db.get_panel(panel_id)
     if not p:
         raise HTTPException(404, "unknown panel")
@@ -777,6 +842,7 @@ async def panel_display(panel_id: str, request: Request):
     tiles on the wall and the config page still said List. Two records of one
     setting, and the one you were reading was the wrong one.
     """
+    panel_auth(request, panel_id)
     if not db.get_panel(panel_id):
         raise HTTPException(404, "unknown panel")
     b = await request.json()
@@ -795,6 +861,7 @@ async def panel_light(panel_id: str, request: Request):
     computer. Same trust as the rest of the panel-facing API, and the same
     narrow reach -- one boolean on one light this panel already has.
     """
+    panel_auth(request, panel_id)
     if not db.get_panel(panel_id):
         raise HTTPException(404, "unknown panel")
     b = await request.json()
@@ -816,6 +883,15 @@ async def panel_light(panel_id: str, request: Request):
 
 @app.websocket("/api/ws/{panel_id}")
 async def panel_ws(ws: WebSocket, panel_id: str):
+    # Refused before the handshake completes. This socket is how config pushes
+    # reach a panel, and it used to accept anyone: connecting as a real panel's
+    # id evicted its socket and received what was meant for it. With the token
+    # checked, only the panel itself can take its own slot -- which is also why
+    # the slot stays last-writer-wins: a panel reconnecting after a network blip
+    # must be able to replace its own stale socket.
+    if not db.get_panel(panel_id) or not _token_ok(ws.headers, panel_id):
+        await ws.close(code=1008)
+        return
     await ws.accept()
     LIVE[panel_id] = ws
     try:
@@ -975,6 +1051,28 @@ async def rollback(panel_id: str, request: Request):
     v = db.save_config(panel_id, old)
     await notify(panel_id, {"type": "config_updated", "version": v})
     return {"version": v}
+
+
+@app.post("/api/panels/{panel_id}/token/reset", dependencies=[Depends(require_admin)])
+async def reset_panel_token(panel_id: str):
+    """Forget a panel's token, so its next register claims afresh.
+
+    For a panel something else claimed first, or one whose token was lost with
+    its SD card. The real panel re-claims within one heartbeat of this, since
+    a refused heartbeat sends it back to register.
+    """
+    if not db.get_panel(panel_id):
+        raise HTTPException(404, "unknown panel")
+    db.reset_panel_token(panel_id)
+    # Whatever holds the socket authenticated with the token just forgotten.
+    ws = LIVE.pop(panel_id, None)
+    if ws is not None:
+        try:
+            await ws.close(code=1008)
+        except Exception:
+            pass
+    print(f"[server] {panel_id}: panel token reset")
+    return {"ok": True}
 
 
 @app.post("/api/panels/{panel_id}/action", dependencies=[Depends(require_admin)])
@@ -1565,21 +1663,34 @@ def _gui_csp():
     blank page, which is a worse outcome than the clickjacking it would guard.
     """
     import base64
+    path = os.path.join(STATIC_DIR, "index.html")
     try:
-        page = open(os.path.join(STATIC_DIR, "index.html"), encoding="utf-8").read()
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return ""
+    # Recomputed whenever the file changes. Hashed once at startup, an edited
+    # index.html is served with the old hash in its header -- and the browser
+    # then refuses the page's own script, which is a blank GUI with nothing
+    # anywhere to say why.
+    if _CSP_CACHE.get("mtime") == mtime:
+        return _CSP_CACHE["value"]
+    try:
+        page = open(path, encoding="utf-8").read()
         body = page[page.index("<script>") + len("<script>"):page.index("</script>")]
         digest = base64.b64encode(hashlib.sha256(body.encode("utf-8")).digest()).decode()
     except Exception as e:
         print(f"[server] no CSP for the admin GUI: {e}")
         return ""
-    return ("default-src 'self'; "
+    value = ("default-src 'self'; "
             f"script-src 'sha256-{digest}'; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; font-src 'self'; connect-src 'self'; "
             "object-src 'none'; base-uri 'self'; form-action 'self'")
+    _CSP_CACHE.update(mtime=mtime, value=value)
+    return value
 
 
-GUI_CSP = _gui_csp()
+_CSP_CACHE: dict = {}
 
 
 @app.middleware("http")
@@ -1602,8 +1713,9 @@ async def no_cache_html(request: Request, call_next):
     ctype = response.headers.get("content-type", "")
     if ctype.startswith("text/html") and "/preview/" not in path:
         response.headers["Cache-Control"] = "no-store, must-revalidate"
-        if GUI_CSP:
-            response.headers["Content-Security-Policy"] = GUI_CSP
+        csp = _gui_csp()
+        if csp:
+            response.headers["Content-Security-Policy"] = csp
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"
     return response

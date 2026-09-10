@@ -71,6 +71,16 @@ Both go through the agent to narrow server endpoints that touch one field
 each, never through a general config write. A panel cannot author its own
 configuration and should not be given a way to.
 
+Every panel-facing endpoint requires the panel's own token (`X-Panel-Token`),
+except for a panel the server has none for yet -- that is legacy mode, and it
+is load-bearing: it is how a panel on an old agent stays alive long enough to
+fetch the new one. Don't tighten it into a refusal. See `docs/SECURITY.md`.
+
+Anything the agent runs that needs neither the server nor Home Assistant --
+presence, the DALI client -- must start independently of registration. They
+once sat behind the register loop, and with the server down at boot neither
+ran.
+
 ## Panel UI performance constraints (measured, not theoretical)
 
 The Pi 5 renders 720x1280 with `backdrop-filter` glass. Frame budget is tight:

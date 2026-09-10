@@ -185,6 +185,23 @@ real panel being refused by the server: it keeps running its cached config, so
 GUI, along with the address each claim came from, and **Reset token** reopens
 the claim. It is never worse than the unauthenticated state it replaces.
 
+**Tested as a migration, not just as a feature.** `tests/test_panel_tokens.py`
+builds a database with the *old* schema and two existing panels, starts the new
+server against it, and then drives it: a tokenless agent keeps working on
+every endpoint and can still fetch the bundle; the real new agent code claims;
+from then on no-token and wrong-token are refused on register, heartbeat,
+config, the panel writes and the websocket; a claimed panel cannot be renamed
+by anything else; the token never appears in a panel row or an export; Reset
+reopens the claim and the agent takes it back without prompting; two racing
+claims produce exactly one winner; and unauthenticated fleet spam stops at 20.
+
+**Found while doing it: presence and DALI waited on the server.** Both were
+written to keep working with no server and no Home Assistant, and both sat in
+the same `gather` as everything else — behind the loop that waits for register
+to succeed. With the server down at boot, neither ever started. They now start
+independently. Not a security finding, but the token work made register able
+to refuse, which made it matter.
+
 **Stored in plaintext on the server, deliberately.** The token also keys the
 update HMAC, and an HMAC needs the secret itself. Hashing would protect against
 the database leaking without the rest of `/data` — but `/data` also holds the
@@ -222,7 +239,7 @@ scope for a security pass.
 | # | Finding | Status |
 |---|---|---|
 | 1 | Stored XSS | **fixed** — escape by default, ingest validation, CSP |
-| 2–4 | Unauthenticated panel endpoints and socket | pending |
+| 2–4 | Unauthenticated panel endpoints and socket | **fixed** — per-panel tokens, TOFU migration |
 | 6 | Login rate limiting | pending |
 | 5 | Update signing | pending |
 | 7–15 | Medium and low | pending |
