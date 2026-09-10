@@ -9,6 +9,8 @@ server cannot reach a panel that is already in service.
 Key-based only. Raspberry Pi Imager takes an authorised key at flash time, so
 there is nowhere a password would need to be typed, stored, or transmitted.
 """
+import base64
+import hashlib
 import os
 import shlex
 import socket
@@ -142,6 +144,20 @@ def bootstrap_lines(host, user, url, hostname="", ha_token="", port=22, timeout=
         yield DONE + "1 ===\n"
         return
 
+    # The host key is taken on first use -- there is nothing to pin it against
+    # yet -- so show it. Anyone who wants to be sure they reached the Pi on
+    # their desk and not something answering for it can compare this with the
+    # panel's own, on its console.
+    try:
+        hk = c.get_transport().get_remote_server_key()
+        fp = base64.b64encode(hashlib.sha256(hk.asbytes()).digest()).decode().rstrip("=")
+        kind = {"ssh-ed25519": "ed25519", "ssh-rsa": "rsa"}.get(
+            hk.get_name(), "ecdsa" if hk.get_name().startswith("ecdsa") else "rsa")
+        yield (f"host key {hk.get_name()} SHA256:{fp}\n"
+               f"  compare on the panel: ssh-keygen -lf /etc/ssh/ssh_host_{kind}_key.pub\n\n")
+    except Exception:
+        pass
+
     try:
         # The bootstrap needs root and there is no terminal here, so sudo must
         # be passwordless. Check first: the failure is otherwise a silent hang
@@ -155,10 +171,23 @@ def bootstrap_lines(host, user, url, hostname="", ha_token="", port=22, timeout=
             yield DONE + "1 ===\n"
             return
 
-        cmd = "curl -fsSL {} | sudo -n env PANEL_HA_TOKEN={} bash -s -- {}".format(
-            shlex.quote(url), shlex.quote(ha_token or ""), shlex.quote(hostname or "")
-        )
+        # The Home Assistant token goes over this channel's stdin into a file
+        # only this user can read, and the bootstrap gets the file's path. On
+        # the command line, as it was, it sat in the process table -- ps on
+        # the panel showed it to any user for the length of the install.
+        #
+        # mktemp's own mode is 0600, which is why there is no umask here. A
+        # umask would be the obvious way, and a trap: sudo runs its command
+        # under the union of the caller's umask and its own, so the whole
+        # bootstrap would run at 077 and create files the kiosk user needs --
+        # its launcher among them -- readable by root alone.
+        cmd = ('t=$(mktemp) || exit 1; cat > "$t"; '
+               'curl -fsSL {} | sudo -n env PANEL_HA_TOKEN_FILE="$t" bash -s -- {}; '
+               'rc=$?; rm -f "$t"; exit $rc').format(shlex.quote(url), shlex.quote(hostname or ""))
         _in, out, err = c.exec_command(cmd, timeout=None, get_pty=False)
+        _in.write(ha_token or "")
+        _in.flush()
+        _in.channel.shutdown_write()          # EOF, so cat finishes
         chan = out.channel
         chan.set_combine_stderr(True)
         while True:

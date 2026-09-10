@@ -1576,6 +1576,10 @@ async function loadSettings(){
   $("#sTokenState").textContent = s.ha_token_set
     ? `Token set (${s.ha_token_hint}) — ${srcNote(s.sources.ha_token)}`
     : "No token set.";
+  /* The stored one is unused here, and it is a credential for the whole of
+     Home Assistant in a database that goes into every backup. */
+  if(s.ha_token_redundant)
+    $("#sTokenState").textContent += " — not needed: Home Assistant already gives this add-on one. Clear it.";
   pill($("#sHaState"), s.ha_configured ? "configured" : "not configured",
        s.ha_configured ? "ok" : "warn");
   $("#sHaResult").innerHTML = s.ha_last_error

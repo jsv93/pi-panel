@@ -168,6 +168,11 @@ converter will not match `/`. One route change from live, so fixed anyway.
 **15. The bootstrap wrote the HA token into JSON with `printf`**, unescaped.
 Harmless for HA's token alphabet; wrong in principle.
 
+**17. …and wrote it before setting its mode.** *Found while fixing 15.* The file
+was created by the redirect and `chmod 600`ed on the next line, so for that gap
+`secrets.json` — a credential for the whole of Home Assistant — sat at the
+default umask, readable by any user on the Pi.
+
 ### Observation, not a finding
 
 The server's SSH public key stays in each panel's `authorized_keys` after
@@ -295,6 +300,50 @@ unknown manifest keys have no install target — so the transition update itself
 is unsigned, which is unavoidable: the agent doing it does not know how to
 check.
 
+## The medium and low items
+
+**7.** Under the add-on, storing a Home Assistant token is now refused unless
+it is for a *different* Home Assistant — the Supervisor already provides one,
+so a second is a standing credential in every backup doing nothing. One stored
+before this release is flagged in Settings beside the Clear button. Not
+encrypted when it is stored, deliberately: the key would live on the same disk
+and a backup takes both.
+
+**8.** The token goes over the SSH channel's stdin into a `mktemp` file, and the
+bootstrap is handed its path. Run for real with a token full of quotes,
+backslashes, `$` and a backtick: absent from the command line, round-trips
+exactly, temp file removed. `mktemp`'s own 0600 is used rather than a umask for
+a reason worth keeping: `sudo` runs its command under the union of the caller's
+umask and its own, so a `umask 077` there would have run the entire bootstrap at
+077 and made the kiosk user's launcher readable by root alone.
+
+**9.** The panel's host key fingerprint is printed at the start of an SSH
+install, with the command to check it on the panel. Verified to be byte-identical
+to what `ssh-keygen -lf` prints for the same key — a fingerprint in a different
+format is one nobody can compare.
+
+**11.** Expired sessions are swept at login, the only place new ones are made.
+
+**13.** `/fonts/{name}` is an allowlist, like `/bundle`.
+
+**15, 17.** `secrets.json` is created inside a `umask 077` subshell — the redirect
+is what creates the file, so it has to happen under the umask — and written by
+`json.dumps` from the environment rather than interpolated.
+
+**12 is waiting on hardware.** Whether the gateway takes a bearer token, and in
+what form, is one of the open questions in `DALI-INTEGRATION.md`. Adding a
+credential to panel config also means deciding how it is shown and exported,
+which should not be guessed at before the gateway exists.
+
+**14 is reviewed and left.** The bootstrap's server URL can come from the `Host`
+header, but only for a request holding an unused provisioning token — which
+only the operator has, in the command the GUI gave them. The one who could
+spoof the header is the one running the script. The GUI already shows the
+resolved address and where it came from.
+
+The integration reports a login lockout as a lockout. It surfaced as "cannot
+reach", which sends anyone investigating after the network.
+
 ## Not fixed
 
 **Plain HTTP (10).** Fixing it properly means TLS with a pinned certificate on
@@ -312,9 +361,29 @@ scope for a security pass.
 
 | # | Finding | Status |
 |---|---|---|
-| 1 | Stored XSS | **fixed** — escape by default, ingest validation, CSP |
+| 1 | Stored XSS, admin GUI | **fixed** — escape by default, ingest validation, CSP |
 | 2–4 | Unauthenticated panel endpoints and socket | **fixed** — per-panel tokens, TOFU migration |
-| 6 | Login rate limiting | **fixed** — per-address lockout, password change too |
-| 5 | Update signing | **fixed** — separate signing key; config signed too |
+| 5 | Unsigned updates | **fixed** — separate signing key; config signed too |
+| 6 | No login rate limiting | **fixed** — per-address lockout, password change too |
+| 7 | HA token at rest | **fixed** — not stored under the Supervisor; existing flagged |
+| 8 | HA token on a command line | **fixed** — stdin into a 0600 file |
+| 9 | SSH host key TOFU | **mitigated** — fingerprint shown to compare |
+| 10 | Plain HTTP | **not fixed** — see above |
+| 11 | Sessions never swept | **fixed** |
+| 12 | DALI gateway unauthenticated | **waiting on hardware** |
+| 13 | `/fonts` not an allowlist | **fixed** (was not exploitable) |
+| 14 | Host header in bootstrap URL | **reviewed** — not exploitable, left |
+| 15 | Unescaped JSON | **fixed** |
 | 16 | Config → kiosk markup → HA token | **fixed** — text node, signed config, URL check |
-| 7–15 | Medium and low | pending |
+| 17 | `secrets.json` world-readable before chmod | **fixed** |
+
+Found during the work rather than by the audit: 16, 17, three of the four XSS
+paths in 1, the two Unicode bugs in 5, and presence and DALI not starting with
+the server down. Each is written up where it was found.
+
+## Tests
+
+    python tests/check_html_sinks.py      # no unescaped markup in the GUI
+    python tests/test_panel_tokens.py     # tokens, and upgrade day
+    python tests/test_signing.py          # signing, including a spoofed server
+    python tests/test_login_limits.py     # lockout, per address

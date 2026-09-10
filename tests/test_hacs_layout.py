@@ -55,8 +55,17 @@ def main():
     chk("version is not the scaffold default", m.get("version") != "0.1.0", repr(m.get("version")))
 
     chk("README.md at repo root (HACS renders it)", os.path.isfile("README.md"))
-    chk("no __pycache__ committed under custom_components/",
-        not glob("custom_components/**/__pycache__", recursive=True))
+    # What git tracks, not what is on disk. HACS installs from the repository,
+    # and a __pycache__ appears in the working tree every time anyone runs the
+    # code -- checked on disk, this failed after any compile, and a check that
+    # fails for no reason is one people learn to skip.
+    import subprocess
+    try:
+        tracked = subprocess.run(["git", "ls-files", "custom_components"], cwd=ROOT,
+                                 capture_output=True, text=True, check=True).stdout
+        chk("no __pycache__ tracked under custom_components/", "__pycache__" not in tracked)
+    except Exception as e:
+        print(f"  SKIP  __pycache__ check (git unavailable: {e})")
 
     # Every platform the integration declares must actually be there.
     init = open(os.path.join(domain_dir, "__init__.py"), encoding="utf-8").read()

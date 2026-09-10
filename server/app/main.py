@@ -145,11 +145,24 @@ if [ ! -f /opt/panel/current/secrets.json ]; then
   # server's memory for the length of one SSH command -- never to disk, never
   # to the database -- which is the cost of not having to walk to the panel.
   HA_TOKEN="${PANEL_HA_TOKEN:-}"
+  # From the GUI's install the token arrives in a file only the installing
+  # user can read, and this is handed the path. It used to arrive on the
+  # command line, where ps showed it to every user on the Pi for as long as
+  # the install took.
+  if [ -z "$HA_TOKEN" ] && [ -n "${PANEL_HA_TOKEN_FILE:-}" ] && [ -r "$PANEL_HA_TOKEN_FILE" ]; then
+    HA_TOKEN=$(cat "$PANEL_HA_TOKEN_FILE")
+    rm -f "$PANEL_HA_TOKEN_FILE"
+  fi
   if [ -z "$HA_TOKEN" ] && [ -n "$TTY" ]; then
     ask HA_TOKEN "Home Assistant long-lived token (blank to skip): " silent
   fi
   if [ -n "${HA_TOKEN:-}" ]; then
-    printf '{"ha_token": "%s"}\n' "$HA_TOKEN" > /opt/panel/current/secrets.json
+    # Created at 600 inside the subshell, not written and then chmodded: the
+    # redirect is what creates the file, so it has to happen under the umask,
+    # and the old way left the token world-readable for as long as the gap
+    # lasted. Encoded as JSON rather than printed into a string it could
+    # break, and passed through the environment rather than argv.
+    ( umask 077; HA_TOKEN="$HA_TOKEN" python3 -c 'import json, os; print(json.dumps({"ha_token": os.environ["HA_TOKEN"]}))' > /opt/panel/current/secrets.json )
     chmod 600 /opt/panel/current/secrets.json
   else
     echo "    skipped — panel will run in demo mode until secrets.json exists"
@@ -580,8 +593,13 @@ async def login(request: Request, response: Response):
         _login_failed(ip)
         raise HTTPException(status_code=401, detail="wrong password")
     _LOGIN_FAILS.pop(ip, None)
+    # Expired sessions never left the dict. Swept here because login is the
+    # only place new ones are made, so it is where the dict grows.
+    now = time.time()
+    for t in [t for t, exp in SESSIONS.items() if exp <= now]:
+        SESSIONS.pop(t, None)
     tok = secrets.token_urlsafe(32)
-    SESSIONS[tok] = time.time() + SESSION_TTL
+    SESSIONS[tok] = now + SESSION_TTL
     response.set_cookie("psid", tok, httponly=True, samesite="lax", max_age=SESSION_TTL)
     return {"ok": True}
 
@@ -1654,7 +1672,10 @@ async def font(name: str):
     there is one set of files, and reached by a relative URL from the
     stylesheet so it resolves correctly behind Home Assistant's ingress too.
     """
-    if not name.startswith("outfit-") or not name.endswith(".woff2"):
+    # An allowlist, like /bundle. A prefix-and-suffix check was tested and is
+    # not exploitable today -- Starlette's path converter will not match a
+    # slash -- but that is one route change away from not being true.
+    if name not in BUNDLE_FILES or not name.endswith(".woff2"):
         raise HTTPException(404, "unknown font")
     path = _bundle_path(name)
     if not path:
@@ -1689,6 +1710,10 @@ async def get_settings(request: Request):
         "ha_last_error": ha.last_error(),
         "sources": ha.source(),
         "admin_password_source": "settings" if db.get_setting("admin_password_hash") else "env",
+        # A token stored under the Supervisor, pointing at no other Home
+        # Assistant: unused, and a standing credential in every backup.
+        "ha_token_redundant": bool(ha._supervisor() and db.get_setting("ha_token")
+                                   and not db.get_setting("ha_url")),
         "admin_password_is_default": (
             not db.get_setting("admin_password_hash") and ADMIN_PASSWORD in WEAK_DEFAULTS
         ),
@@ -1741,6 +1766,19 @@ async def put_settings(request: Request):
     if b.get("clear_ha_token"):
         db.clear_setting("ha_token")
     elif (b.get("ha_token") or "").strip():
+        # Under the add-on the Supervisor already hands this server a token,
+        # so a second one is a long-lived credential for the whole of Home
+        # Assistant sitting in a database that goes into every backup, doing
+        # nothing. The one reason to store it is pointing at a different Home
+        # Assistant, which needs its own.
+        #
+        # Not encrypted when it is stored, deliberately. The key would have to
+        # live on the same disk, and a backup takes both -- that is theatre.
+        if ha._supervisor() and not db.get_setting("ha_url"):
+            raise HTTPException(
+                400, "Home Assistant already gives this add-on a token, so there is "
+                     "nothing to store. A token is only needed here to reach a "
+                     "different Home Assistant -- set its URL as well.")
         db.set_setting("ha_token", b["ha_token"].strip())
     ha.invalidate()
     return await get_settings(request)

@@ -60,6 +60,14 @@ class PanelServer:
             ) as r:
                 if r.status == 401:
                     raise ConfigEntryAuthFailed("password rejected by the panel server")
+                if r.status == 429:
+                    # The server's login lockout. Reported as what it is: it
+                    # otherwise surfaced as "cannot reach", which sends anyone
+                    # looking into it after the network. Not an auth failure
+                    # either -- another machine at this address can trip it.
+                    raise PanelServerError(
+                        "panel server login is locked out after repeated failures; "
+                        f"retrying in {r.headers.get('Retry-After', '?')}s")
                 r.raise_for_status()
         except aiohttp.ClientError as err:
             raise PanelServerError(f"cannot reach {self._base}: {err}") from err
