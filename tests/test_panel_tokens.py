@@ -201,13 +201,18 @@ def run(tmp):
     r = c.post("/api/heartbeat", json={"panel_id": pid}, headers=tok)
     check("heartbeat after reset is accepted", r.status_code, 200)
     check("and tells the panel it holds no token", r.json().get("token"), "none")
+    # What heartbeat_loop does on "none": the server's signing key went with
+    # its token, so the next claim must carry the key again. (Registering
+    # without doing this -- the panel-was-off case -- is test_signing.py.)
+    ag.CLAIMED_MARK.unlink(missing_ok=True)
     check("the agent re-claims", asyncio.run(agent_register()), True)
     check("secured again", admin.get(f"/api/panels/{pid}").json()["panel"]["secured"], True)
 
     print("\ntrust on first use: two claims, one winner")
     kid = "kitchen-9a2b"
-    a = {"X-Panel-Token": "A" * 43}
-    b = {"X-Panel-Token": "B" * 43}
+    # A claim carries a signing key as well as a token (test_signing.py).
+    a = {"X-Panel-Token": "A" * 43, "X-Panel-Sign-Key": "a" * 43}
+    b = {"X-Panel-Token": "B" * 43, "X-Panel-Sign-Key": "b" * 43}
     first = c.post("/api/register", json={"panel_id": kid}, headers=a)
     second = c.post("/api/register", json={"panel_id": kid}, headers=b)
     check("first claim wins", first.json().get("token"), "claimed")

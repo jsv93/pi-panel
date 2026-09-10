@@ -1042,7 +1042,15 @@ const st = {lamp:0, bl:BL_DEF, vol:45, playing:false, title:"", artist:"", art:"
 
 function setDot(sel, cls, txt){
   const e = $(sel); if(!e) return;
-  e.innerHTML = '<span class="dot '+cls+'"></span>'+txt;
+  /* A text node, never markup. txt carries the configured Home Assistant
+     address -- "cannot reach <address>" -- and config is something a machine
+     posing as the server could once write. This page holds Home Assistant's
+     long-lived token, so script here is not a defaced screen, it is every
+     device in the house. The markup that would do it also makes the address
+     unreachable, which is exactly when this line runs. */
+  const dot = document.createElement("span");
+  dot.className = "dot " + cls;
+  e.replaceChildren(dot, document.createTextNode(txt));
 }
 function status(txt, cls){
   $("#conn").textContent = txt; $("#conn").className = cls;

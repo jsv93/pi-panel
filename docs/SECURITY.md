@@ -87,9 +87,8 @@ caught corruption but not a hostile server — and `.local` is mDNS, which anyon
 on the LAN can answer. ARP- or mDNS-spoofing the server was **root on every
 panel**.
 
-Fix: the manifest is authenticated with an HMAC keyed by the panel's own token.
-A spoofed server does not have the token, so it cannot produce a manifest the
-agent will accept. See *Update signing*.
+Fix: the manifest — and the config — are signed with a per-panel key the
+server holds and a spoofed server does not. See *Update signing*.
 
 **6. No login rate limiting.** *Verified: 20 wrong passwords, none refused, ~19
 attempts a second, the right password still accepted immediately after.* With
@@ -116,6 +115,22 @@ released, but it is not what bounds an attack. The lockout is: twenty wrong
 passwords from one address cost five hashes (289 ms), not twenty (1126 ms with
 the lockout disabled). `tests/test_login_limits.py` checks that, and was run
 against a copy with the lockout switched off to confirm it fails there.
+
+**16. Config reached the kiosk page's markup, and that page holds Home
+Assistant's token.** *Found while fixing 5; verified exploitable.* The kiosk
+builds `"cannot reach " + <ha_url>` into `innerHTML` when the Home Assistant
+connection fails, `ha_url` comes from config, and config was unsigned — so a
+machine posing as the server could push one. The page reads Home Assistant's
+long-lived token from `secrets.json` on its own origin, so script there is not
+a defaced screen, it is every device in the house. Tested both ways: with the
+old code an `ha_url` carrying an `onerror` in its path ran, and a script in
+that page read the token out of `secrets.json`; with the fix nothing ran. The
+markup makes the address unreachable, which is precisely when that line runs.
+
+Fix, three layers: the sink builds a text node; config is signed, so a spoofed
+server cannot write it; and the server refuses an `ha_url` that is not a host
+or an http(s) address — while still accepting a bare host, which the kiosk has
+always allowed and which refusing would have turned into an error on Save.
 
 ### Medium
 
@@ -167,7 +182,9 @@ why hashing panel tokens at rest (see below) would buy nothing.
 Checked, not assumed: the agent binds `127.0.0.1` only; `secrets.json` is mode
 600; SSH is key-only with `allow_agent=False`; the private key is written 600
 and **only the public key is ever served**; every interpolated shell argument is
-`shlex.quote`d; `slug()` confines panel ids to `[a-z0-9-]`; `/bundle/{name}` is
+`shlex.quote`d; `slug()` confines panel ids to alphanumerics and hyphens — in any
+script, not just ASCII, which a test later caught, but no shell or markup
+metacharacter is alphanumeric anywhere; `/bundle/{name}` is
 an allowlist; there is no CORS middleware and the session cookie is `httponly`
 and `samesite=lax`, so cross-site request forgery is well covered; changing the
 password requires the current one and ends every other session.
@@ -226,17 +243,57 @@ SSH key that reaches every panel, so that scenario buys nothing.
 
 ## Update signing
 
-The manifest carries `_sig`: HMAC-SHA256, keyed by the requesting panel's token,
-over the canonical JSON of the file list. The agent refuses to install anything
-from a manifest whose signature does not verify, and still checks each file's
-sha256 against it. A spoofed server has no token, so it cannot sign.
+**The first design was worthless, and it is worth recording why.** It keyed an
+HMAC on the panel's token. But the agent sends that token on every request —
+including to a machine only pretending to be the server, which would read it
+off the first request and sign anything it liked. A signature keyed on a
+secret you hand to whoever claims to be the server authenticates nothing.
 
-Chosen over Ed25519 because it needs nothing beyond the standard library on a
-panel, and the key is already distributed by the token scheme. The same
-trust-on-first-use caveat applies: a spoofed server present *at the moment of
-the claim* would learn the token. Old agents ignore `_sig` — unknown manifest
-keys have no install target — so the transition update itself is unsigned, which
-is unavoidable: the agent doing it does not know how to check.
+So there are two secrets, in opposite directions:
+
+| | Proves | Sent |
+|---|---|---|
+| `panel-token` | the panel, to the server | on every request |
+| `panel-sign-key` | the server, to the panel | **once**, in the claim |
+
+After the claim the signing key never leaves the panel again — a marker file
+records that the claim was made — so something posing as the server later sees
+the token at most. That lets it pretend to be the panel, but not sign.
+
+The server signs both the bundle manifest and the config with it. The agent
+refuses either if the signature is absent or wrong, and still checks each
+bundle file's sha256 against the signed manifest. A refused config leaves the
+one on disk in place, which is the point of the panel caching it at all.
+
+A claim must bring both secrets, and a signing key equal to the token is
+refused. Reset clears both, and the panel's next claim carries the key again.
+
+**Two bugs the tests found, both from one room name.** The signing test uses a
+room called Küche, to check the signature holds over non-ASCII byte for byte.
+`slug()` keeps accented letters, so that panel's id had one — and the ingest
+validation from #1 was ASCII-only, so it refused that panel at register, which
+makes a freshly updated agent roll itself back. Then the panel id was going in
+an `X-Panel-Id` header, which is bytes: it happened to survive for Latin-1 and
+would have failed every request for a room named in Polish, Greek or Chinese.
+Ids are now validated as what `slug()` actually produces, and travel in URLs.
+
+**One more found by tracing recovery rather than by a test.** If a panel's token
+is reset while the panel is switched off, it comes back believing it has
+claimed, registers without the key, and is refused — and the heartbeat that
+normally notices a reset sits behind the loop waiting on that register. It
+would have asked the same way forever. A refused claim now clears the marker.
+
+`tests/test_signing.py`, 28 checks. The decisive ones: config and manifest
+signed with the **token** — what a spoofed server can do — are refused, while
+the same forgery signed with the real key verifies, so the check is not
+vacuous; across four ordinary requests after the claim the key appears in
+none of them and the token in all; and both reset paths recover.
+
+The same trust-on-first-use caveat applies as for tokens: something present
+*at the moment of the claim* would learn the key. Old agents ignore `_sig` —
+unknown manifest keys have no install target — so the transition update itself
+is unsigned, which is unavoidable: the agent doing it does not know how to
+check.
 
 ## Not fixed
 
@@ -258,5 +315,6 @@ scope for a security pass.
 | 1 | Stored XSS | **fixed** — escape by default, ingest validation, CSP |
 | 2–4 | Unauthenticated panel endpoints and socket | **fixed** — per-panel tokens, TOFU migration |
 | 6 | Login rate limiting | **fixed** — per-address lockout, password change too |
-| 5 | Update signing | pending |
+| 5 | Update signing | **fixed** — separate signing key; config signed too |
+| 16 | Config → kiosk markup → HA token | **fixed** — text node, signed config, URL check |
 | 7–15 | Medium and low | pending |

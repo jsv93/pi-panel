@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS panels (
     metrics         TEXT,                         -- JSON blob from heartbeat
     token           TEXT,                         -- the panel's own; NULL = not yet claimed
     token_claimed_at   REAL,
-    token_claimed_from TEXT
+    token_claimed_from TEXT,
+    sign_key        TEXT                          -- authenticates this server to the panel
 );
 
 CREATE TABLE IF NOT EXISTS configs (
@@ -199,7 +200,7 @@ def fill_missing(stored, defaults):
 # them fails, on exactly the machines that were already working.
 LATE_COLUMNS = {
     "panels": [("token", "TEXT"), ("token_claimed_at", "REAL"),
-               ("token_claimed_from", "TEXT")],
+               ("token_claimed_from", "TEXT"), ("sign_key", "TEXT")],
 }
 
 
@@ -252,23 +253,32 @@ def get_panel_token(panel_id):
     return (r["token"] or "") if r else ""
 
 
-def claim_panel_token(panel_id, token, peer):
-    """Record a panel's token, but only if it has none -- trust on first use.
+def claim_panel_token(panel_id, token, sign_key, peer):
+    """Record a panel's token and signing key, but only if it has no token --
+    trust on first use.
 
     The WHERE clause is the whole guarantee. Two claims racing each other
     cannot both land: the second finds a token already there and changes
-    nothing, and the caller learns which one won by reading it back.
+    nothing, and the caller learns which one won by reading it back. The
+    signing key is only ever written here, alongside a claim, so nothing later
+    can replace it with one of its own.
     """
     with conn() as c:
-        c.execute("""UPDATE panels SET token=?, token_claimed_at=?, token_claimed_from=?
-                     WHERE id=? AND (token IS NULL OR token='')""",
-                  (token, time.time(), peer, panel_id))
+        c.execute("""UPDATE panels SET token=?, sign_key=?, token_claimed_at=?,
+                     token_claimed_from=? WHERE id=? AND (token IS NULL OR token='')""",
+                  (token, sign_key, time.time(), peer, panel_id))
     return get_panel_token(panel_id) == token
+
+
+def get_panel_sign_key(panel_id):
+    with conn() as c:
+        r = c.execute("SELECT sign_key FROM panels WHERE id=?", (panel_id,)).fetchone()
+    return (r["sign_key"] or "") if r else ""
 
 
 def reset_panel_token(panel_id):
     with conn() as c:
-        c.execute("""UPDATE panels SET token=NULL, token_claimed_at=NULL,
+        c.execute("""UPDATE panels SET token=NULL, sign_key=NULL, token_claimed_at=NULL,
                      token_claimed_from=NULL WHERE id=?""", (panel_id,))
 
 
@@ -317,6 +327,7 @@ def _panel_row(r):
     # is the one place that guarantees none of them can leak it. Read it with
     # get_panel_token(), which nothing outside authentication calls.
     d["secured"] = bool(d.pop("token", None))
+    d.pop("sign_key", None)
     return d
 
 

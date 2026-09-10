@@ -610,7 +610,6 @@ async def me(request: Request):
 # leniency. A refused register is what the agent's update check reads as "the
 # new agent is broken", and it rolls itself back -- so being fussy about a
 # hostname here would turn a cosmetic oddity into a panel that cannot update.
-_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
 _HOST_RE = re.compile(r"^[A-Za-z0-9._-]{1,253}$")
 _MAC_RE = re.compile(r"^(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$")
 _WORD_RE = re.compile(r"^[A-Za-z0-9._+-]{1,64}$")
@@ -620,7 +619,18 @@ METRICS_MAX = 64
 
 
 def _valid_id(v):
-    return isinstance(v, str) and bool(_ID_RE.match(v))
+    """What slug() produces, plus the hostname and MAC characters legacy ids
+    were made of.
+
+    Not an ASCII pattern, deliberately. slug() keeps anything str.isalnum()
+    accepts, which is Unicode-aware, so a room called Kueche with its umlaut
+    becomes a panel id with one in it. An ASCII check here refused those
+    panels at register -- and a refused register is what makes a freshly
+    updated agent roll itself back. No shell or markup metacharacter is
+    alphanumeric in any script, so this admits nothing that matters.
+    """
+    return (isinstance(v, str) and 0 < len(v) <= 64 and v[0].isalnum()
+            and all(c.isalnum() or c in "._:-" for c in v))
 
 
 def _clean(v, rx):
@@ -650,6 +660,33 @@ def _clean_metrics(m):
         elif isinstance(v, str):
             out[k] = v[:METRIC_STR_MAX]
     return out
+
+
+# ---------------------------------------------------------------- config checks
+# The one config value known to reach a markup sink on the panel: the Home
+# Assistant address, which the kiosk puts into "cannot reach <address>". That
+# sink is now a text node and config is now signed, so this is the third
+# layer -- but it is also simply correct. An address that is not an http(s)
+# URL can never have worked, so refusing it costs nothing.
+# Scheme optional because the kiosk adds http:// to a bare host itself, so a
+# config holding "homeassistant.local:8123" has always worked -- refusing it
+# would turn the next Save on that panel into an error for a value that is
+# fine. Bracketed IPv6 allowed. Nothing that can open a tag or a quote.
+_HA_URL_RE = re.compile(
+    r"^(?:https?://)?(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._~\-]+)(?::\d{1,5})?(?:/[A-Za-z0-9._~/\-]*)?$")
+
+
+def check_config(cfg):
+    if not isinstance(cfg, dict):
+        raise HTTPException(400, "config must be an object")
+    conn = cfg.get("connection")
+    if conn is None:
+        return
+    if not isinstance(conn, dict):
+        raise HTTPException(400, "connection must be an object")
+    url = conn.get("ha_url")
+    if url not in (None, "") and (not isinstance(url, str) or not _HA_URL_RE.match(url)):
+        raise HTTPException(400, "connection.ha_url must be a host or an http(s) address")
 
 
 # ---------------------------------------------------------------- panel auth
@@ -689,6 +726,34 @@ def panel_auth(request: Request, panel_id: str):
         raise HTTPException(401, "panel token required")
 
 
+# ---------------------------------------------------------------- signing
+# Authenticates this server to a panel, which is the other direction from the
+# token and needs a different secret. The first design keyed this on the token
+# and was worthless: the agent sends its token on every request, including to
+# a machine only pretending to be this server, which would read it off the
+# first request and sign whatever it liked. The signing key crosses the wire
+# once, in the claim, and never again -- so something that turns up later
+# posing as this server never sees it.
+SIGN_KEY_HEADER = "X-Panel-Sign-Key"
+
+
+def canonical(obj) -> bytes:
+    """The exact bytes both ends sign and verify. Sorted, compact and ASCII, so
+    two Python json modules agree on them byte for byte."""
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=True).encode()
+
+
+def signed(panel_id, obj):
+    """obj with _sig added, if this panel has a signing key; else obj as is."""
+    key = db.get_panel_sign_key(panel_id)
+    if not key:
+        return obj
+    body = {k: v for k, v in obj.items() if k != "_sig"}
+    return {**body, "_sig": hmac.new(key.encode(), canonical(body),
+                                     hashlib.sha256).hexdigest()}
+
+
 # ---------------------------------------------------------------- panel-facing
 @app.post("/api/register")
 async def register(request: Request):
@@ -715,7 +780,12 @@ async def register(request: Request):
     )
     state = "active" if have else "none"
     if not have and presented:
-        if not db.claim_panel_token(pid, presented, peer):
+        # A claim must bring both. An agent that claimed with a token alone
+        # would get manifests it cannot verify and refuse every update.
+        sign_key = request.headers.get(SIGN_KEY_HEADER, "") or ""
+        if not _TOKEN_RE.match(sign_key) or hmac.compare_digest(sign_key, presented):
+            raise HTTPException(400, "a claim needs a signing key distinct from the token")
+        if not db.claim_panel_token(pid, presented, sign_key, peer):
             # Lost a race between the read above and the write: something else
             # claimed this panel in between. Refuse rather than let two
             # holders both believe they are it.
@@ -754,7 +824,10 @@ async def panel_config(panel_id: str, request: Request):
     cfg["_version"] = db.latest_version(panel_id)
     cfg["_panel_id"] = panel_id
     cfg["_claimed"] = bool(p["claimed"])
-    return cfg
+    # Signed as well as the bundle. Config is data, not code, but the kiosk
+    # page holds Home Assistant's token and renders some of it -- a server
+    # that could forge config could forge its way into that page.
+    return signed(panel_id, cfg)
 
 
 # Keys a panel or Home Assistant may set without authoring the whole config.
@@ -1036,6 +1109,7 @@ async def put_config(panel_id: str, request: Request):
         raise HTTPException(404, "unknown panel")
     data = await request.json()
     data.pop("_version", None)
+    check_config(data)
     v = db.save_config(panel_id, data)
     pushed = await notify(panel_id, {"type": "config_updated", "version": v})
     return {"version": v, "pushed": pushed}
@@ -1100,6 +1174,7 @@ async def import_config(panel_id: str, request: Request):
             raise HTTPException(400, f"{k} must be an object")
     if "lights" in cfg and not isinstance(cfg["lights"], list):
         raise HTTPException(400, "lights must be a list")
+    check_config(cfg)
     v = db.save_config(panel_id, cfg)
     pushed = await notify(panel_id, {"type": "config_updated", "version": v})
     return {"version": v, "pushed": pushed}
@@ -1212,7 +1287,9 @@ async def template(name: str):
 
 @app.put("/api/templates/{name}", dependencies=[Depends(require_admin), Depends(require_config_owner)])
 async def put_template(name: str, request: Request):
-    db.save_template(name, await request.json())
+    data = await request.json()
+    check_config(data)
+    db.save_template(name, data)
     return {"ok": True}
 
 
@@ -1487,6 +1564,13 @@ async def bundle_manifest(request: Request):
     """
     _note_bundle(request, "manifest", "served")
     out = {}
+    # Signed for a panel that names itself and proves it. Unsigned otherwise:
+    # the bootstrap and every agent from before signing need this too, and a
+    # panel that holds a signing key refuses an unsigned manifest anyway.
+    # In the query string, not a header: a header is bytes, and slug() keeps
+    # non-ASCII letters, so a panel in a room with an accented name could not
+    # have sent its own id there at all.
+    pid = request.query_params.get("panel", "") or ""
     for name in BUNDLE_FILES:
         path = _bundle_path(name)
         if not path:
@@ -1496,6 +1580,9 @@ async def bundle_manifest(request: Request):
             for chunk in iter(lambda: f.read(65536), b""):
                 h.update(chunk)
         out[name] = {"sha256": h.hexdigest(), "size": os.path.getsize(path)}
+    if pid and _valid_id(pid) and db.get_panel(pid) and _token_ok(request.headers, pid) \
+            and db.get_panel_token(pid):
+        return signed(pid, out)
     return out
 
 

@@ -15,6 +15,7 @@ Install:
 """
 import asyncio
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -84,39 +85,87 @@ def _panel_token():
     needs it -- the browser talks to this agent on localhost, not to the
     server.
     """
+    # Created by _secret_file below: random, root-owned, mode 600, in one
+    # open() so it never exists readable by anyone else. If it cannot be
+    # written the panel runs without one -- accepted by the server in legacy
+    # mode, as every panel was before tokens. Worse than having one, much
+    # better than a panel that will not start.
+    return _secret_file(TOKEN_PATH)
+
+
+def _secret_file(path):
+    """Read a secret, or make one: random, root-owned, mode 600, written in a
+    single open() so it never exists readable by anyone else."""
     try:
-        t = TOKEN_PATH.read_text().strip()
+        t = path.read_text().strip()
         if t:
             return t
     except FileNotFoundError:
         pass
     except Exception as e:
-        print(f"[agent] cannot read {TOKEN_PATH}: {e}")
+        print(f"[agent] cannot read {path}: {e}")
     t = secrets.token_urlsafe(32)
     try:
-        # Created at 600 in one call, not written and then chmodded, so there
-        # is no moment at which it exists readable by anyone else.
-        fd = os.open(TOKEN_PATH, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(t)
     except FileExistsError:
-        return TOKEN_PATH.read_text().strip()
+        return path.read_text().strip()
     except Exception as e:
-        # Degrades to how every panel worked before tokens: accepted by the
-        # server in legacy mode. Worse than having one, much better than a
-        # panel that will not start.
-        print(f"[agent] cannot write {TOKEN_PATH}: {e}; carrying on without a token")
+        print(f"[agent] cannot write {path}: {e}; carrying on without it")
         return ""
     return t
 
 
 TOKEN = _panel_token()
 
+# The other direction: this proves the SERVER to the panel. It has to be a
+# different secret from the token, and it has to travel only once. The token
+# goes out on every request -- including to anything that has managed to pose
+# as the server -- so a signature keyed on it would be forgeable by exactly
+# the thing it exists to stop. This one is sent in the claim and never again.
+SIGN_KEY_PATH = PANEL_DIR / "panel-sign-key"
+SIGN_KEY = _secret_file(SIGN_KEY_PATH) if TOKEN else ""
+CLAIMED_MARK = PANEL_DIR / "panel-token-claimed"
+
 
 def server_headers():
     """Sent with every request to the config server, and only to it -- never
-    to the DALI gateway or anything else this agent talks to."""
+    to the DALI gateway or anything else this agent talks to. Never includes
+    the signing key; register adds that itself, once."""
+    # The token only. The panel id travels in URLs, which are encoded; a
+    # header is raw bytes, and an id from a room with an accented name --
+    # slug() keeps those letters -- would fail to encode and take every
+    # request this session makes down with it.
     return {"X-Panel-Token": TOKEN} if TOKEN else {}
+
+
+def _canonical(obj):
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=True).encode()
+
+
+def verified(obj, what):
+    """obj without its _sig if the signature checks out, else None.
+
+    A panel without a signing key -- it could not write one -- takes things
+    unsigned, as every panel did before signing existed. Otherwise an absent
+    or wrong signature is refused, and loudly, because the only thing that
+    produces one is a server that is not this panel's.
+    """
+    if not isinstance(obj, dict):
+        return None
+    body = {k: v for k, v in obj.items() if k != "_sig"}
+    if not SIGN_KEY:
+        return body
+    sig = obj.get("_sig")
+    want = hmac.new(SIGN_KEY.encode(), _canonical(body), hashlib.sha256).hexdigest()
+    if isinstance(sig, str) and hmac.compare_digest(sig, want):
+        return body
+    print(f"[agent] REFUSED {what}: {'no' if not sig else 'bad'} signature. "
+          f"Something answered as the server that does not hold this panel's "
+          f"signing key -- or the server's copy was reset. Nothing was applied.")
+    return None
 
 
 def mac():
@@ -505,10 +554,13 @@ async def check_bundle(session):
     fetched once during provisioning and never again otherwise.
     """
     try:
-        async with session.get(f"{SERVER}/bundle/manifest", timeout=15) as r:
+        async with session.get(f"{SERVER}/bundle/manifest", params={"panel": PANEL_ID},
+                               timeout=15) as r:
             if r.status != 200:
                 return
-            manifest = await r.json()
+            manifest = verified(await r.json(), "bundle manifest")
+            if manifest is None:
+                return
     except Exception:
         return
 
@@ -588,7 +640,10 @@ async def fetch_config(session) -> dict | None:
     try:
         async with session.get(f"{SERVER}/api/config/{PANEL_ID}", timeout=10) as r:
             if r.status == 200:
-                return await r.json()
+                # Refused config leaves the one on disk in place -- the panel
+                # keeps running exactly as it was, which is the point of it
+                # caching its config at all.
+                return verified(await r.json(), "config")
     except Exception:
         pass
     return None
@@ -792,14 +847,33 @@ def restart_panel():
 async def register(session):
     body = {"panel_id": PANEL_ID, "hostname": HOSTNAME, "mac": mac(), "ip": ip(),
             "kind": KIND, "version": AGENT_VER}
+    # Only while this panel does not know itself to be claimed. After that
+    # the key never leaves, so something posing as the server later sees the
+    # token at most -- which lets it pretend to be this panel, but not sign.
+    extra = {}
+    if SIGN_KEY and not CLAIMED_MARK.exists():
+        extra["X-Panel-Sign-Key"] = SIGN_KEY
     try:
-        async with session.post(f"{SERVER}/api/register", json=body, timeout=10) as r:
+        async with session.post(f"{SERVER}/api/register", json=body, timeout=10,
+                                headers=extra) as r:
             if r.status == 200:
                 data = await r.json()
                 print(f"[agent] registered: {data}")
+                if data.get("token") in ("claimed", "active") and TOKEN:
+                    try:
+                        CLAIMED_MARK.touch()
+                    except Exception:
+                        pass
                 if data.get("token") == "claimed":
                     print("[agent] panel token accepted: this panel is secured")
                 return True
+            if r.status == 400:
+                # The server wants a claim and this agent believed it had
+                # already made one, so it left the signing key out: the token
+                # was reset while this panel was off. Without this it would
+                # ask the same way forever -- the heartbeat that otherwise
+                # notices a reset sits behind the loop waiting on this.
+                CLAIMED_MARK.unlink(missing_ok=True)
             if r.status == 401:
                 # The server holds a different token for this id. Either
                 # something else claimed it first, or this panel's token was
@@ -833,6 +907,9 @@ async def heartbeat_loop(session):
                     # server, most likely. Claim it again now rather than at
                     # the next restart, which on a wall panel may be months.
                     if TOKEN and data.get("token") == "none":
+                        # The server's copy of the signing key went with the
+                        # token, so this claim has to carry it again.
+                        CLAIMED_MARK.unlink(missing_ok=True)
                         await register(session)
         except Exception:
             pass
