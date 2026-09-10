@@ -7,8 +7,10 @@ Nothing here is ever in the path of a light turning on.
 """
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
+import re
 import secrets
 import shlex
 import socket
@@ -532,6 +534,60 @@ async def me(request: Request):
     return {"authenticated": _session_ok(request), "ha_configured": ha.configured()}
 
 
+# ---------------------------------------------------------------- ingest
+# What a panel says about itself is data from the network, so it is checked on
+# the way in as well as escaped on the way out. Escaping is what stops
+# injection; this is what stops the database holding things that were never a
+# hostname to begin with, so every other reader -- the integration, an export,
+# whatever screen comes next -- is not each relied on to be careful.
+#
+# Identity is strict: a panel_id that is not plausibly an id is refused.
+# Everything descriptive is cleaned rather than refused, and that is not
+# leniency. A refused register is what the agent's update check reads as "the
+# new agent is broken", and it rolls itself back -- so being fussy about a
+# hostname here would turn a cosmetic oddity into a panel that cannot update.
+_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
+_HOST_RE = re.compile(r"^[A-Za-z0-9._-]{1,253}$")
+_MAC_RE = re.compile(r"^(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$")
+_WORD_RE = re.compile(r"^[A-Za-z0-9._+-]{1,64}$")
+_METRIC_KEY_RE = re.compile(r"^[a-z0-9_]{1,48}$")
+METRIC_STR_MAX = 256
+METRICS_MAX = 64
+
+
+def _valid_id(v):
+    return isinstance(v, str) and bool(_ID_RE.match(v))
+
+
+def _clean(v, rx):
+    return v if isinstance(v, str) and rx.match(v) else ""
+
+
+def _clean_ip(v):
+    if not isinstance(v, str) or not v:
+        return ""
+    try:
+        return str(ipaddress.ip_address(v))
+    except ValueError:
+        return ""
+
+
+def _clean_metrics(m):
+    """Scalars under plain keys, strings capped. Nothing a panel reports needs
+    more, and a nested structure is somewhere for markup to hide."""
+    if not isinstance(m, dict):
+        return {}
+    out = {}
+    for k, v in list(m.items())[:METRICS_MAX]:
+        if not isinstance(k, str) or not _METRIC_KEY_RE.match(k):
+            continue
+        if v is None or isinstance(v, (bool, int, float)):
+            out[k] = v
+        elif isinstance(v, str):
+            out[k] = v[:METRIC_STR_MAX]
+    return out
+
+
 # ---------------------------------------------------------------- panel-facing
 @app.post("/api/register")
 async def register(request: Request):
@@ -539,9 +595,12 @@ async def register(request: Request):
     pid = b.get("panel_id") or b.get("mac") or b.get("hostname")
     if not pid:
         raise HTTPException(400, "panel_id, mac or hostname required")
+    if not _valid_id(pid):
+        raise HTTPException(400, "that is not a valid panel id")
     p = db.upsert_panel(
-        pid, b.get("hostname", pid), b.get("mac"), b.get("ip"),
-        b.get("kind", "pi"), b.get("version"),
+        pid, _clean(b.get("hostname"), _HOST_RE) or pid,
+        _clean(b.get("mac"), _MAC_RE) or None, _clean_ip(b.get("ip")) or None,
+        _clean(b.get("kind"), _WORD_RE) or "pi", _clean(b.get("version"), _WORD_RE) or None,
     )
     return {
         "panel_id": pid,
@@ -556,7 +615,7 @@ async def heartbeat(request: Request):
     pid = b.get("panel_id")
     if not pid or not db.get_panel(pid):
         raise HTTPException(404, "unknown panel")
-    db.touch(pid, b.get("metrics"), b.get("config_version"))
+    db.touch(pid, _clean_metrics(b.get("metrics")), b.get("config_version"))
     return {"config_version": db.latest_version(pid)}
 
 
@@ -768,7 +827,8 @@ async def panel_ws(ws: WebSocket, panel_id: str):
             except Exception:
                 continue
             if data.get("type") == "heartbeat":
-                db.touch(panel_id, data.get("metrics"), data.get("config_version"))
+                db.touch(panel_id, _clean_metrics(data.get("metrics")),
+                         data.get("config_version"))
                 await ws.send_json({"type": "ack", "config_version": db.latest_version(panel_id)})
     except WebSocketDisconnect:
         pass
@@ -1486,6 +1546,42 @@ async def preview_ui():
     return FileResponse(path)
 
 
+def _gui_csp():
+    """Content-Security-Policy for the admin GUI, pinned to its one script.
+
+    The third layer under escaping and ingest validation, and the one that holds
+    if the other two miss something: the GUI runs no inline handlers, loads
+    nothing from another origin and never evals, so a policy that admits only
+    the hash of its own script costs it nothing and refuses every injected
+    onerror= outright.
+
+    Hashed rather than nonced because the file is static -- hashing it once at
+    startup means no rewriting the HTML on every request. It has to be the
+    exact bytes between the tags, so it is computed from the file actually
+    served rather than written down anywhere it could drift.
+
+    Deliberately no frame-ancestors. Behind ingress this page runs inside an
+    iframe in Home Assistant's frontend, and getting that directive wrong is a
+    blank page, which is a worse outcome than the clickjacking it would guard.
+    """
+    import base64
+    try:
+        page = open(os.path.join(STATIC_DIR, "index.html"), encoding="utf-8").read()
+        body = page[page.index("<script>") + len("<script>"):page.index("</script>")]
+        digest = base64.b64encode(hashlib.sha256(body.encode("utf-8")).digest()).decode()
+    except Exception as e:
+        print(f"[server] no CSP for the admin GUI: {e}")
+        return ""
+    return ("default-src 'self'; "
+            f"script-src 'sha256-{digest}'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; font-src 'self'; connect-src 'self'; "
+            "object-src 'none'; base-uri 'self'; form-action 'self'")
+
+
+GUI_CSP = _gui_csp()
+
+
 @app.middleware("http")
 async def no_cache_html(request: Request, call_next):
     """Never let a browser hold on to the admin UI.
@@ -1497,8 +1593,19 @@ async def no_cache_html(request: Request, call_next):
     page". The file is ~40KB; re-fetching it costs nothing worth having.
     """
     response = await call_next(request)
-    if request.url.path in ("/", "/index.html"):
+    # Keyed on what the response is, not on its path. Behind ingress the path
+    # carries a prefix that itself starts with /api/, so any rule written
+    # against the path either misses the GUI or catches the API. The admin page
+    # is the only HTML this serves apart from the panel preview, which is a
+    # different document with a different script and must not get this policy.
+    path = request.url.path
+    ctype = response.headers.get("content-type", "")
+    if ctype.startswith("text/html") and "/preview/" not in path:
         response.headers["Cache-Control"] = "no-store, must-revalidate"
+        if GUI_CSP:
+            response.headers["Content-Security-Policy"] = GUI_CSP
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "same-origin"
     return response
 
 

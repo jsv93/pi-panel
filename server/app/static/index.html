@@ -647,8 +647,37 @@ async function copyText(text){
 }
 function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("on");
   setTimeout(()=>t.classList.remove("on"), 2600); }
-function confirmModal(title, html, onOk){
-  $("#mTitle").textContent=title; $("#mBody").innerHTML=html;
+/* ---------------- HTML ----------------
+   Every value that reaches innerHTML goes through html``, which escapes its
+   interpolations by default. That default is the point. The alternative --
+   escaping each value that looks untrusted -- was tried in effect, by writing
+   the code without escaping and auditing it afterwards, and the audit missed
+   two of the four injection paths it later turned out to have: the bundle log
+   renders a filename taken from a request path, and the network scan renders
+   the SSH banner of whatever machine answered. A missed case under this scheme
+   renders visibly wrong (a tag shown as text) instead of silently running.
+
+   raw() marks a fragment as markup that is already safe -- a literal, or
+   something html`` built. Arrays interpolate joined, each item rendered the
+   same way, so html`${items.map(x => html`...`)}` needs no .join(""). */
+class SafeHTML { constructor(s){ this.s = s; } toString(){ return this.s; } }
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+function renderVal(v){
+  if(v instanceof SafeHTML) return v.s;
+  if(Array.isArray(v)) return v.map(renderVal).join("");
+  if(v === null || v === undefined || v === false) return "";
+  return esc(v);
+}
+function html(strings, ...vals){
+  let out = strings[0];
+  for(let i = 0; i < vals.length; i++) out += renderVal(vals[i]) + strings[i+1];
+  return new SafeHTML(out);
+}
+const raw = s => new SafeHTML(String(s));
+
+function confirmModal(title, body, onOk){
+  $("#mTitle").textContent=title; $("#mBody").innerHTML=body;
   $("#mOk").textContent="Confirm";   // callers may override; reset so it can't leak
   $("#modal").classList.add("on");
   $("#mOk").onclick = async ()=>{ $("#modal").classList.remove("on"); await onOk(); };
@@ -703,22 +732,22 @@ async function loadFleet(){
     const drift = p.claimed && p.config_version && p.config_version < p.latest_version;
     const cls = !p.claimed ? "row-unclaimed" : (p.online?"":"row-off");
     const dot = !p.claimed ? "var(--warn)" : (p.online?"var(--ok)":"var(--bad)");
-    const haState = !p.online ? '<span class="muted">—</span>'
-      : (m.ha_connected ? '<span style="color:var(--ok)">connected</span>'
-                        : '<span style="color:var(--bad)">disconnected</span>');
+    const haState = !p.online ? raw('<span class="muted">—</span>')
+      : (m.ha_connected ? raw('<span style="color:var(--ok)">connected</span>')
+                        : raw('<span style="color:var(--bad)">disconnected</span>'));
     const cfg = !p.claimed ? "" : drift
-      ? `<span style="color:var(--warn)">v${p.config_version} drift</span>`
-      : `<span style="color:var(--ok)">v${p.latest_version} ✓</span>`;
+      ? html`<span style="color:var(--warn)">v${p.config_version} drift</span>`
+      : html`<span style="color:var(--ok)">v${p.latest_version} ✓</span>`;
     const action = p.claimed
       /* Identify sits here as well as on the detail page: "which of these is
          study-rp3" is a question you ask while looking at the list. */
-      ? `<span style="display:flex;gap:6px;justify-content:flex-end">
-           <button class="btn" data-ident="${p.id}"${p.online?"":" disabled style=\"opacity:.4\""}>Identify</button>
+      ? html`<span style="display:flex;gap:6px;justify-content:flex-end">
+           <button class="btn" data-ident="${p.id}"${p.online ? "" : raw(' disabled style="opacity:.4"')}>Identify</button>
            <button class="btn" data-open="${p.id}">Configure</button></span>`
-      : `<button class="btn primary" data-claim="${p.id}">Claim</button>`;
-    return `<div class="grid ${cls}">
+      : html`<button class="btn primary" data-claim="${p.id}">Claim</button>`;
+    return html`<div class="grid ${cls}">
       <span style="display:flex;align-items:center;gap:9px"><i class="dot" style="background:${dot}"></i>${p.hostname}</span>
-      <span class="muted">${p.room||'<span style="color:var(--warn)">unclaimed</span>'}</span>
+      <span class="muted">${p.room || raw('<span style="color:var(--warn)">unclaimed</span>')}</span>
       <span class="muted">${p.kind}</span>
       <span>${haState}</span>
       <span class="muted">${ago(p.last_seen)}</span>
@@ -740,7 +769,7 @@ setInterval(()=>{ if($("#fleetView").style.display!=="none" && $("#app").style.d
 async function claimPanel(id){
   const p = PANELS.find(x=>x.id===id);
   confirmModal("Claim panel",
-    `<div class="lbl">ROOM</div><input id="claimRoom" placeholder="e.g. Master Bedroom">
+    html`<div class="lbl">ROOM</div><input id="claimRoom" placeholder="e.g. Master Bedroom">
      <div class="lbl" style="margin-top:12px">TEMPLATE</div><select id="claimTpl"></select>
      <p class="muted" style="margin-top:12px;font-size:13px">${p.hostname} · ${p.ip||""}</p>`,
     async ()=>{
@@ -750,7 +779,7 @@ async function claimPanel(id){
       toast("Panel claimed"); loadFleet();
     });
   const tpls = await api("/templates");
-  $("#claimTpl").innerHTML = tpls.map(t=>`<option value="${t.name}">${t.name}</option>`).join("");
+  $("#claimTpl").innerHTML = html`${tpls.map(t=>html`<option value="${t.name}">${t.name}</option>`)}`;
 }
 
 /* ---------------- panel detail ---------------- */
@@ -762,12 +791,14 @@ async function loadEntities(){
   ENTITIES.sensor = await api("/entities?domain=sensor");
   ENTITIES.climate = await api("/entities?domain=climate");
 }
+/* Entity names come from Home Assistant, so they are escaped like anything else
+   a panel or a device can influence. Returns SafeHTML so it can sit inside
+   another html`` without being escaped twice. */
 function opts(list, val, blank="— none —"){
   const has = list.some(e=>e.entity_id===val);
-  let h = `<option value="">${blank}</option>`;
-  if(val && !has) h += `<option value="${val}" selected>${val} (missing)</option>`;
-  return h + list.map(e=>
-    `<option value="${e.entity_id}" ${e.entity_id===val?"selected":""}>${e.name} — ${e.entity_id}</option>`).join("");
+  return html`<option value="">${blank}</option>${
+    val && !has ? html`<option value="${val}" selected>${val} (missing)</option>` : ""}${
+    list.map(e => html`<option value="${e.entity_id}" ${e.entity_id===val?"selected":""}>${e.name} — ${e.entity_id}</option>`)}`;
 }
 /* Everything on this page that comes from the config, as opposed to from the
    panel record. Split out because loading a template refills exactly this and
@@ -810,8 +841,8 @@ function fillConfigForm(){
 }
 async function loadTemplateList(sel){
   const tpls = await api("/templates");
-  $("#fTemplate").innerHTML = tpls.map(t=>
-    `<option value="${t.name}" ${t.name===sel?"selected":""}>${t.name}</option>`).join("");
+  $("#fTemplate").innerHTML = html`${tpls.map(t=>
+    html`<option value="${t.name}" ${t.name===sel?"selected":""}>${t.name}</option>`)}`;
 }
 async function openPanel(id){
   CUR = await api("/panels/"+id);
@@ -825,8 +856,8 @@ async function openPanel(id){
   await loadTemplateList(CUR.panel.template);
   fillConfigForm();
 
-  $("#problems").innerHTML = (CUR.problems||[]).map(p=>
-    `<div class="err">⚠ ${p.message}</div>`).join("");
+  $("#problems").innerHTML = html`${(CUR.problems||[]).map(p=>
+    html`<div class="err">⚠ ${p.message}</div>`)}`;
 
   const m = CUR.panel.metrics||{};
   $("#diagStrip").innerHTML = [
@@ -859,16 +890,16 @@ async function openPanel(id){
        network or the gateway, "bus unpowered" is the DALI supply. The second is
        an electrical fault and no amount of restarting anything will fix it. */
     ["DALI", m.dali || "—"],
-  ].map(([k,v])=>`<span>${k} <span style="color:var(--dim)">${v}</span></span>`).join("");
-  $("#diagBody").innerHTML = `<div class="f2">
+  ].map(([k,v])=>html`<span>${k} <span style="color:var(--dim)">${v}</span></span>`).join("");
+  $("#diagBody").innerHTML = html`<div class="f2">
     <div><div class="lbl">IP</div>${CUR.panel.ip||"—"}</div>
     <div><div class="lbl">MAC</div>${CUR.panel.mac||"—"}</div>
     <div style="margin-top:10px"><div class="lbl">AGENT VERSION</div>${CUR.panel.agent_version||"—"}</div>
     <div style="margin-top:10px"><div class="lbl">LAST SEEN</div>${ago(CUR.panel.last_seen)}</div></div>`;
-  $("#history").innerHTML = (CUR.history||[]).map(h=>
-    `<div style="display:flex;gap:12px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line2)">
+  $("#history").innerHTML = html`${(CUR.history||[]).map(h=>
+    html`<div style="display:flex;gap:12px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line2)">
       <span>v${h.version}</span><span class="muted">${new Date(h.created_at*1000).toLocaleString()}</span>
-      <button class="btn" style="margin-left:auto" data-rb="${h.version}">Rollback</button></div>`).join("");
+      <button class="btn" style="margin-left:auto" data-rb="${h.version}">Rollback</button></div>`)}`;
   document.querySelectorAll("[data-rb]").forEach(b=>b.onclick=async()=>{
     await api(`/panels/${CUR.panel.id}/rollback`,{method:"POST",body:JSON.stringify({version:+b.dataset.rb})});
     toast("Rolled back"); openPanel(CUR.panel.id);
@@ -917,9 +948,8 @@ const SCREENS = [
 ];
 function renderScreens(current){
   const known = SCREENS.find(s=>s.ov===current);
-  $("#fScreen").innerHTML = SCREENS.map(s=>
-    `<option value="${s.ov}" ${s.ov===current?"selected":""}>${s.name}</option>`).join("")
-    + `<option value="__custom" ${known?"":"selected"}>Something else</option>`;
+  $("#fScreen").innerHTML = html`${SCREENS.map(s=>
+    html`<option value="${s.ov}" ${s.ov===current?"selected":""}>${s.name}</option>`)}<option value="__custom" ${known?"":"selected"}>Something else</option>`;
   $("#fDsiOverlay").value = current;
 }
 $("#fScreen").onchange = ()=>{
@@ -942,7 +972,7 @@ $("#fDsiOverlay").oninput = ()=>{
   $("#fScreen").value = SCREENS.some(s=>s.ov===v) ? v : "__custom";
 };
 function renderLights(){
-  const rows = (CFG.lights||[]).map((l,i)=>`<tr class="lrow">
+  const rows = (CFG.lights||[]).map((l,i)=>html`<tr class="lrow">
     <td class="griptd"><span class="grip" title="Drag to reorder">⠿</span></td>
     <td><select data-l="${i}" data-k="entity_id">${opts(ENTITIES.light, l.entity_id)}</select></td>
     <td><input data-l="${i}" data-k="name" value="${l.name||""}"></td>
@@ -1010,7 +1040,7 @@ function renderSpeakers(){
   const sp = (CFG.media||{}).speakers||[];
   $("#speakerList").innerHTML = sp.map((s,i)=>{
     const eid = typeof s==="string"?s:s.entity_id, nm = typeof s==="string"?"":(s.name||"");
-    return `<div class="sprow" style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+    return html`<div class="sprow" style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
       <span class="grip" title="Drag to reorder">⠿</span>
       <select data-sp="${i}" style="flex:2">${opts(ENTITIES.media, eid)}</select>
       <input data-spn="${i}" placeholder="Label" value="${nm}" style="flex:1">
@@ -1102,10 +1132,11 @@ $("#importFile").onchange = async e=>{
   try{ doc = JSON.parse(await f.text()); }
   catch(err){ toast("Not valid JSON"); return; }
   const ex = doc._export || {};
-  const from = ex.panel_id ? `<b>${ex.panel_id}</b>${ex.room ? " (" + ex.room + ")" : ""}` : "an unknown panel";
+  /* Everything in _export came out of a file, and a file can say anything. */
+  const from = ex.panel_id ? html`<b>${ex.panel_id}</b>${ex.room ? " (" + ex.room + ")" : ""}` : "an unknown panel";
   confirmModal("Import configuration",
-    `<p>Replace <b>${CUR.panel.id}</b>'s configuration with the file from ${from}?</p>` +
-    `<p class="note">Every setting on this panel is overwritten and pushed. The version
+    html`<p>Replace <b>${CUR.panel.id}</b>'s configuration with the file from ${from}?</p>
+     <p class="note">Every setting on this panel is overwritten and pushed. The version
      it is on now stays in the panel's history, so Revert undoes this.</p>`,
     async ()=>{
       let out;
@@ -1140,7 +1171,7 @@ $("#saveTplBtn").onclick = ()=>{
   const suggested = ($("#fRoom").value || CUR.panel.room || "")
     .trim().toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
   confirmModal("Save as template",
-    `<div class="lbl">NAME</div>
+    html`<div class="lbl">NAME</div>
      <input id="tplName" style="width:100%" value="${suggested}" placeholder="e.g. living-areas">
      <div style="margin-top:10px;font-size:12px;color:var(--dim);line-height:1.5">
        Saves this panel's lights and their soft/bright levels, speakers, sensors,
@@ -1170,7 +1201,7 @@ document.querySelectorAll("[data-act]").forEach(b=>b.onclick=async()=>{
 $("#removeBtn").onclick = ()=>{
   const online = CUR.live || CUR.panel && (Date.now()/1000 - (CUR.panel.last_seen||0) < 90);
   confirmModal("Remove panel",
-    `<p>Remove <b>${CUR.panel.hostname}</b> and its config history?</p>` +
+    html`<p>Remove <b>${CUR.panel.hostname}</b> and its config history?</p>` +
     (online ? `<div class="warn">This panel is currently online. If the hardware is still
        running it will re-register as unclaimed.</div>` : "") +
     `<p class="muted" style="margin-top:10px;font-size:13px">This cannot be undone.</p>`,
@@ -1186,13 +1217,13 @@ $("#pushAllBtn").onclick = async ()=>{
   if(!rows.length){ toast("No claimed panels"); return; }
   const offline = rows.filter(r=>!r.online).length;
   confirmModal("Push configuration to all panels",
-    `<p>The following panels will receive their latest config:</p>
+    html`<p>The following panels will receive their latest config:</p>
      <div style="margin-top:12px;border:1px solid var(--line2);border-radius:8px;overflow:hidden">
-     ${rows.map(r=>`<div style="display:flex;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line2);font-size:13px">
+     ${rows.map(r=>html`<div style="display:flex;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line2);font-size:13px">
         <i class="dot" style="background:${r.online?'var(--ok)':'var(--bad)'};margin-top:6px"></i>
         <span style="flex:1">${r.hostname}<span class="muted"> · ${r.room||""}</span></span>
-        <span class="muted">v${r.running} → v${r.latest}</span></div>`).join("")}</div>`
-    + (offline ? `<div class="warn">${offline} panel${offline>1?"s are":" is"} offline and will
+        <span class="muted">v${r.running} → v${r.latest}</span></div>`)}</div>`
+    + (offline ? html`<div class="warn">${offline} panel${offline>1?"s are":" is"} offline and will
          pick the change up on next sync rather than now.</div>` : ""),
     async ()=>{
       const r = await api("/push_all",{method:"POST"});
@@ -1207,11 +1238,11 @@ $("#pushAllBtn").onclick = async ()=>{
 $("#addPanelBtn").onclick = async ()=>{
   const tpls = await api("/templates");
   confirmModal("Add a panel",
-    `<div class="lbl">ROOM</div><input id="provRoom" placeholder="e.g. Master Bedroom">
+    html`<div class="lbl">ROOM</div><input id="provRoom" placeholder="e.g. Master Bedroom">
      <div class="lbl" style="margin-top:12px">ROOM LABEL (shown under the clock)</div>
      <input id="provLabel" placeholder="defaults to the room name">
      <div class="lbl" style="margin-top:12px">TEMPLATE</div>
-     <select id="provTpl">${tpls.map(t=>`<option value="${t.name}">${t.name}</option>`).join("")}</select>
+     <select id="provTpl">${tpls.map(t=>html`<option value="${t.name}">${t.name}</option>`)}</select>
      <p class="muted" style="margin-top:12px;font-size:13px">Next you will configure
        the room's lights, speakers and sensors. The command to run on the Pi is
        handed over after you save that — the panel then arrives fully configured
@@ -1250,15 +1281,15 @@ function trackStage(lines){
 }
 function showProvisionCommand(r, opts={}){
   confirmModal("Run this on the Pi",
-    `<p class="muted" style="font-size:13px">Panel <b>${r.panel_id}</b> is created and
+    html`<p class="muted" style="font-size:13px">Panel <b>${r.panel_id}</b> is created and
       waiting. Run this on a fresh Raspberry Pi OS <b>Lite</b> install:</p>
      <pre id="provCmd" style="margin-top:12px;padding:14px;border-radius:8px;
        background:#0d0d12;border:1px solid var(--line2);font-size:13px;
        white-space:pre-wrap;word-break:break-all">${r.command}</pre>
      <div style="margin-top:8px"><button class="btn" id="provCopyBtn">Copy command</button></div>
-     ${opts.configured ? `<p class="muted" style="margin-top:12px;font-size:13px">
+     ${opts.configured ? raw(`<p class="muted" style="margin-top:12px;font-size:13px">
        This panel's configuration is saved, so the Pi will pick it up on its first
-       sync — nothing to push afterwards.</p>` : ""}
+       sync — nothing to push afterwards.</p>`) : ""}
      <div class="warn">The token works once, but stays valid until it is used —
        reachable again from this panel's <b>Setup command</b> button.</div>
      <h2 style="margin-top:22px;font-size:20px">Or set it up from the SD card</h2>
@@ -1350,24 +1381,26 @@ function showProvisionCommand(r, opts={}){
       const res = await api("/scan",{method:"POST",body:JSON.stringify({cidr:""})});
       const hosts = res.hosts||[];
       if(!hosts.length){
-        box.innerHTML = `<div class="warn">Nothing answering on port 22 across ${res.cidr}.
+        box.innerHTML = html`<div class="warn">Nothing answering on port 22 across ${res.cidr}.
           Check the Pi has booted and that SSH was enabled when it was flashed.</div>`;
       } else {
         /* A panel already in the fleet is almost certainly not the one being
            provisioned, so it is labelled rather than hidden — seeing it proves
            the scan works. */
-        box.innerHTML = `<div class="muted" style="font-size:12px;margin-bottom:6px">${res.cidr}</div>` +
-          hosts.map(h=>`<div style="display:flex;gap:10px;align-items:center;padding:7px 0;
+        /* h.banner is whatever the machine on the other end of port 22 chose to
+           say about itself -- anything on the network can put markup in it. */
+        box.innerHTML = html`<div class="muted" style="font-size:12px;margin-bottom:6px">${res.cidr}</div>${
+          hosts.map(h=>html`<div style="display:flex;gap:10px;align-items:center;padding:7px 0;
               border-bottom:1px solid var(--line2);font-size:13px">
             <span style="width:120px">${h.ip}</span>
             <span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
               ${h.known_panel ? "already in the fleet — "+h.known_panel : (h.banner||"")}</span>
-            ${h.known_panel ? "" : `<button class="btn" data-use="${h.ip}">Use</button>`}</div>`).join("");
+            ${h.known_panel ? "" : html`<button class="btn" data-use="${h.ip}">Use</button>`}</div>`)}`;
         box.querySelectorAll("[data-use]").forEach(b=>b.onclick=()=>{
           $("#sshHost").value = b.dataset.use; toast("Host set to "+b.dataset.use);
         });
       }
-    }catch(e){ box.innerHTML = `<div class="warn">${e.message||e}</div>`; }
+    }catch(e){ box.innerHTML = html`<div class="warn">${e.message||e}</div>`; }
     btn.disabled = false; btn.textContent = "Find panels on the network";
   };
   $("#sshRunBtn").onclick = async ()=>{
@@ -1411,7 +1444,7 @@ async function pendingTokenFor(id){
 }
 $("#reinstallBtn").onclick = ()=>{
   confirmModal("Reinstall this panel",
-    `<p>Re-run the installer on <b>${CUR.panel.hostname}</b>, keeping its id, room and
+    html`<p>Re-run the installer on <b>${CUR.panel.hostname}</b>, keeping its id, room and
       configuration. This is how a panel picks up a new panel UI or agent, since both
       are fetched at install and not after.</p>
      <p class="muted" style="margin-top:10px;font-size:13px">The panel reboots at the
@@ -1471,7 +1504,7 @@ async function loadBundleLog(){
        which is how a panel gets pinned to an old build without anyone doing
        anything. Flagged rather than merely reported. */
     const bad = src !== "image";
-    return `<div style="display:flex;gap:10px;font-size:13px;margin-bottom:4px">
+    return html`<div style="display:flex;gap:10px;font-size:13px;margin-bottom:4px">
       <span style="width:150px;color:var(--dim)">${f}</span>
       <span style="color:${bad?"var(--bad)":"var(--ok)"}">${src}</span></div>`;
   }).join("");
@@ -1483,7 +1516,9 @@ async function loadBundleLog(){
     ? b.recent.map(r=>{
         const when = new Date(r.at*1000).toLocaleTimeString();
         const who = known[r.ip] || r.ip;
-        return `<div style="color:${r.status==="served"?"var(--dim)":"var(--bad)"}">
+        /* r.file is the path someone asked for, including files that do not
+           exist -- which is precisely the case this log exists to show. */
+        return html`<div style="color:${r.status==="served"?"var(--dim)":"var(--bad)"}">
           ${when}  ${who}  ${r.file}  ${r.status}</div>`;
       }).join("")
     : `<div class="muted">Nothing yet. Panels ask every 5 minutes.</div>`;
@@ -1515,7 +1550,7 @@ async function loadSettings(){
   pill($("#sHaState"), s.ha_configured ? "configured" : "not configured",
        s.ha_configured ? "ok" : "warn");
   $("#sHaResult").innerHTML = s.ha_last_error
-    ? `<div class="warn">Last request to Home Assistant failed: ${s.ha_last_error}</div>` : "";
+    ? html`<div class="warn">Last request to Home Assistant failed: ${s.ha_last_error}</div>` : "";
   pill($("#sPwState"), s.admin_password_source==="settings" ? "set here" : "from environment",
        s.admin_password_source==="settings" ? "ok" : "warn");
   $("#sPwWarn").innerHTML = s.admin_password_is_default
@@ -1537,7 +1572,7 @@ async function loadSettings(){
         Home Assistant and needs its authentication. Set an override below, normally
         <code>http://&lt;this host&gt;:8099</code>.</div>` : "";
   const inf = s.server;
-  $("#sServerInfo").innerHTML = `
+  $("#sServerInfo").innerHTML = html`
     <div class="f2">
       <div><div class="lbl">HOME ASSISTANT URL SOURCE</div>${srcNote(s.sources.ha_url)}</div>
       <div><div class="lbl">SESSION LENGTH</div>${inf.session_ttl_hours} hours</div>
@@ -1545,8 +1580,8 @@ async function loadSettings(){
       <div><div class="lbl">PREVIEW UI DIRECTORY</div><code>${inf.ui_dir}</code></div>
     </div>
     <div style="margin-top:12px">${inf.preview_ui_present
-      ? `<span class="muted">panel.html found — live preview available.</span>`
-      : `<div class="warn">No panel.html in ${inf.ui_dir}, so the live preview will
+      ? raw(`<span class="muted">panel.html found — live preview available.</span>`)
+      : html`<div class="warn">No panel.html in ${inf.ui_dir}, so the live preview will
          404. Copy the panel UI there to enable it. Everything else works without it.</div>`}</div>
     <div class="muted" style="font-size:12px;margin-top:12px">
       These two paths are set by the container and are not editable here — changing
@@ -1566,9 +1601,9 @@ $("#sTestBtn").onclick = async ()=>{
   const r = await api("/settings/test_ha",{method:"POST",body:JSON.stringify({
     ha_url:$("#sHaUrl").value, ha_token:$("#sHaToken").value})});
   box.innerHTML = r.ok
-    ? `<div class="warn" style="background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)">
+    ? html`<div class="warn" style="background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)">
         Connected — ${r.entities} entities visible.</div>`
-    : `<div class="warn">Failed${r.status?` (HTTP ${r.status})`:""}: ${r.error}</div>`;
+    : html`<div class="warn">Failed${r.status ? html` (HTTP ${r.status})` : ""}: ${r.error}</div>`;
 };
 $("#sSaveHaBtn").onclick = async ()=>{
   await api("/settings",{method:"PUT",body:JSON.stringify({
