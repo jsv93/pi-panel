@@ -5,6 +5,7 @@ GUI reaches them immediately. If the socket is down they fall back to polling;
 if this server is down entirely they keep running on their cached config.
 Nothing here is ever in the path of a light turning on.
 """
+import asyncio
 import hashlib
 import hmac
 import ipaddress
@@ -511,11 +512,74 @@ def check_password(pw: str) -> bool:
     )
 
 
+# ---------------------------------------------------------------- login limits
+# Measured before this existed: twenty wrong passwords in a row, none refused,
+# about nineteen a second, and the right one accepted straight after. With
+# host_network the login is on the LAN directly, not behind Home Assistant.
+#
+# Per address, because a lockout shared by everyone is a way to lock the owner
+# out. Behind ingress every request arrives from the Supervisor's address, so
+# there a lockout is shared -- acceptable, since reaching ingress at all means
+# having already signed in to Home Assistant. X-Forwarded-For is deliberately
+# not consulted: on this network anyone can set it.
+LOGIN_FREE_TRIES = 5
+LOGIN_LOCK_S = 60             # first lockout; doubles per further failure
+LOGIN_LOCK_MAX_S = 15 * 60
+LOGIN_TRACK_MAX = 1024        # addresses remembered at once
+_LOGIN_FAILS: dict[str, dict] = {}
+
+# PBKDF2 at 200k rounds is the point of it, and it ran on the event loop, so
+# every attempt stalled every other request -- panel heartbeats and websockets
+# included -- for as long as it took.
+#
+# It now runs in a thread, which helps only where hashlib releases the GIL
+# during the hash. Measured on one build it does not: four threads took 3.2x
+# as long as one, on 24 cores, so there the thread buys nothing and the loop
+# still waits. So this is not what bounds an attack. The lockout above is --
+# five hashes from an address, and after that it is refused without hashing
+# at all. The slot count only caps how many threads a burst can tie up.
+_PW_SLOTS = asyncio.Semaphore(4)
+
+
+def _login_locked(ip):
+    rec = _LOGIN_FAILS.get(ip)
+    if not rec:
+        return 0
+    left = rec["until"] - time.time()
+    return int(left) + 1 if left > 0 else 0
+
+
+def _login_failed(ip):
+    now = time.time()
+    rec = _LOGIN_FAILS.setdefault(ip, {"count": 0, "until": 0.0, "at": now})
+    rec["count"] += 1
+    rec["at"] = now
+    over = rec["count"] - LOGIN_FREE_TRIES
+    if over >= 0:
+        rec["until"] = now + min(LOGIN_LOCK_S * (2 ** over), LOGIN_LOCK_MAX_S)
+    if len(_LOGIN_FAILS) > LOGIN_TRACK_MAX:
+        # Forget whoever has been quiet longest, not whoever is locked.
+        for k in sorted(_LOGIN_FAILS, key=lambda k: _LOGIN_FAILS[k]["at"])[:len(_LOGIN_FAILS) - LOGIN_TRACK_MAX]:
+            _LOGIN_FAILS.pop(k, None)
+
+
 @app.post("/api/login")
 async def login(request: Request, response: Response):
+    ip = request.client.host if request.client else "?"
+    wait = _login_locked(ip)
+    if wait:
+        # Refused without looking at the password at all -- otherwise a
+        # lockout is still a way to test guesses, just more slowly, and still
+        # a way to make the server hash.
+        raise HTTPException(429, f"too many failed attempts; try again in {wait}s",
+                            headers={"Retry-After": str(wait)})
     body = await request.json()
-    if not check_password(body.get("password") or ""):
+    async with _PW_SLOTS:
+        good = await asyncio.to_thread(check_password, body.get("password") or "")
+    if not good:
+        _login_failed(ip)
         raise HTTPException(status_code=401, detail="wrong password")
+    _LOGIN_FAILS.pop(ip, None)
     tok = secrets.token_urlsafe(32)
     SESSIONS[tok] = time.time() + SESSION_TTL
     response.set_cookie("psid", tok, httponly=True, samesite="lax", max_age=SESSION_TTL)
@@ -1605,7 +1669,18 @@ async def test_ha(request: Request):
 @app.post("/api/settings/password", dependencies=[Depends(require_admin)])
 async def set_password(request: Request):
     b = await request.json()
-    if not check_password(b.get("current") or ""):
+    # Same limits as login. Requiring the current password is what stops a
+    # hijacked session from locking the owner out -- and with unlimited guesses
+    # here, that session could simply find it.
+    ip = request.client.host if request.client else "?"
+    wait = _login_locked(ip)
+    if wait:
+        raise HTTPException(429, f"too many failed attempts; try again in {wait}s",
+                            headers={"Retry-After": str(wait)})
+    async with _PW_SLOTS:
+        good = await asyncio.to_thread(check_password, b.get("current") or "")
+    if not good:
+        _login_failed(ip)
         raise HTTPException(status_code=400, detail="current password is wrong")
     new = b.get("new") or ""
     if len(new) < 8:

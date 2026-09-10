@@ -100,6 +100,23 @@ a way to pin the add-on's CPU.
 Fix: per-address backoff with a lockout, and a cap on concurrent password
 verifications.
 
+Five tries free, then locked out for 60 seconds, doubling per further failure
+to fifteen minutes. While locked out the password is **not checked at all** —
+otherwise the lockout is still a way to test guesses, only slower, and still a
+way to make the server hash. Changing the password has the same limit, since
+requiring the current one is what stops a hijacked session locking the owner
+out, and unlimited guesses there would let it simply find it.
+
+**One claim did not survive measurement.** PBKDF2 was moved off the event loop
+into a thread, on the reasoning that it stalled every other request while it
+ran. On the build tested here `hashlib.pbkdf2_hmac` holds the GIL — four
+threads took 3.2× as long as one, on 24 cores — so the thread frees nothing and
+the loop still waits. It is kept, since it helps wherever the GIL *is*
+released, but it is not what bounds an attack. The lockout is: twenty wrong
+passwords from one address cost five hashes (289 ms), not twenty (1126 ms with
+the lockout disabled). `tests/test_login_limits.py` checks that, and was run
+against a copy with the lockout switched off to confirm it fails there.
+
 ### Medium
 
 **7. Home Assistant token stored in plaintext.** A token typed into Settings is
@@ -240,6 +257,6 @@ scope for a security pass.
 |---|---|---|
 | 1 | Stored XSS | **fixed** — escape by default, ingest validation, CSP |
 | 2–4 | Unauthenticated panel endpoints and socket | **fixed** — per-panel tokens, TOFU migration |
-| 6 | Login rate limiting | pending |
+| 6 | Login rate limiting | **fixed** — per-address lockout, password change too |
 | 5 | Update signing | pending |
 | 7–15 | Medium and low | pending |
