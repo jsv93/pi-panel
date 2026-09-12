@@ -241,6 +241,21 @@ to succeed. With the server down at boot, neither ever started. They now start
 independently. Not a security finding, but the token work made register able
 to refuse, which made it matter.
 
+**Reinstalling a panel reopens its claim, and this was learned the hard way.**
+A panel claimed correctly, then its card was rewritten -- which takes
+`/opt/panel/panel-token` with it -- so it came back with new secrets while the
+server still held the old ones. Every register was refused, every fifteen
+seconds, and because register comes before the heartbeat and the socket, the
+panel never reached anything else. The GUI showed it as "offline", which is the
+one thing it was not: it was talking, and being turned away.
+
+Fetching `/bootstrap.sh` now clears that panel's token. It is gated on an
+unused provisioning token, so only the operator can trigger it, and it means
+exactly "this hardware is being set up now". A panel that still holds its
+secrets simply claims again. A refusal is also recorded and shown in the GUI --
+on the fleet row and on the panel -- saying which address asked and what was
+wrong, because "offline" sent the diagnosis after the network.
+
 **Stored in plaintext on the server, deliberately.** The token also keys the
 update HMAC, and an HMAC needs the secret itself. Hashing would protect against
 the database leaking without the rest of `/data` — but `/data` also holds the

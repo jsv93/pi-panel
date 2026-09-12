@@ -93,6 +93,16 @@ async def ws_open(pid, token=None):
         return "refused"
 
 
+async def claim_as(ag, pid):
+    """Register the way the agent does when it claims: token and signing key."""
+    import aiohttp
+    h = dict(ag.server_headers())
+    h["X-Panel-Sign-Key"] = ag.SIGN_KEY
+    async with aiohttp.ClientSession(headers=h) as s:
+        async with s.post(f"{B}/api/register", json={"panel_id": pid}) as r:
+            return r.status
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="tokens-")
     db = os.path.join(tmp, "panels.db")
@@ -222,6 +232,28 @@ def run(tmp):
     codes = [c.post("/api/register", json={"panel_id": f"ghost{i}"}).status_code
              for i in range(25)]
     check("capped at 20 unclaimed", (codes.count(200), codes.count(429)), (20, 5))
+
+    print("")
+    print("a reinstall, which is how this went wrong in the field")
+    # A panel claims, then its card is rewritten: /opt/panel/panel-token goes
+    # with it, so it comes back with new secrets while the server still holds
+    # the old ones. Before, that was register -> 401 every 15s forever, and
+    # the GUI said only "offline".
+    fresh = load_agent(os.path.join(tmp, "recard"), pid)
+    r = c.post("/api/register", json={"panel_id": pid},
+               headers={"X-Panel-Token": fresh.TOKEN, "X-Panel-Sign-Key": fresh.SIGN_KEY})
+    check("a rebuilt panel is refused", r.status_code, 401)
+    d = admin.get(f"/api/panels/{pid}").json()["panel"]
+    check("and the server says so, rather than just being offline",
+          (d.get("refused") or {}).get("reason"), "a different token")
+
+    # Installing it is the operator saying this hardware is being set up now.
+    tok = admin.post(f"/api/panels/{pid}/reprovision").json()["token"]
+    check("fetching the bootstrap reopens the claim",
+          httpx.get(f"{B}/bootstrap.sh", params={"t": tok}).status_code, 200)
+    check("so the rebuilt panel claims", asyncio.run(claim_as(fresh, pid)), 200)
+    d = admin.get(f"/api/panels/{pid}").json()["panel"]
+    check("secured, and no longer refused", (d.get("secured"), d.get("refused")), (True, None))
 
     print("\nthe admin endpoint to reset is admin-only")
     check("reset without a session refused",

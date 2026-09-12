@@ -431,6 +431,9 @@ def _run_install(job_id, host, user, url, hostname, ha_token, port):
 
 # panel_id -> WebSocket
 LIVE: dict[str, WebSocket] = {}
+# panel_id -> why its last register was turned away. In memory: it describes
+# right now, and a restart clears it because the panel will simply ask again.
+REFUSED: dict[str, dict] = {}
 # session token -> expiry
 SESSIONS: dict[str, float] = {}
 SESSION_TTL = 60 * 60 * 12
@@ -788,6 +791,13 @@ async def register(request: Request):
     # Checked before anything is written, so a secured panel cannot be renamed
     # or have its address changed by something that does not hold its token.
     if have and not (presented and hmac.compare_digest(presented, have)):
+        # Kept so the GUI can say what is happening. A panel refused here
+        # never reaches heartbeat, so it goes offline and looks like a
+        # network problem; it is the opposite of one -- it is talking, and
+        # being turned away.
+        REFUSED[pid] = {"at": time.time(), "from": peer,
+                        "reason": "no token presented" if not presented
+                                  else "a different token"}
         raise HTTPException(401, "panel token does not match")
     if not known and db.count_unclaimed() >= UNCLAIMED_MAX:
         raise HTTPException(429, "too many unclaimed panels")
@@ -810,6 +820,7 @@ async def register(request: Request):
             raise HTTPException(401, "panel token already claimed")
         state = "claimed"
         print(f"[server] {pid}: panel token claimed from {peer}")
+    REFUSED.pop(pid, None)
     return {
         "panel_id": pid,
         "claimed": bool(p["claimed"]),
@@ -1088,6 +1099,7 @@ async def panels():
     out = db.list_panels()
     for p in out:
         p["live"] = p["id"] in LIVE
+        p["refused"] = REFUSED.get(p["id"])
         # Display settings inline, so a client showing controls for them does
         # not need a second request per panel to find out where they are set.
         # Only this section: the rest of the config is large, changes rarely,
@@ -1102,6 +1114,7 @@ async def panel_detail(panel_id: str):
     if not p:
         raise HTTPException(404, "unknown panel")
     cfg = db.merged_config(panel_id)
+    p["refused"] = REFUSED.get(panel_id)
     return {
         "panel": p,
         "config": cfg,
@@ -1549,6 +1562,18 @@ async def bootstrap(request: Request, t: str = ""):
     pid = db.consume_token(t)
     if not pid:
         raise HTTPException(404, "unknown or already-used token")
+    # Fetching this means the panel is being installed right now, and an
+    # install may have wiped what it knew -- a rewritten card takes
+    # /opt/panel/panel-token with it. The server would then hold a token the
+    # panel cannot present and refuse it at register, forever, with the GUI
+    # saying only "offline". Reset token fixed it, once you knew to press it.
+    #
+    # Safe because this is gated on an unused provisioning token, which only
+    # the operator has. A panel that still holds its secrets simply claims
+    # again on its next register.
+    if db.get_panel_token(pid):
+        db.reset_panel_token(pid)
+        print(f"[server] {pid}: installing, so its token is reset for a fresh claim")
     # The DSI overlay is per panel: a 5-inch and a 4.3-inch Waveshare need
     # different lines, and the official display needs none at all.
     overlay = (db.merged_config(pid).get("display") or {}).get("dsi_overlay", "")

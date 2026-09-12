@@ -743,6 +743,11 @@ async function loadFleet(){
     const unsecured = p.claimed && !p.secured
       ? raw(' <span style="color:var(--warn);font-size:11px" title="No panel token yet — see its detail page">unsecured</span>')
       : "";
+    /* An offline panel might be unplugged. A refused one is talking to us and
+       being turned away, which is a different thing to go and look at. */
+    const refused = p.refused
+      ? html` <span style="color:var(--bad);font-size:11px" title="Its register is being refused: ${p.refused.reason}. Open it and Reset token.">refused</span>`
+      : "";
     const action = p.claimed
       /* Identify sits here as well as on the detail page: "which of these is
          study-rp3" is a question you ask while looking at the list. */
@@ -756,7 +761,7 @@ async function loadFleet(){
       <span class="muted">${p.kind}</span>
       <span>${haState}</span>
       <span class="muted">${ago(p.last_seen)}</span>
-      <span>${cfg}${unsecured}</span>
+      <span>${cfg}${unsecured}${refused}</span>
       <span>${action}</span></div>`;
   }).join("") || '<div class="grid"><span class="muted">No panels have registered yet</span></div>';
 
@@ -910,7 +915,13 @@ async function openPanel(id){
                <button class="btn" id="tokReset" style="margin-left:10px;padding:3px 10px">Reset token</button>`
         : raw(`<span style="color:var(--warn)">Not yet claimed</span>
                <span class="muted" style="font-size:13px"> — accepted without one until its
-               agent updates and presents one. Normally within seconds of the update.</span>`)}</div>`;
+               agent updates and presents one. Normally within seconds of the update.</span>`)}
+      ${CUR.panel.refused ? html`<div class="warn" style="margin-top:8px">This panel is being
+        <b>refused</b>, not merely offline: it asked at ${
+          new Date(CUR.panel.refused.at*1000).toLocaleTimeString()} from ${
+          CUR.panel.refused.from} with ${CUR.panel.refused.reason}. It will keep asking every
+        15 seconds and reach nothing else until this is cleared. Reset token, and it claims
+        again within about half a minute.</div>` : ""}</div>`;
   /* Shown with where the claim came from, because that is how a claim that was
      not this panel's gets noticed: an address that is not the panel's own. */
   const tr = $("#tokReset");
