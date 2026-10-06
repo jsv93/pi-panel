@@ -1,5 +1,34 @@
 # Architectural theme
 
+## Preview parity in 0.11.1
+
+Architectural pages now use the preview's 180ms horizontal fade, including
+light options, speakers, queue and network setup. Nested Back controls return
+to the parent page. Reduced motion removes the entrance animation.
+
+Scenes uses the same photograph, tint, rectangular glass controls and selected
+underline as the approved preview. **Edit scene levels** opens the shared Soft
+and Bright capture controls and a participating-light selector. Writes still
+use the existing narrow `/presets` and `/light` agent endpoints, including
+failure feedback and exclusions.
+
+Lights now lists names, levels and individual power buttons. Selecting a name
+opens its brightness page with a large readout, slider and step buttons; More
+opens supported per-light options, with Colour one level deeper. Display and
+Diagnostics have their own pages. The full music player includes Playback
+options, outlined transport icons, a seek marker and volume step buttons.
+
+For the preview's full-screen sub-pages, set **Navbar on sub-pages: Hidden**.
+The visible-navigation preference is still supported when desired. Live room
+names, available device capabilities, media artwork and readings naturally
+replace the preview's demonstration content.
+
+Hidden pages no longer retain layout space. Sliders refresh their geometry
+when a page becomes visible, and keep drag coordinates correct when the 720px
+stage is scaled to a smaller viewport. Regression tests cover external state
+arriving during a brightness drag, capture failures, membership writes,
+colour/effects, Playback options, nested Back navigation and theme switching.
+
 Available in Panel Config Server 0.11.0. Select **Architectural** and the
 **Linen** palette in a panel's Display settings. Theme and palette remain
 independent; existing Default and Ambient installations keep their selection.

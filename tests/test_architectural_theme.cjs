@@ -26,7 +26,7 @@ const states=[
  let count=0;
  const check=(label)=>{count++;console.log('PASS '+label);};
  async function fixture(cfg){
-  const page=await browser.newPage({viewport:{width:720,height:1280}}), errors=[];
+  const page=await browser.newPage({viewport:{width:720,height:1280}}), errors=[],requests=[];
   page.on('pageerror',e=>errors.push(e.message));
   await page.addInitScript(({states})=>{
    window.testCalls=[];window.testStates=states;
@@ -46,6 +46,8 @@ const states=[
   },{states});
   await page.route('**/*',async r=>{
    const u=new URL(r.request().url());
+   if(r.request().method()==='POST')requests.push({path:u.pathname,body:r.request().postDataJSON()});
+   if(u.pathname==='/presets')return r.fulfill({json:{changed:2}});
    if(u.pathname==='/panel.html')return r.fulfill({contentType:'text/html',body:source});
    if(u.pathname==='/config.json')return r.fulfill({json:cfg});
    if(u.pathname==='/secrets.json')return r.fulfill({json:{ha_token:'test-only'}});
@@ -57,12 +59,12 @@ const states=[
   await page.goto('http://panel.test/panel.html');
   await page.waitForFunction(()=>document.querySelector('#archTemp').textContent==='23.4°');
   await page.evaluate(()=>document.fonts.ready);
-  return {page,errors};
+  return {page,errors,requests};
  }
- const {page:p,errors}=await fixture(config);
+ const {page:p,errors,requests}=await fixture(config);
  const open=async(name)=>{await p.locator('[data-sheet="'+name+'"]:visible').first().click();await p.waitForTimeout(260);};
  const back=async()=>{await p.locator('.sheet.on [data-close]').click();await p.waitForTimeout(260);};
- const snap=async(name)=>{if(process.env.SCREENSHOTS_DIR){fs.mkdirSync(process.env.SCREENSHOTS_DIR,{recursive:true});await p.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,name+'.png')});}};
+ const snap=async(name)=>{if(process.env.SCREENSHOTS_DIR){fs.mkdirSync(process.env.SCREENSHOTS_DIR,{recursive:true});await p.waitForTimeout(220);await p.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,name+'.png')});}};
  assert.deepEqual(await p.locator('.nav button:visible b').allTextContents(),['Scenes','Lights','Climate','Covers']);
  assert.equal(await p.locator('#rmTitle').textContent(),'Music');await snap('home');check('navigation order and persistent idle player');
  await p.locator('#archTemp').click();await p.waitForTimeout(260);assert(await p.locator('#s-climate').evaluate(x=>x.classList.contains('on')));
@@ -72,7 +74,7 @@ const states=[
  await open('scenes');await snap('scenes');await p.locator('#s-scenes [data-preset=off]').click();
  let calls=await p.evaluate(()=>window.testCalls.filter(x=>x.domain==='light'));assert.equal(calls.length,2);assert(calls.every(x=>x.service==='turn_off'));assert(calls.every(x=>x.service_data.entity_id!=='light.floor'));
  await p.locator('#s-scenes [data-preset=bright]').click();calls=await p.evaluate(()=>window.testCalls.filter(x=>x.domain==='light'));assert.equal(calls.at(-2).service_data.brightness_pct,90);assert.equal(calls.at(-1).service_data.brightness_pct,100);await back();check('scenes preserve light exclusions and correct service calls');
- await open('lights');await snap('lights');await p.locator('.lname').nth(1).click();assert(await p.locator('#ovLight').evaluate(x=>x.classList.contains('on')));await snap('light-detail');await p.locator('#ovLight [data-ovclose]').click({position:{x:30,y:30}});await back();check('per-light controls retained');
+ await open('lights');await snap('lights');await p.locator('[data-arch-light="1"]').click();await p.waitForTimeout(220);await snap('brightness');await p.locator('#archLightMore').click();assert(await p.locator('#ovLight').evaluate(x=>x.classList.contains('on')));await snap('light-detail');await p.locator('#ovLight [data-ov-back]').click();await back();await back();check('per-light controls retained');
  await p.locator('#roomMedia .meta').click();await p.waitForTimeout(260);await snap('music-idle');await p.locator('#pp').click();assert.equal((await p.evaluate(()=>window.testCalls.at(-1))).service,'media_play');
  await p.evaluate(()=>window.testState({entity_id:'media_player.room',state:'playing',attributes:{media_title:'Quiet spaces',media_artist:'Evening collection',media_duration:214,media_position:5,volume_level:.4,supported_features:65535}}));
  await p.locator('#rep').click();await p.locator('#rep').click();assert.equal(await p.locator('#rep').getAttribute('aria-label'),'Repeat one');await snap('music-playing');await back();
@@ -80,11 +82,41 @@ const states=[
  await p.locator('#rmPP').click();assert.equal((await p.evaluate(()=>window.testCalls.at(-1))).service,'media_pause');assert(await p.locator('#roomMedia').isVisible());check('playback, repeat and pause keep media access');
  await p.locator('#roomMedia .meta').click();await p.waitForTimeout(260);await p.locator('#icoSearch').click();await p.waitForTimeout(260);assert.equal(await p.locator('.bitem .n').first().textContent(),'Evening');await p.locator('#bBack').click();await p.waitForTimeout(260);await back();check('media library navigation retained');
  await open('blinds');assert.equal(await p.locator('#coversEmpty').textContent(),'No covers configured');await back();
- await open('room-menu');await snap('menu');await open('settings');await snap('settings');assert(await p.locator('#saveSoftRow').count());assert(await p.locator('#wifiRow').count());await back();check('settings, diagnostics and covers entry retained');
+ await open('room-menu');await snap('menu');await open('settings');await snap('settings');assert(await p.locator('#saveSoftRow').count());assert(await p.locator('#wifiRow').count());await back();await back();check('settings, diagnostics and covers entry retained');
  await p.emulateMedia({reducedMotion:'reduce'});await p.evaluate(()=>window.testState({entity_id:'media_player.room',state:'playing',attributes:{media_title:'Quiet spaces'}}));assert.equal(await p.locator('#rmEq i').first().evaluate(el=>getComputedStyle(el).animationName),'none');check('reduced-motion equalizer');
  for(const [w,h] of [[480,800],[320,610],[720,1280]]){await p.setViewportSize({width:w,height:h});await p.waitForTimeout(80);const bounds=await p.locator('.nav').boundingBox();assert(bounds.x>=-1&&bounds.x+bounds.width<=w+1);assert.equal(await p.locator('.nav button:visible').count(),4);await snap('home-'+w);}
  check('home fits 320/480/720 widths');
  assert.deepEqual(errors,[]);await p.close();
+ const edit=await fixture(config),e=edit.page;
+ const eback=async()=>{await e.locator('.sheet.on [data-close]').click();await e.waitForTimeout(220);};
+ await e.locator('.nav [data-sheet=scenes]').click();await e.waitForTimeout(220);
+ assert.equal(await e.locator('#s-scenes').evaluate(x=>getComputedStyle(x).animationName),'arch-page-enter');
+ assert.equal(await e.locator('#s-scenes .preset').first().evaluate(x=>getComputedStyle(x,'::before').display),'none');
+ await e.locator('#s-scenes [data-sheet=scene-edit]').click();await e.waitForTimeout(220);
+ assert.equal(await e.locator('#s-scene-edit .down').getAttribute('data-back-label'),'Scenes');
+ if(process.env.SCREENSHOTS_DIR)await e.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,'scene-edit.png')});
+ await e.locator('#saveSoftRow').click();assert.deepEqual(edit.requests.at(-1),{path:'/presets',body:{preset:'soft',levels:{'light.downlights':35,'light.cove':60}}});
+ await e.route('**/presets',r=>r.fulfill({status:503,json:{error:'Server unavailable'}}));await e.locator('#saveBrightRow').click();await e.waitForTimeout(100);assert.match(await e.locator('#brightV').textContent(),/failed.*Server unavailable/);await e.unroute('**/presets');
+ await e.locator('#s-scene-edit [data-sheet=scene-members]').click();await e.waitForTimeout(220);
+ await e.locator('#archMembers button').nth(2).click();assert.deepEqual(edit.requests.at(-1),{path:'/light',body:{entity_id:'light.floor',include_presets:true}});await e.waitForFunction(()=>document.querySelectorAll('#archMembers button')[2].getAttribute('aria-pressed')==='true');
+ await eback();assert(await e.locator('#s-scene-edit').isVisible());await eback();assert(await e.locator('#s-scenes').isVisible());await eback();
+ await e.locator('.nav [data-sheet=lights]').click();await e.waitForTimeout(220);await e.locator('[data-arch-light="1"]').click();await e.waitForTimeout(220);
+ await e.locator('#archDimUp').click();assert.equal((await e.evaluate(()=>window.testCalls.at(-1))).service_data.brightness_pct,65);
+ const dragBox=await e.locator('#archBrightness').boundingBox();await e.mouse.move(dragBox.x+dragBox.width*.8,dragBox.y+dragBox.height/2);await e.mouse.down();
+ await e.evaluate(()=>window.testState({entity_id:'light.cove',state:'on',attributes:{brightness:51,supported_color_modes:['hs','color_temp'],hs_color:[40,60],color_temp_kelvin:3000,effect_list:['None','Slow glow']}}));
+ assert.equal(await e.locator('#archBrightnessValue').textContent(),'80');await e.mouse.up();assert.equal((await e.evaluate(()=>window.testCalls.at(-1))).service_data.brightness_pct,80);
+ await e.setViewportSize({width:360,height:640});await e.waitForTimeout(100);
+ const scaled=await e.locator('#archBrightness').boundingBox();await e.mouse.move(scaled.x+scaled.width*.6,scaled.y+scaled.height/2);await e.mouse.down();
+ const knob=await e.locator('#archBrightness .knob').boundingBox();assert(Math.abs(knob.x+knob.width/2-(scaled.x+scaled.width*.6))<2,'scaled slider knob tracks the finger');await e.mouse.up();await e.setViewportSize({width:720,height:1280});await e.waitForTimeout(100);
+ await e.locator('#archLightMore').click();await e.waitForTimeout(220);assert.equal(await e.locator('#ovLight .ov-card').evaluate(x=>getComputedStyle(x).borderRadius),'0px');
+ await e.locator('#lightBody button').filter({hasText:'Colour'}).click();await e.waitForTimeout(220);assert(await e.locator('#ovColour').isVisible());await e.locator('#archColourHost .sw').first().click();assert.deepEqual((await e.evaluate(()=>window.testCalls.at(-1))).service_data.hs_color,[0,85]);
+ await e.locator('#ovColour [data-ov-back]').click();assert(await e.locator('#ovLight').isVisible());await e.locator('#archEffect').selectOption('Slow glow');assert.equal((await e.evaluate(()=>window.testCalls.at(-1))).service_data.effect,'Slow glow');
+ await e.locator('#ovLight [data-ov-back]').click();await eback();assert(await e.locator('#s-lights').isVisible());await eback();
+ await e.locator('#roomMedia .meta').click();await e.waitForTimeout(220);await e.locator('#s-media [data-sheet=playback]').click();await e.waitForTimeout(220);await e.locator('#archShuffle').click();assert.equal((await e.evaluate(()=>window.testCalls.at(-1))).service,'shuffle_set');await e.locator('#archMiniArt').click();assert.equal(await e.locator('#archMiniArt .v').textContent(),'On');await eback();assert(await e.locator('#s-media').isVisible());await eback();
+ await e.emulateMedia({reducedMotion:'reduce'});await e.locator('.nav [data-sheet=scenes]').click();assert.equal(await e.locator('#s-scenes').evaluate(x=>getComputedStyle(x).animationName),'none');await eback();
+ await e.locator('#archMenu').click();await e.waitForTimeout(220);await e.locator('#archRoomLinks [data-sheet=settings]').click();await e.waitForTimeout(220);await e.locator('#s-settings [data-sheet=display]').click();await e.waitForTimeout(220);await e.locator('#glassRow').click();await e.waitForTimeout(220);
+ assert.deepEqual(await e.locator('#archChoices .t').allTextContents(),['Full','No sheet','Tiles only','Off']);await eback();await eback();await e.locator('#s-settings [data-sheet=diagnostics]').click();await e.waitForTimeout(220);await e.locator('#diagRow').click();assert(await e.locator('#scrollTestRow').isVisible());
+ assert.deepEqual(edit.errors,[]);await e.close();check('preview navigation, scene capture and failure, membership, drag protection, colour, effects and diagnostics');
  for(const theme of ['default','ambient']){const f=await fixture({...config,display:{...config.display,theme,palette:theme==='ambient'?'ember':'midnight'}});assert.equal(await f.page.locator('.nav button:visible').count(),4);assert.equal(await f.page.locator('.nav [data-sheet=scenes]').isVisible(),false);assert.equal(await f.page.locator('#homeReadings .setpoint').count(),1);assert.deepEqual(f.errors,[]);await f.page.close();check(theme+' navigation and thermostat retained');}
  const empty=await fixture({...config,media:{},sensors:{temperature:'sensor.temperature'},lights:[]});await empty.page.locator('#roomMedia').click();await empty.page.waitForTimeout(260);for(const id of ['pp','prev','next','shuf','rep'])await empty.page.locator('#'+id).click();await empty.page.locator('#icoSearch').click();await empty.page.waitForTimeout(260);assert.equal(await empty.page.locator('#bList').textContent(),'No speakers configured');assert.deepEqual(empty.errors,[]);await empty.page.close();check('unconfigured media does not throw or send commands');
  const pinned=await fixture({...config,display:{...config.display,hide_nav_on_sheets:false}});
@@ -93,12 +125,15 @@ const states=[
  const sheetBox=await pinned.page.locator('#s-media').boundingBox(), navBox=await pinned.page.locator('.nav').boundingBox();
  assert(sheetBox.y+sheetBox.height<=navBox.y,'media sheet must stop above the persistent navigation: '+JSON.stringify({sheetBox,navBox}));
  await pinned.page.locator('#icoMore').click();assert(await pinned.page.locator('#ovQueue').evaluate(x=>x.classList.contains('on')));
- await pinned.page.locator('#ovQueue [data-ovclose]').click({position:{x:30,y:30}});
+ await pinned.page.locator('#ovQueue [data-ov-back]').click();
  await pinned.page.locator('.sheet.on [data-close]').click();await pinned.page.waitForTimeout(260);
  await pinned.page.locator('#archMenu').click();await pinned.page.waitForTimeout(260);
- await pinned.page.locator('#s-room-menu [data-sheet=settings]').click();await pinned.page.waitForTimeout(260);
+ await pinned.page.locator('#s-room-menu [data-sheet=settings]:visible').click();await pinned.page.waitForTimeout(260);
+ await pinned.page.locator('#s-settings [data-sheet=display]').click();await pinned.page.waitForTimeout(220);
+ await pinned.page.locator('#themeRow').click();await pinned.page.waitForTimeout(220);
+ await pinned.page.locator('#archChoices button').filter({hasText:'Default'}).click();
  for(const next of ['default','ambient','architectural']){
-  await pinned.page.locator('#themeRow').click();
+  if(next!=='default')await pinned.page.locator('#themeRow').click();
   assert(await pinned.page.locator('body').evaluate((b,t)=>b.classList.contains('theme-'+t),next));
   assert.equal(await pinned.page.locator((next==='architectural'?'#archClimateTarget':'#homeReadings')+' .setpoint').count(),1);
  }
