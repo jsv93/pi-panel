@@ -905,14 +905,14 @@ async def _patch_display(panel_id: str, values: dict) -> dict:
             clean[k] = v
             continue
         if k == "theme":
-            if v not in ("default", "ambient"):
-                raise HTTPException(400, "theme must be 'default' or 'ambient'")
+            if v not in ("default", "ambient", "architectural"):
+                raise HTTPException(400, "theme must be 'default', 'ambient' or 'architectural'")
             clean[k] = v
             continue
         if k == "palette":
             # "" is legal and means the theme's own palette, which is how a
             # panel configured before palettes existed keeps its look.
-            if v not in ("", "midnight", "ember", "slate", "heath", "mono"):
+            if v not in ("", "midnight", "ember", "slate", "heath", "mono", "linen"):
                 raise HTTPException(400, "unknown palette")
             clean[k] = v
             continue

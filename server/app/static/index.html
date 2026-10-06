@@ -446,16 +446,18 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
             <div class="f2">
               <div><div class="lbl">THEME</div><select id="fTheme">
                 <option value="default">Default</option>
-                <option value="ambient">Ambient — warm, borderless</option></select></div>
+                <option value="ambient">Ambient — warm, borderless</option>
+                <option value="architectural">Architectural — room background, quiet controls</option></select></div>
               <div><div class="lbl">PALETTE</div><select id="fPalette">
                 <option value="">Theme default</option>
                 <option value="midnight">Midnight — cool, teal</option>
                 <option value="ember">Ember — warm, orange</option>
                 <option value="slate">Slate — graphite, steel blue</option>
                 <option value="heath">Heath — aubergine, rose</option>
-                <option value="mono">Mono — greyscale</option></select>
+                <option value="mono">Mono — greyscale</option>
+                <option value="linen">Linen — soft, warm neutral</option></select>
                 <div class="muted" style="font-size:12px;margin-top:5px">Colour only.
-                  Any palette works under either theme.</div></div>
+                  Any palette works under every theme.</div></div>
               <div><div class="lbl">GLASS TIER</div><select id="fGlass">
                 <option value="3">Off — recommended</option>
                 <option value="2">Tiles only</option>
@@ -463,8 +465,8 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
                 <option value="0">Full</option></select>
                 <div class="muted" style="font-size:12px;margin-top:5px">Measured as
                   24 blur surfaces a frame for an effect this UI's own content is too
-                  dark and too soft to show. Kept as an A/B. No effect under Ambient,
-                  whose surfaces are opaque.</div></div>
+                  dark and too soft to show. Kept as an A/B. No effect under Ambient or Architectural,
+                  which do not use live blur.</div></div>
               <div><div class="lbl">NAVBAR ON SUB-PAGES</div><select id="fHideNav">
                 <option value="1">Hidden — sub-pages cover it</option>
                 <option value="0">Always visible</option></select></div>
