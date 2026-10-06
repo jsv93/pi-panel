@@ -1,5 +1,17 @@
 # Tests
 
+## Architectural theme
+
+    python tests/test_theme_display.py
+    node tests/test_architectural_theme.cjs
+
+The Python check needs the server requirements and httpx. The browser check
+needs Playwright in the development environment only; set `PLAYWRIGHT_CHANNEL`
+to `msedge` to use installed Edge, or install Playwright Chromium. Optionally
+set `SCREENSHOTS_DIR` to save screenshots. It uses stubbed HA/agent responses,
+exercises both navigation visibility settings and all three themes, and runs
+the existing slider drag regression test against the shipped HTML.
+
     stub_dali_gateway.py   a Lunatone DALI-2 IoT gateway, to the shapes in
                            Lunatone's API documentation M0023
     test_dali_client.py    exercises the agent's gateway client against it

@@ -1,0 +1,113 @@
+/* Run with Playwright installed in your test environment (not on the panel).
+   NODE_PATH=/path/to/node_modules node tests/test_architectural_theme.cjs
+   Uses the shipped panel against a deterministic HA/agent stub. No live devices. */
+const fs=require('fs'),path=require('path'),assert=require('node:assert/strict');
+const {chromium}=require('playwright');
+const root=path.resolve(__dirname,'..');
+const source=fs.readFileSync(path.join(root,'panel-ui/panel.html'),'utf8');
+const config={room_label:'Living room',connection:{ha_url:'http://ha.test'},lights:[
+ {entity_id:'light.downlights',name:'Downlights',soft:35,bright:90},
+ {entity_id:'light.cove',name:'Cove lighting',soft:60,bright:100},
+ {entity_id:'light.floor',name:'Floor lamp',soft:45,bright:80,include_presets:false}],
+ sensors:{temperature:'sensor.temperature',humidity:'sensor.humidity',climate:'climate.room'},
+ media:{speakers:[{entity_id:'media_player.room',name:'Living room'}],default_speaker:'media_player.room'},
+ display:{theme:'architectural',palette:'linen',idle_timeout_s:600,glass_tier:3,mini_art:false,hide_nav_on_sheets:true}};
+const states=[
+ {entity_id:'light.downlights',state:'on',attributes:{brightness:89,supported_color_modes:['color_temp'],color_temp_kelvin:2700}},
+ {entity_id:'light.cove',state:'on',attributes:{brightness:153,supported_color_modes:['hs','color_temp'],color_temp_kelvin:3000,hs_color:[40,60],effect_list:['None','Slow glow']}},
+ {entity_id:'light.floor',state:'on',attributes:{brightness:115,supported_color_modes:['brightness']}},
+ {entity_id:'sensor.temperature',state:'23.4',attributes:{}},
+ {entity_id:'sensor.humidity',state:'48',attributes:{}},
+ {entity_id:'climate.room',state:'heat',attributes:{temperature:22,min_temp:16,max_temp:28,target_temp_step:.5,current_temperature:23.4}},
+ {entity_id:'media_player.room',state:'idle',attributes:{volume_level:.4,supported_features:65535}}];
+
+(async()=>{
+ const browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{})});
+ let count=0;
+ const check=(label)=>{count++;console.log('PASS '+label);};
+ async function fixture(cfg){
+  const page=await browser.newPage({viewport:{width:720,height:1280}}), errors=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  await page.addInitScript(({states})=>{
+   window.testCalls=[];window.testStates=states;
+   class FakeSocket{
+    constructor(url){this.url=url;this.readyState=1;setTimeout(()=>{this.onopen?.();if(url.includes('/api/websocket')){window.testHA=this;this.emit({type:'auth_required'});}},0);}
+    emit(d){this.onmessage?.({data:JSON.stringify(d)});}
+    send(raw){const m=JSON.parse(raw);if(!this.url.includes('/api/websocket'))return;
+     if(m.type==='auth'){setTimeout(()=>this.emit({type:'auth_ok'}),0);return;}
+     if(m.type==='call_service')window.testCalls.push(m);
+     const result=m.type==='get_states'?window.testStates:m.type==='media_player/browse_media'?{children:[{title:'Evening',media_class:'playlist',can_expand:true,media_content_id:'evening',media_content_type:'playlist'}]}:{};
+     setTimeout(()=>this.emit({type:'result',id:m.id,success:true,result}),0);
+    }
+    close(){this.readyState=3;}
+   }
+   window.WebSocket=FakeSocket;
+   window.testState=s=>window.testHA.emit({type:'event',event:{event_type:'state_changed',data:{new_state:s}}});
+  },{states});
+  await page.route('**/*',async r=>{
+   const u=new URL(r.request().url());
+   if(u.pathname==='/panel.html')return r.fulfill({contentType:'text/html',body:source});
+   if(u.pathname==='/config.json')return r.fulfill({json:cfg});
+   if(u.pathname==='/secrets.json')return r.fulfill({json:{ha_token:'test-only'}});
+   if(u.pathname.endsWith('.woff2'))return r.fulfill({path:path.join(root,'panel-ui',path.basename(u.pathname))});
+   if(u.pathname==='/wifi')return r.fulfill({json:{connected:true,ssid:'Test',networks:[]}});
+   if(u.pathname==='/backlight')return r.fulfill({json:{ok:true}});
+   return r.fulfill({json:{ok:true}});
+  });
+  await page.goto('http://panel.test/panel.html');
+  await page.waitForFunction(()=>document.querySelector('#archTemp').textContent==='23.4°');
+  await page.evaluate(()=>document.fonts.ready);
+  return {page,errors};
+ }
+ const {page:p,errors}=await fixture(config);
+ const open=async(name)=>{await p.locator('[data-sheet="'+name+'"]:visible').first().click();await p.waitForTimeout(260);};
+ const back=async()=>{await p.locator('.sheet.on [data-close]').click();await p.waitForTimeout(260);};
+ const snap=async(name)=>{if(process.env.SCREENSHOTS_DIR){fs.mkdirSync(process.env.SCREENSHOTS_DIR,{recursive:true});await p.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,name+'.png')});}};
+ assert.deepEqual(await p.locator('.nav button:visible b').allTextContents(),['Scenes','Lights','Climate','Covers']);
+ assert.equal(await p.locator('#rmTitle').textContent(),'Music');await snap('home');check('navigation order and persistent idle player');
+ await p.locator('#archTemp').click();await p.waitForTimeout(260);assert(await p.locator('#s-climate').evaluate(x=>x.classList.contains('on')));
+ assert.equal(await p.locator('#s-climate #spTemp').textContent(),'22.0');await p.locator('#spUp').click();
+ assert.equal((await p.evaluate(()=>window.testCalls.at(-1))).service_data.temperature,22.5);
+ await snap('climate');await back();check('temperature link and shared thermostat action');
+ await open('scenes');await snap('scenes');await p.locator('#s-scenes [data-preset=off]').click();
+ let calls=await p.evaluate(()=>window.testCalls.filter(x=>x.domain==='light'));assert.equal(calls.length,2);assert(calls.every(x=>x.service==='turn_off'));assert(calls.every(x=>x.service_data.entity_id!=='light.floor'));
+ await p.locator('#s-scenes [data-preset=bright]').click();calls=await p.evaluate(()=>window.testCalls.filter(x=>x.domain==='light'));assert.equal(calls.at(-2).service_data.brightness_pct,90);assert.equal(calls.at(-1).service_data.brightness_pct,100);await back();check('scenes preserve light exclusions and correct service calls');
+ await open('lights');await snap('lights');await p.locator('.lname').nth(1).click();assert(await p.locator('#ovLight').evaluate(x=>x.classList.contains('on')));await snap('light-detail');await p.locator('#ovLight [data-ovclose]').click({position:{x:30,y:30}});await back();check('per-light controls retained');
+ await p.locator('#roomMedia .meta').click();await p.waitForTimeout(260);await snap('music-idle');await p.locator('#pp').click();assert.equal((await p.evaluate(()=>window.testCalls.at(-1))).service,'media_play');
+ await p.evaluate(()=>window.testState({entity_id:'media_player.room',state:'playing',attributes:{media_title:'Quiet spaces',media_artist:'Evening collection',media_duration:214,media_position:5,volume_level:.4,supported_features:65535}}));
+ await p.locator('#rep').click();await p.locator('#rep').click();assert.equal(await p.locator('#rep').getAttribute('aria-label'),'Repeat one');await snap('music-playing');await back();
+ assert.equal(await p.locator('#rmTitle').textContent(),'Quiet spaces');assert.equal(await p.locator('#rmEq i').first().evaluate(el=>getComputedStyle(el).animationName),'eqbar');
+ await p.locator('#rmPP').click();assert.equal((await p.evaluate(()=>window.testCalls.at(-1))).service,'media_pause');assert(await p.locator('#roomMedia').isVisible());check('playback, repeat and pause keep media access');
+ await p.locator('#roomMedia .meta').click();await p.waitForTimeout(260);await p.locator('#icoSearch').click();await p.waitForTimeout(260);assert.equal(await p.locator('.bitem .n').first().textContent(),'Evening');await p.locator('#bBack').click();await p.waitForTimeout(260);await back();check('media library navigation retained');
+ await open('blinds');assert.equal(await p.locator('#coversEmpty').textContent(),'No covers configured');await back();
+ await open('room-menu');await snap('menu');await open('settings');await snap('settings');assert(await p.locator('#saveSoftRow').count());assert(await p.locator('#wifiRow').count());await back();check('settings, diagnostics and covers entry retained');
+ await p.emulateMedia({reducedMotion:'reduce'});await p.evaluate(()=>window.testState({entity_id:'media_player.room',state:'playing',attributes:{media_title:'Quiet spaces'}}));assert.equal(await p.locator('#rmEq i').first().evaluate(el=>getComputedStyle(el).animationName),'none');check('reduced-motion equalizer');
+ for(const [w,h] of [[480,800],[320,610],[720,1280]]){await p.setViewportSize({width:w,height:h});await p.waitForTimeout(80);const bounds=await p.locator('.nav').boundingBox();assert(bounds.x>=-1&&bounds.x+bounds.width<=w+1);assert.equal(await p.locator('.nav button:visible').count(),4);await snap('home-'+w);}
+ check('home fits 320/480/720 widths');
+ assert.deepEqual(errors,[]);await p.close();
+ for(const theme of ['default','ambient']){const f=await fixture({...config,display:{...config.display,theme,palette:theme==='ambient'?'ember':'midnight'}});assert.equal(await f.page.locator('.nav button:visible').count(),4);assert.equal(await f.page.locator('.nav [data-sheet=scenes]').isVisible(),false);assert.equal(await f.page.locator('#homeReadings .setpoint').count(),1);assert.deepEqual(f.errors,[]);await f.page.close();check(theme+' navigation and thermostat retained');}
+ const empty=await fixture({...config,media:{},sensors:{temperature:'sensor.temperature'},lights:[]});await empty.page.locator('#roomMedia').click();await empty.page.waitForTimeout(260);for(const id of ['pp','prev','next','shuf','rep'])await empty.page.locator('#'+id).click();await empty.page.locator('#icoSearch').click();await empty.page.waitForTimeout(260);assert.equal(await empty.page.locator('#bList').textContent(),'No speakers configured');assert.deepEqual(empty.errors,[]);await empty.page.close();check('unconfigured media does not throw or send commands');
+ const pinned=await fixture({...config,display:{...config.display,hide_nav_on_sheets:false}});
+ await pinned.page.locator('#roomMedia .meta').click();await pinned.page.waitForTimeout(260);
+ assert(await pinned.page.locator('.nav').isVisible());
+ const sheetBox=await pinned.page.locator('#s-media').boundingBox(), navBox=await pinned.page.locator('.nav').boundingBox();
+ assert(sheetBox.y+sheetBox.height<=navBox.y,'media sheet must stop above the persistent navigation: '+JSON.stringify({sheetBox,navBox}));
+ await pinned.page.locator('#icoMore').click();assert(await pinned.page.locator('#ovQueue').evaluate(x=>x.classList.contains('on')));
+ await pinned.page.locator('#ovQueue [data-ovclose]').click({position:{x:30,y:30}});
+ await pinned.page.locator('.sheet.on [data-close]').click();await pinned.page.waitForTimeout(260);
+ await pinned.page.locator('#archMenu').click();await pinned.page.waitForTimeout(260);
+ await pinned.page.locator('#s-room-menu [data-sheet=settings]').click();await pinned.page.waitForTimeout(260);
+ for(const next of ['default','ambient','architectural']){
+  await pinned.page.locator('#themeRow').click();
+  assert(await pinned.page.locator('body').evaluate((b,t)=>b.classList.contains('theme-'+t),next));
+  assert.equal(await pinned.page.locator((next==='architectural'?'#archClimateTarget':'#homeReadings')+' .setpoint').count(),1);
+ }
+ assert.equal(await pinned.page.locator('#rmTitle').textContent(),'Music');assert.deepEqual(pinned.errors,[]);
+ await pinned.page.close();check('persistent navigation, queue access and live theme switching');
+ const sliderPage=await browser.newPage();
+ await sliderPage.route('**/*',r=>r.fulfill({contentType:'text/html',body:r.request().url().endsWith('panel.html')?source:fs.readFileSync(path.join(__dirname,'test_slider_drag.html'),'utf8')}));
+ await sliderPage.goto('http://panel.test/test_slider_drag.html');
+ await sliderPage.waitForFunction(()=>document.querySelector('#out').textContent.includes('passed'));
+ const sliderResult=await sliderPage.locator('#out').textContent();assert(!sliderResult.includes('FAIL'),sliderResult);console.log(sliderResult);await sliderPage.close();
+ await browser.close();console.log(count+' checks passed');
+})().catch(e=>{console.error(e);process.exit(1)});
