@@ -1,3 +1,8 @@
+Abstract room background (0.12.0): generated for this project with OpenAI's
+built-in image-generation tool on 2026-10-07. The source is an abstract
+composition of warm light and architectural planes, with no reference photo.
+The WebP is embedded in panel.html and used by the server background picker.
+
 Inter font:
 Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)
 

@@ -477,6 +477,21 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
           </div>
 
           <div class="grp">
+            <h3>Background</h3>
+            <div class="f2">
+              <div><label class="lbl" for="fBackground">STYLE</label><select id="fBackground">
+                <option value="solid">Solid colour</option><option value="image">Uploaded image</option>
+                <option value="room">Generic room — abstract</option><option value="pattern">Generic pattern</option>
+              </select></div>
+              <div id="fBackgroundColourRow"><label class="lbl" for="fBackgroundColour">COLOUR</label><input type="color" id="fBackgroundColour" value="#2b2018" style="height:44px"></div>
+              <div id="fBackgroundUploadRow"><label class="lbl" for="fBackgroundUpload">IMAGE</label><input type="file" id="fBackgroundUpload" accept="image/jpeg,image/png,image/webp"><p class="muted" style="font-size:12px;margin-top:6px">JPEG, PNG or WebP · up to 10 MB / 16 megapixels</p></div>
+              <div id="fBackgroundPreview" role="img" aria-label="Selected background preview" style="height:180px;border-radius:8px;background-size:cover;background-position:center"></div>
+            </div>
+            <p id="fBackgroundStatus" role="status" class="muted" style="font-size:12px;margin-top:10px"></p>
+            <p class="muted" style="font-size:12px;margin-top:6px">Save to apply. Images are optimised and stored on the panel for offline use.</p>
+          </div>
+
+          <div class="grp">
             <h3>Screen and backlight</h3>
             <p class="hint">Set Blank after — at 0 the panel holds a dimmed clock
               indefinitely, which is how an LCD picks up a retention shadow.</p>
@@ -795,7 +810,30 @@ async function claimPanel(id){
 }
 
 /* ---------------- panel detail ---------------- */
-let CUR=null, CFG=null;
+let CUR=null, CFG=null, backgroundImage='', backgroundUploadPending=false;
+function paintBackgroundForm(){
+  const mode=$('#fBackground').value, preview=$('#fBackgroundPreview');
+  $('#fBackgroundColourRow').hidden=mode!=='solid';
+  $('#fBackgroundUploadRow').hidden=mode!=='image';
+  preview.style.backgroundColor=mode==='solid'?$('#fBackgroundColour').value:'#2b2018';
+  preview.style.backgroundImage=mode==='room'?'url("'+BASE+'abstract-room.webp")':mode==='image'&&backgroundImage?'url("'+BASE+'api/backgrounds/'+backgroundImage+'")':mode==='pattern'?'repeating-linear-gradient(125deg,transparent 0 24px,rgba(228,196,150,.18) 25px,transparent 26px 50px)':'none';
+}
+$('#fBackground').addEventListener('change',paintBackgroundForm);
+$('#fBackgroundColour').addEventListener('input',paintBackgroundForm);
+$('#fBackgroundUpload').addEventListener('change',async event=>{
+  const file=event.target.files[0], panelId=CUR?.panel.id;
+  if(!file)return;
+  const status=$('#fBackgroundStatus');
+  if(file.size>10*1024*1024){status.textContent='Choose an image smaller than 10 MB.';return;}
+  backgroundUploadPending=true;$('#saveBtn').disabled=true;status.textContent='Preparing image…';
+  try{
+    const result=await api('/backgrounds',{method:'POST',headers:{'Content-Type':file.type||'application/octet-stream'},body:file});
+    if(CUR?.panel.id!==panelId)return;
+    backgroundImage=result.image;$('#fBackground').value='image';paintBackgroundForm();
+    status.textContent='Image ready · '+result.width+' × '+result.height+' · '+Math.ceil(result.bytes/1024)+' KB. Save to apply.';
+  }catch(error){if(CUR?.panel.id===panelId)status.textContent=error.message;}
+  finally{backgroundUploadPending=false;$('#saveBtn').disabled=false;}
+});
 async function loadEntities(){
   if(ENTITIES.light) return;
   ENTITIES.light  = await api("/entities?domain=light,switch");
@@ -825,6 +863,11 @@ function fillConfigForm(){
   $("#fSpeaker").innerHTML = opts(ENTITIES.media, (CFG.media||{}).default_speaker);
   $("#fSpeakerName").value = (CFG.media||{}).default_speaker_name || "";
   const d = CFG.display||{};
+  const background=d.background||{};
+  backgroundImage=/^[0-9a-f]{64}$/.test(background.image||'')?background.image:'';
+  $('#fBackground').value=background.mode||(d.theme==='architectural'?'room':'pattern');
+  $('#fBackgroundColour').value=background.colour||'#2b2018';
+  $('#fBackgroundUpload').value='';$('#fBackgroundStatus').textContent='';paintBackgroundForm();
   $("#fIdle").value = d.idle_timeout_s ?? 45;
   $("#fGlass").value = d.glass_tier ?? 3;
   $("#fTheme").value = d.theme || "default";
@@ -1109,7 +1152,7 @@ function collect(){
   CFG.sensors = {temperature:$("#fTemp").value, humidity:$("#fHum").value,
                  climate:$("#fClimate").value};
   CFG.dali = {gateway:$("#fDaliGw").value.trim(), poll_s:+$("#fDaliPoll").value||0};
-  CFG.display = {idle_timeout_s:+$("#fIdle").value, glass_tier:+$("#fGlass").value, theme:$("#fTheme").value, palette:$("#fPalette").value,
+  CFG.display = {background:{mode:$('#fBackground').value,colour:$('#fBackgroundColour').value,image:backgroundImage},idle_timeout_s:+$("#fIdle").value, glass_tier:+$("#fGlass").value, theme:$("#fTheme").value, palette:$("#fPalette").value,
                  backlight_default:+$("#fBlDef").value, backlight_min:+$("#fBlMin").value,
                  backlight_off_s:+$("#fBlOff").value,
                  dsi_overlay:$("#fDsiOverlay").value.trim(),
@@ -1128,6 +1171,8 @@ function collect(){
   return CFG;
 }
 $("#saveBtn").onclick = async ()=>{
+  if(backgroundUploadPending){toast('Wait for the image upload to finish');return;}
+  if($('#fBackground').value==='image'&&!backgroundImage){$('#fBackgroundStatus').textContent='Choose and upload an image before saving.';toast('Upload a background image first');return;}
   const body = collect();
   await api(`/panels/${CUR.panel.id}/claim`,{method:"POST",body:JSON.stringify({
     room:$("#fRoom").value, template:$("#fTemplate").value, room_label:CFG.room_label})});

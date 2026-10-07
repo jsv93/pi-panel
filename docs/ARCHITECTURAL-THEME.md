@@ -1,5 +1,39 @@
 # Architectural theme
 
+## Backgrounds and player in 0.12.0
+
+Linen uses a stronger cream text and brown surface palette so its warmth is
+more visible on the panel. The generic room image is now an abstract study of
+warm light and planes, with no furniture or house-specific interior.
+
+The player has larger, centred square artwork, transport controls below it,
+and an icon-labelled volume slider directly above Speakers / Browse / Queue.
+Shuffle and Repeat remain on the transport row and have been removed from
+Playback options. Covers is available in the home navigation only. The sleep
+screen shows its clock without a wake caption.
+
+Theme and Theme colours open named selection lists in every theme. Opening a
+list does not change the current choice, and the selected row is marked.
+
+In the server, open a panel's **Display > Background** and choose Solid colour,
+Uploaded image, Generic room or Generic pattern, then Save. JPEG, PNG and WebP
+uploads are limited to 10 MB and 16 megapixels; the server converts them to a
+still WebP with a maximum dimension of 1280px. Images are stored beside the
+database in `backgrounds/` and included in the add-on data backup. A config
+export references the image; keep the image file or use a full add-on backup
+when moving servers.
+
+Background selection is server-only. The panel cannot modify these fields
+through its narrow display endpoint. Its agent caches the chosen upload
+locally, verifies its hash against the signed config and retries a failed
+download on later syncs. A missing image falls back to the built-in abstract
+background; lighting configuration still applies. No live blur is added.
+
+`tests/test_backgrounds.py` covers bounded decoding, invalid files, admin-only
+writes, per-panel image access, ingress paths and agent cache integrity. The
+browser tests cover selection lists across themes and player layout at multiple
+panel sizes as well as the existing slider/state regression tests.
+
 ## Preview parity in 0.11.1
 
 Architectural pages now use the preview's 180ms horizontal fade, including
@@ -63,7 +97,7 @@ verify behaviour and layout, not the physical panel's frame rate; use Settings
 
 ## Release and recovery
 
-Use the existing release workflow: the `v0.11.0` tag must match the add-on
+Use the existing release workflow: the release tag must match the add-on
 manifest. Confirm both architecture images and the add-on repository manifest
 before updating Panel Config Server in HA. Confirm `/api/bundle-log` reports
 `panel.html` from `image`; an operator file in `/data/bundle` overrides it.

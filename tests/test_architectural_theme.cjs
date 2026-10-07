@@ -49,6 +49,7 @@ const states=[
    if(r.request().method()==='POST')requests.push({path:u.pathname,body:r.request().postDataJSON()});
    if(u.pathname==='/presets')return r.fulfill({json:{changed:2}});
    if(u.pathname==='/panel.html')return r.fulfill({contentType:'text/html',body:source});
+   if(u.pathname==='/background-'+'a'.repeat(64)+'.webp')return r.fulfill({contentType:'image/webp',path:path.join(root,'server/app/static/abstract-room.webp')});
    if(u.pathname==='/config.json')return r.fulfill({json:cfg});
    if(u.pathname==='/secrets.json')return r.fulfill({json:{ha_token:'test-only'}});
    if(u.pathname.endsWith('.woff2'))return r.fulfill({path:path.join(root,'panel-ui',path.basename(u.pathname))});
@@ -66,6 +67,7 @@ const states=[
  const back=async()=>{await p.locator('.sheet.on [data-close]').click();await p.waitForTimeout(260);};
  const snap=async(name)=>{if(process.env.SCREENSHOTS_DIR){fs.mkdirSync(process.env.SCREENSHOTS_DIR,{recursive:true});await p.waitForTimeout(220);await p.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,name+'.png')});}};
  assert.deepEqual(await p.locator('.nav button:visible b').allTextContents(),['Scenes','Lights','Climate','Covers']);
+ assert.equal(await p.locator('body').evaluate(x=>getComputedStyle(x).color),'rgb(226, 196, 158)');
  assert.equal(await p.locator('#rmTitle').textContent(),'Music');await snap('home');check('navigation order and persistent idle player');
  await p.locator('#archTemp').click();await p.waitForTimeout(260);assert(await p.locator('#s-climate').evaluate(x=>x.classList.contains('on')));
  assert.equal(await p.locator('#s-climate #spTemp').textContent(),'22.0');await p.locator('#spUp').click();
@@ -112,7 +114,7 @@ const states=[
  await e.locator('#lightBody button').filter({hasText:'Colour'}).click();await e.waitForTimeout(220);assert(await e.locator('#ovColour').isVisible());await e.locator('#archColourHost .sw').first().click();assert.deepEqual((await e.evaluate(()=>window.testCalls.at(-1))).service_data.hs_color,[0,85]);
  await e.locator('#ovColour [data-ov-back]').click();assert(await e.locator('#ovLight').isVisible());await e.locator('#archEffect').selectOption('Slow glow');assert.equal((await e.evaluate(()=>window.testCalls.at(-1))).service_data.effect,'Slow glow');
  await e.locator('#ovLight [data-ov-back]').click();await eback();assert(await e.locator('#s-lights').isVisible());await eback();
- await e.locator('#roomMedia .meta').click();await e.waitForTimeout(220);await e.locator('#s-media [data-sheet=playback]').click();await e.waitForTimeout(220);await e.locator('#archShuffle').click();assert.equal((await e.evaluate(()=>window.testCalls.at(-1))).service,'shuffle_set');await e.locator('#archMiniArt').click();assert.equal(await e.locator('#archMiniArt .v').textContent(),'On');await eback();assert(await e.locator('#s-media').isVisible());await eback();
+ await e.locator('#roomMedia .meta').click();await e.waitForTimeout(220);await e.locator('#shuf').click();assert.equal((await e.evaluate(()=>window.testCalls.at(-1))).service,'shuffle_set');await e.locator('#s-media [data-sheet=playback]').click();await e.waitForTimeout(220);assert.equal(await e.locator('#archShuffle,#archRepeat').count(),0);await e.locator('#archMiniArt').click();assert.equal(await e.locator('#archMiniArt .v').textContent(),'On');await eback();assert(await e.locator('#s-media').isVisible());await eback();
  await e.emulateMedia({reducedMotion:'reduce'});await e.locator('.nav [data-sheet=scenes]').click();assert.equal(await e.locator('#s-scenes').evaluate(x=>getComputedStyle(x).animationName),'none');await eback();
  await e.locator('#archMenu').click();await e.waitForTimeout(220);await e.locator('#archRoomLinks [data-sheet=settings]').click();await e.waitForTimeout(220);await e.locator('#s-settings [data-sheet=display]').click();await e.waitForTimeout(220);await e.locator('#glassRow').click();await e.waitForTimeout(220);
  assert.deepEqual(await e.locator('#archChoices .t').allTextContents(),['Full','No sheet','Tiles only','Off']);await eback();await eback();await e.locator('#s-settings [data-sheet=diagnostics]').click();await e.waitForTimeout(220);await e.locator('#diagRow').click();assert(await e.locator('#scrollTestRow').isVisible());
@@ -133,12 +135,51 @@ const states=[
  await pinned.page.locator('#themeRow').click();await pinned.page.waitForTimeout(220);
  await pinned.page.locator('#archChoices button').filter({hasText:'Default'}).click();
  for(const next of ['default','ambient','architectural']){
-  if(next!=='default')await pinned.page.locator('#themeRow').click();
+  if(next!=='default')await pinned.page.locator('#archChoices button').filter({hasText:next==='ambient'?'Ambient':'Architectural'}).click();
   assert(await pinned.page.locator('body').evaluate((b,t)=>b.classList.contains('theme-'+t),next));
   assert.equal(await pinned.page.locator((next==='architectural'?'#archClimateTarget':'#homeReadings')+' .setpoint').count(),1);
  }
  assert.equal(await pinned.page.locator('#rmTitle').textContent(),'Music');assert.deepEqual(pinned.errors,[]);
  await pinned.page.close();check('persistent navigation, queue access and live theme switching');
+ for(const theme of ['default','ambient','architectural']){
+  const f=await fixture({...config,display:{...config.display,theme}}),q=f.page;
+  if(theme==='architectural'){await q.locator('#archMenu').click();await q.locator('#archRoomLinks [data-sheet=settings]').click();await q.locator('#archSettingsLinks [data-sheet=display]').click();}
+  else await q.locator('.nav [data-sheet=settings]').click();
+  await q.locator('#paletteRow').click();await q.waitForTimeout(250);
+  assert.equal(await q.locator('#archChoices button').count(),6);
+  assert.equal(f.requests.filter(r=>r.path==='/display').length,0,'opening a list must not change the selection');
+  await q.locator('#archChoices button').filter({hasText:'Ember'}).click();
+  assert.deepEqual(f.requests.at(-1),{path:'/display',body:{palette:'ember'}});
+  await q.locator('#s-choices [data-close]').click();await q.waitForTimeout(250);assert(await q.locator(theme==='architectural'?'#s-display':'#s-settings').isVisible());
+  await q.locator('#themeRow').click();await q.waitForTimeout(250);assert.equal(await q.locator('#archChoices button').count(),3);
+  assert.equal(await q.locator('#idle .hint').count(),0);
+  assert.equal(await q.locator('#archRoomLinks [data-sheet=blinds],#s-settings [data-sheet=blinds]').count(),0);
+  assert.deepEqual(f.errors,[]);await q.close();
+ }
+ check('theme and colour selection lists in every theme, without cycling on entry');
+ for(const [mode,colour] of [['solid','#453020'],['pattern','#2b2018'],['room','#2b2018'],['image','#2b2018']]){
+  const f=await fixture({...config,display:{...config.display,background:{mode,colour,image:'a'.repeat(64)}}});
+  assert.equal(await f.page.locator('body').getAttribute('data-background'),mode);
+  const bg=await f.page.locator('body').evaluate(x=>getComputedStyle(x,'::before').backgroundColor);
+  if(mode==='solid')assert.equal(bg,'rgb(69, 48, 32)');
+  if(mode==='image')await f.page.waitForFunction(()=>document.body.style.getPropertyValue('--panel-background').includes('background-'));
+  assert.deepEqual(f.errors,[]);await f.page.close();
+ }
+ const missing=await fixture({...config,display:{...config.display,background:{mode:'image',image:'b'.repeat(64)}}});
+ assert.equal(await missing.page.locator('body').evaluate(x=>x.style.getPropertyValue('--panel-background')),'var(--arch-room)');assert.deepEqual(missing.errors,[]);await missing.page.close();
+ check('background choices and missing-image fallback do not break the panel');
+ const player=await fixture(config),q=player.page;
+ await q.locator('#roomMedia .meta').click();await q.waitForTimeout(250);
+ for(const [width,height] of [[720,1280],[480,800],[360,640]]){
+  await q.setViewportSize({width,height});await q.waitForTimeout(100);
+  const art=await q.locator('#mpArt').boundingBox(),volume=await q.locator('.mp-vol').boundingBox(),bottom=await q.locator('.mp-bottom').boundingBox(),transport=await q.locator('.mp-transport').boundingBox();
+  assert(Math.abs(art.x+art.width/2-width/2)<2,'album is centred');assert(Math.abs(art.width-art.height)<2,'album stays square');
+  assert(volume.y>=transport.y+transport.height-1,'volume below transport');
+  assert(volume.y+volume.height<=bottom.y+1,'volume above navigation');
+  assert(bottom.y+bottom.height<=height+1,'bottom controls fit');
+  assert(await q.locator('.mp-vol>svg').isVisible());assert.equal(await q.locator('#archVolumeLabel').count(),0);
+ }
+ assert.deepEqual(player.errors,[]);await q.close();check('centred album art and bottom volume at panel sizes');
  const sliderPage=await browser.newPage();
  await sliderPage.route('**/*',r=>r.fulfill({contentType:'text/html',body:r.request().url().endsWith('panel.html')?source:fs.readFileSync(path.join(__dirname,'test_slider_drag.html'),'utf8')}));
  await sliderPage.goto('http://panel.test/test_slider_drag.html');
