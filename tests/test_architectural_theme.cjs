@@ -67,7 +67,7 @@ const states=[
  const back=async()=>{await p.locator('.sheet.on [data-close]').click();await p.waitForTimeout(260);};
  const snap=async(name)=>{if(process.env.SCREENSHOTS_DIR){fs.mkdirSync(process.env.SCREENSHOTS_DIR,{recursive:true});await p.waitForTimeout(220);await p.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,name+'.png')});}};
  assert.deepEqual(await p.locator('.nav button:visible b').allTextContents(),['Scenes','Lights','Climate','Covers']);
- assert.equal(await p.locator('body').evaluate(x=>getComputedStyle(x).color),'rgb(226, 196, 158)');
+ assert.equal(await p.locator('body').evaluate(x=>getComputedStyle(x).color),'rgb(232, 188, 136)');
  assert.equal(await p.locator('#rmTitle').textContent(),'Music');await snap('home');check('navigation order and persistent idle player');
  await p.locator('#archTemp').click();await p.waitForTimeout(260);assert(await p.locator('#s-climate').evaluate(x=>x.classList.contains('on')));
  assert.equal(await p.locator('#s-climate #spTemp').textContent(),'22.0');await p.locator('#spUp').click();
