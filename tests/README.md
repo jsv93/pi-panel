@@ -3,6 +3,7 @@
 ## Architectural theme
 
     python tests/test_theme_display.py
+    python tests/test_media_compatibility.py
     node tests/test_architectural_theme.cjs
 
 The Python check needs the server requirements and httpx. The browser check
@@ -11,6 +12,13 @@ to `msedge` to use installed Edge, or install Playwright Chromium. Optionally
 set `SCREENSHOTS_DIR` to save screenshots. It uses stubbed HA/agent responses,
 exercises both navigation visibility settings and all three themes, and runs
 the existing slider drag regression test against the shipped HTML.
+
+The media admin browser check uses the real server under the ingress prefix,
+with deterministic HA entities. Set `PANEL_DB` to a scratch database and
+`ADMIN_PASSWORD=local-qa-only`, start
+`python -m uvicorn serve_media_under_ingress:outer --app-dir tests --port 8877`,
+then run `node tests/test_media_admin.cjs`. It verifies compatibility labels,
+selection, refresh without losing edits, and saved settings.
 
     stub_dali_gateway.py   a Lunatone DALI-2 IoT gateway, to the shapes in
                            Lunatone's API documentation M0023
