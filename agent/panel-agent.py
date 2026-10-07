@@ -18,6 +18,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import shutil
 import socket
@@ -649,6 +650,40 @@ async def fetch_config(session) -> dict | None:
     return None
 
 
+async def cache_background(session, cfg):
+    """Verify the configured image before exposing it through the local UI server.
+
+    A failed download must not hold up lighting config. The UI uses its built-in
+    background until a subsequent sync succeeds, even at the same config version.
+    """
+    background = (cfg.get("display") or {}).get("background") or {}
+    digest = background.get("image", "")
+    if background.get("mode") != "image" or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        return False
+    target = CONFIG_PATH.parent / f"background-{digest}.webp"
+    if sha256(target) == digest:
+        return False
+    try:
+        async with session.get(f"{SERVER}/api/background/{PANEL_ID}/{digest}", timeout=20) as response:
+            if response.status != 200:
+                return False
+            data = bytearray()
+            async for chunk in response.content.iter_chunked(65536):
+                data.extend(chunk)
+                if len(data) > 2 * 1024 * 1024:
+                    return False
+        if hashlib.sha256(data).hexdigest() != digest:
+            return False
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_suffix(".tmp")
+        temporary.write_bytes(data)
+        os.replace(temporary, target)
+        return True
+    except Exception as error:
+        print(f"[agent] background unavailable: {error}")
+        return False
+
+
 async def sync(client, force=False):
     cfg = await fetch_config(client)
     if not cfg:
@@ -656,12 +691,15 @@ async def sync(client, force=False):
     if not cfg.get("_claimed"):
         print("[agent] not claimed yet")
         return False
+    image_changed = await cache_background(client, cfg)
     # Not `<=`. A lower version on the server does not mean "we are ahead", it
     # means the record was replaced -- re-provisioning issues a new panel id
     # whose config starts at version 1, while the config on disk may be at 5.
     # Treating that as up to date leaves the panel showing the old room's
     # lights forever and silently ignoring every future push.
     if not force and cfg.get("_version", 0) == local_version():
+        if image_changed:
+            await reload_ui()
         return False
     if await write_config(cfg):
         n = await reload_ui()

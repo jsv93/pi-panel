@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 
-from . import db, firstboot, ha, ssh
+from . import backgrounds, db, firstboot, ha, ssh
 
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme")
 WEAK_DEFAULTS = {"changeme", "change-me", ""}
@@ -700,6 +700,11 @@ _HA_URL_RE = re.compile(
 def check_config(cfg):
     if not isinstance(cfg, dict):
         raise HTTPException(400, "config must be an object")
+    if isinstance(cfg.get("display"), dict) and "background" in cfg["display"]:
+        try:
+            backgrounds.validate(cfg["display"]["background"])
+        except ValueError as error:
+            raise HTTPException(400, str(error))
     conn = cfg.get("connection")
     if conn is None:
         return
@@ -857,6 +862,55 @@ async def panel_config(panel_id: str, request: Request):
     # page holds Home Assistant's token and renders some of it -- a server
     # that could forge config could forge its way into that page.
     return signed(panel_id, cfg)
+
+
+@app.post("/api/backgrounds", dependencies=[Depends(require_admin), Depends(require_config_owner)])
+async def upload_background(request: Request):
+    data = bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data) > backgrounds.MAX_UPLOAD:
+            raise HTTPException(413, "Choose an image smaller than 10 MB")
+    try:
+        return await asyncio.to_thread(backgrounds.store_image, bytes(data))
+    except ValueError as error:
+        raise HTTPException(400, str(error))
+
+
+@app.get("/api/backgrounds/{digest}", dependencies=[Depends(require_admin)])
+async def preview_background(digest: str):
+    try:
+        path = backgrounds.asset_path(digest)
+    except ValueError:
+        raise HTTPException(404, "Background not found")
+    if not path.is_file():
+        raise HTTPException(404, "Background not found")
+    return FileResponse(path, media_type="image/webp")
+
+
+@app.get("/api/background/{panel_id}/{digest}")
+async def panel_background(panel_id: str, digest: str, request: Request):
+    panel_auth(request, panel_id)
+    chosen = db.merged_config(panel_id).get("display", {}).get("background", {})
+    if chosen.get("image") != digest:
+        raise HTTPException(404, "Background not assigned to this panel")
+    return await preview_background(digest)
+
+
+@app.patch("/api/panels/{panel_id}/background", dependencies=[Depends(require_admin), Depends(require_config_owner)])
+async def set_background(panel_id: str, request: Request):
+    if not db.get_panel(panel_id):
+        raise HTTPException(404, "unknown panel")
+    value = await request.json()
+    try:
+        backgrounds.validate(value)
+    except ValueError as error:
+        raise HTTPException(400, str(error))
+    cfg = db.merged_config(panel_id)
+    cfg.setdefault("display", {})["background"] = value
+    version = db.save_config(panel_id, cfg)
+    pushed = await notify(panel_id, {"type": "config_updated", "version": version})
+    return {"version": version, "pushed": pushed, "background": value}
 
 
 # Keys a panel or Home Assistant may set without authoring the whole config.
