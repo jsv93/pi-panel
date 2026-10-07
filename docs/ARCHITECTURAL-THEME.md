@@ -1,5 +1,34 @@
 # Architectural theme
 
+## Music and hold-to-dim in 0.14.0
+
+Music is the last bottom-navigation item. The home mini-player appears only
+while the selected speaker is playing; idle and paused players remain reachable
+through Music. Architectural artwork fills the available space above the title,
+with seek/timing and transport together immediately above volume. Linen's enabled
+shuffle/repeat controls have a filled cream background and dark icons.
+
+The server's Media page labels entity choices with queue-transfer compatibility
+and explains the selected speakers in a dedicated section. Music Assistant
+entities are distinguished from native control-only entries; offline entities
+and failed capability checks are not presented as supported. The service check
+is cached for 30 seconds and never starts or transfers playback.
+
+With the existing room-light gesture enabled, a three-finger tap toggles on
+release. Hold for 600 ms to dim (the configured hold threshold may be increased
+to 1500 ms; older shorter values use 600 ms). Release any finger to stop. The
+first hold dims down, each subsequent hold reverses, and a hold from off brightens
+gently. Stops are 1% and 100%, so a dimming hold never switches the room off.
+Only available, dimmable scene members participate; lights already off stay off
+unless the whole dimmable scene is off. Their relative brightness is retained
+within the 1% floor. Tap-to-toggle and remembered levels remain available.
+
+The ramp moves 4 percentage points every 200 ms with a single command batch in
+flight and one replaceable pending batch. A slow connection cannot accumulate
+an unbounded command backlog. Multi-touch cancels an underlying slider drag;
+extra fingers, movement before the hold, touch cancellation and losing focus
+stop the gesture. HA state echoes do not move held brightness values.
+
 ## Speaker transfer in 0.13.0
 
 The speaker picker separates selecting a speaker (tap its name) from moving

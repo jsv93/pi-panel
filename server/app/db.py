@@ -120,7 +120,7 @@ DEFAULT_TEMPLATE = {
         "touch_points": 3,
         # How long the fingers must stay down. Longer is harder to trigger by
         # accident; shorter feels more immediate.
-        "touch_hold_ms": 250,
+        "touch_hold_ms": 600,
         # Whether turning the room back on restores the levels it had when it
         # was turned off, rather than going to Bright. The panel remembers;
         # Home Assistant remains the authority on what the lights are actually

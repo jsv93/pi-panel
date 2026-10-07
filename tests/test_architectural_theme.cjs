@@ -67,9 +67,9 @@ const states=[
  const open=async(name)=>{await p.locator('[data-sheet="'+name+'"]:visible').first().click();await p.waitForTimeout(260);};
  const back=async()=>{await p.locator('.sheet.on [data-close]').click();await p.waitForTimeout(260);};
  const snap=async(name)=>{if(process.env.SCREENSHOTS_DIR){fs.mkdirSync(process.env.SCREENSHOTS_DIR,{recursive:true});await p.waitForTimeout(220);await p.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,name+'.png')});}};
- assert.deepEqual(await p.locator('.nav button:visible b').allTextContents(),['Scenes','Lights','Climate','Covers']);
+ assert.deepEqual(await p.locator('.nav button:visible b').allTextContents(),['Scenes','Lights','Climate','Covers','Music']);
  assert.equal(await p.locator('body').evaluate(x=>getComputedStyle(x).color),'rgb(232, 188, 136)');
- assert.equal(await p.locator('#rmTitle').textContent(),'Music');await snap('home');check('navigation order and persistent idle player');
+ assert.equal(await p.locator('#rmTitle').textContent(),'Music');await snap('home');assert.equal(await p.locator('#roomMedia').isVisible(),false);check('navigation order and hidden idle player');
  await p.locator('#archTemp').click();await p.waitForTimeout(260);assert(await p.locator('#s-climate').evaluate(x=>x.classList.contains('on')));
  assert.equal(await p.locator('#s-climate #spTemp').textContent(),'22.0');await p.locator('#spUp').click();
  assert.equal((await p.evaluate(()=>window.testCalls.at(-1))).service_data.temperature,22.5);
@@ -78,16 +78,16 @@ const states=[
  let calls=await p.evaluate(()=>window.testCalls.filter(x=>x.domain==='light'));assert.equal(calls.length,2);assert(calls.every(x=>x.service==='turn_off'));assert(calls.every(x=>x.service_data.entity_id!=='light.floor'));
  await p.locator('#s-scenes [data-preset=bright]').click();calls=await p.evaluate(()=>window.testCalls.filter(x=>x.domain==='light'));assert.equal(calls.at(-2).service_data.brightness_pct,90);assert.equal(calls.at(-1).service_data.brightness_pct,100);await back();check('scenes preserve light exclusions and correct service calls');
  await open('lights');await snap('lights');await p.locator('[data-arch-light="1"]').click();await p.waitForTimeout(220);await snap('brightness');await p.locator('#archLightMore').click();assert(await p.locator('#ovLight').evaluate(x=>x.classList.contains('on')));await snap('light-detail');await p.locator('#ovLight [data-ov-back]').click();await back();await back();check('per-light controls retained');
- await p.locator('#roomMedia .meta').click();await p.waitForTimeout(260);await snap('music-idle');await p.locator('#pp').click();assert.equal((await p.evaluate(()=>window.testCalls.at(-1))).service,'media_play');
+ await p.locator('.nav [data-sheet=media]').click();await p.waitForTimeout(260);await snap('music-idle');await p.locator('#pp').click();assert.equal((await p.evaluate(()=>window.testCalls.at(-1))).service,'media_play');
  await p.evaluate(()=>window.testState({entity_id:'media_player.room',state:'playing',attributes:{media_title:'Quiet spaces',media_artist:'Evening collection',media_duration:214,media_position:5,volume_level:.4,supported_features:65535}}));
  await p.locator('#rep').click();await p.locator('#rep').click();assert.equal(await p.locator('#rep').getAttribute('aria-label'),'Repeat one');await snap('music-playing');await back();
  assert.equal(await p.locator('#rmTitle').textContent(),'Quiet spaces');assert.equal(await p.locator('#rmEq i').first().evaluate(el=>getComputedStyle(el).animationName),'eqbar');
- await p.locator('#rmPP').click();assert.equal((await p.evaluate(()=>window.testCalls.at(-1))).service,'media_pause');assert(await p.locator('#roomMedia').isVisible());check('playback, repeat and pause keep media access');
- await p.locator('#roomMedia .meta').click();await p.waitForTimeout(260);await p.locator('#icoSearch').click();await p.waitForTimeout(260);assert.equal(await p.locator('.bitem .n').first().textContent(),'Evening');await p.locator('#bBack').click();await p.waitForTimeout(260);await back();check('media library navigation retained');
+ await p.locator('#rmPP').click();assert.equal((await p.evaluate(()=>window.testCalls.at(-1))).service,'media_pause');assert.equal(await p.locator('#roomMedia').isVisible(),false);check('playback mini-player hides on pause; Music remains accessible');
+ await p.locator('.nav [data-sheet=media]').click();await p.waitForTimeout(260);await p.locator('#icoSearch').click();await p.waitForTimeout(260);assert.equal(await p.locator('.bitem .n').first().textContent(),'Evening');await p.locator('#bBack').click();await p.waitForTimeout(260);await back();check('media library navigation retained');
  await open('blinds');assert.equal(await p.locator('#coversEmpty').textContent(),'No covers configured');await back();
  await open('room-menu');await snap('menu');await open('settings');await snap('settings');assert(await p.locator('#saveSoftRow').count());assert(await p.locator('#wifiRow').count());await back();await back();check('settings, diagnostics and covers entry retained');
  await p.emulateMedia({reducedMotion:'reduce'});await p.evaluate(()=>window.testState({entity_id:'media_player.room',state:'playing',attributes:{media_title:'Quiet spaces'}}));assert.equal(await p.locator('#rmEq i').first().evaluate(el=>getComputedStyle(el).animationName),'none');check('reduced-motion equalizer');
- for(const [w,h] of [[480,800],[320,610],[720,1280]]){await p.setViewportSize({width:w,height:h});await p.waitForTimeout(80);const bounds=await p.locator('.nav').boundingBox();assert(bounds.x>=-1&&bounds.x+bounds.width<=w+1);assert.equal(await p.locator('.nav button:visible').count(),4);await snap('home-'+w);}
+ for(const [w,h] of [[480,800],[320,610],[720,1280]]){await p.setViewportSize({width:w,height:h});await p.waitForTimeout(80);const bounds=await p.locator('.nav').boundingBox();assert(bounds.x>=-1&&bounds.x+bounds.width<=w+1);assert.equal(await p.locator('.nav button:visible').count(),5);await snap('home-'+w);}
  check('home fits 320/480/720 widths');
  assert.deepEqual(errors,[]);await p.close();
  const edit=await fixture(config),e=edit.page;
@@ -115,15 +115,15 @@ const states=[
  await e.locator('#lightBody button').filter({hasText:'Colour'}).click();await e.waitForTimeout(220);assert(await e.locator('#ovColour').isVisible());await e.locator('#archColourHost .sw').first().click();assert.deepEqual((await e.evaluate(()=>window.testCalls.at(-1))).service_data.hs_color,[0,85]);
  await e.locator('#ovColour [data-ov-back]').click();assert(await e.locator('#ovLight').isVisible());await e.locator('#archEffect').selectOption('Slow glow');assert.equal((await e.evaluate(()=>window.testCalls.at(-1))).service_data.effect,'Slow glow');
  await e.locator('#ovLight [data-ov-back]').click();await eback();assert(await e.locator('#s-lights').isVisible());await eback();
- await e.locator('#roomMedia .meta').click();await e.waitForTimeout(220);await e.locator('#shuf').click();assert.equal((await e.evaluate(()=>window.testCalls.at(-1))).service,'shuffle_set');await e.locator('#s-media [data-sheet=playback]').click();await e.waitForTimeout(220);assert.equal(await e.locator('#archShuffle,#archRepeat').count(),0);await e.locator('#archMiniArt').click();assert.equal(await e.locator('#archMiniArt .v').textContent(),'On');await eback();assert(await e.locator('#s-media').isVisible());await eback();
+ await e.locator('.nav [data-sheet=media]').click();await e.waitForTimeout(220);await e.locator('#shuf').click();assert.equal((await e.evaluate(()=>window.testCalls.at(-1))).service,'shuffle_set');await e.locator('#s-media [data-sheet=playback]').click();await e.waitForTimeout(220);assert.equal(await e.locator('#archShuffle,#archRepeat').count(),0);await e.locator('#archMiniArt').click();assert.equal(await e.locator('#archMiniArt .v').textContent(),'On');await eback();assert(await e.locator('#s-media').isVisible());await eback();
  await e.emulateMedia({reducedMotion:'reduce'});await e.locator('.nav [data-sheet=scenes]').click();assert.equal(await e.locator('#s-scenes').evaluate(x=>getComputedStyle(x).animationName),'none');await eback();
  await e.locator('#archMenu').click();await e.waitForTimeout(220);await e.locator('#archRoomLinks [data-sheet=settings]').click();await e.waitForTimeout(220);await e.locator('#s-settings [data-sheet=display]').click();await e.waitForTimeout(220);await e.locator('#glassRow').click();await e.waitForTimeout(220);
  assert.deepEqual(await e.locator('#archChoices .t').allTextContents(),['Full','No sheet','Tiles only','Off']);await eback();await eback();await e.locator('#s-settings [data-sheet=diagnostics]').click();await e.waitForTimeout(220);await e.locator('#diagRow').click();assert(await e.locator('#scrollTestRow').isVisible());
  assert.deepEqual(edit.errors,[]);await e.close();check('preview navigation, scene capture and failure, membership, drag protection, colour, effects and diagnostics');
- for(const theme of ['default','ambient']){const f=await fixture({...config,display:{...config.display,theme,palette:theme==='ambient'?'ember':'midnight'}});assert.equal(await f.page.locator('.nav button:visible').count(),4);assert.equal(await f.page.locator('.nav [data-sheet=scenes]').isVisible(),false);assert.equal(await f.page.locator('#homeReadings .setpoint').count(),1);assert.deepEqual(f.errors,[]);await f.page.close();check(theme+' navigation and thermostat retained');}
- const empty=await fixture({...config,media:{},sensors:{temperature:'sensor.temperature'},lights:[]});await empty.page.locator('#roomMedia').click();await empty.page.waitForTimeout(260);for(const id of ['pp','prev','next','shuf','rep'])await empty.page.locator('#'+id).click();await empty.page.locator('#icoSearch').click();await empty.page.waitForTimeout(260);assert.equal(await empty.page.locator('#bList').textContent(),'No speakers configured');assert.deepEqual(empty.errors,[]);await empty.page.close();check('unconfigured media does not throw or send commands');
+ for(const theme of ['default','ambient']){const f=await fixture({...config,display:{...config.display,theme,palette:theme==='ambient'?'ember':'midnight'}});assert.equal(await f.page.locator('.nav button:visible').count(),5);assert.equal(await f.page.locator('.nav [data-sheet=scenes]').isVisible(),false);assert.equal(await f.page.locator('#homeReadings .setpoint').count(),1);assert.deepEqual(f.errors,[]);await f.page.close();check(theme+' navigation and thermostat retained');}
+ const empty=await fixture({...config,media:{},sensors:{temperature:'sensor.temperature'},lights:[]});await empty.page.locator('.nav [data-sheet=media]').click();await empty.page.waitForTimeout(260);for(const id of ['pp','prev','next','shuf','rep'])await empty.page.locator('#'+id).click();await empty.page.locator('#icoSearch').click();await empty.page.waitForTimeout(260);assert.equal(await empty.page.locator('#bList').textContent(),'No speakers configured');assert.deepEqual(empty.errors,[]);await empty.page.close();check('unconfigured media does not throw or send commands');
  const pinned=await fixture({...config,display:{...config.display,hide_nav_on_sheets:false}});
- await pinned.page.locator('#roomMedia .meta').click();await pinned.page.waitForTimeout(260);
+ await pinned.page.locator('.nav [data-sheet=media]').click();await pinned.page.waitForTimeout(260);
  assert(await pinned.page.locator('.nav').isVisible());
  const sheetBox=await pinned.page.locator('#s-media').boundingBox(), navBox=await pinned.page.locator('.nav').boundingBox();
  assert(sheetBox.y+sheetBox.height<=navBox.y,'media sheet must stop above the persistent navigation: '+JSON.stringify({sheetBox,navBox}));
@@ -181,7 +181,7 @@ const states=[
  const openSpeakers=async page=>{await page.locator('#icoSpk').click();await page.waitForTimeout(260);};
  for(const theme of ['architectural','ambient','default']){
   const f=await fixture({...transferConfig,display:{...config.display,theme}},{states:transferStates}),s=f.page;
-  await s.locator('#roomMedia .meta').click();await s.waitForTimeout(260);await openSpeakers(s);
+  await s.locator('.nav [data-sheet=media]').click();await s.waitForTimeout(260);await openSpeakers(s);
   assert.equal(await s.locator('.spk-transfer').count(),5);
   for(const i of [0,2,3,4])assert(await s.locator('.spk-transfer').nth(i).isDisabled());
   assert(await s.locator('.spk-transfer').nth(1).isEnabled());
@@ -207,7 +207,7 @@ const states=[
  }
  check('speaker row selection and independent native queue transfer across all themes');
  const tf=await fixture(transferConfig,{states:transferStates}),s=tf.page;
- await s.locator('#roomMedia .meta').click();await s.waitForTimeout(260);await openSpeakers(s);
+ await s.locator('.nav [data-sheet=media]').click();await s.waitForTimeout(260);await openSpeakers(s);
  await s.evaluate(()=>window.testHoldTransfer=true);await s.locator('.spk-transfer').nth(1).click();
  await s.evaluate(()=>window.testTransferResult('Destination refused transfer'));
  await s.waitForFunction(()=>document.querySelector('#spkStatus').textContent.includes('not confirmed'));
@@ -230,9 +230,9 @@ const states=[
  assert(await s.locator('.spk-transfer').nth(1).isDisabled());assert.deepEqual(tf.errors,[]);await s.close();
  check('transfer failures, paused queues, empty sources, timeouts and disconnects');
  const noTransfer=await fixture(transferConfig,{states:transferStates,services:{}});
- await noTransfer.page.locator('#roomMedia .meta').click();await noTransfer.page.waitForTimeout(260);await openSpeakers(noTransfer.page);
+ await noTransfer.page.locator('.nav [data-sheet=media]').click();await noTransfer.page.waitForTimeout(260);await openSpeakers(noTransfer.page);
  assert(await noTransfer.page.locator('.spk-transfer').nth(1).isDisabled());assert(await noTransfer.page.locator('.spk-select').nth(1).isEnabled());await noTransfer.page.close();
- const touch=await fixture(transferConfig,{states:transferStates});await touch.page.locator('#roomMedia .meta').click();await touch.page.waitForTimeout(260);await openSpeakers(touch.page);
+ const touch=await fixture(transferConfig,{states:transferStates});await touch.page.locator('.nav [data-sheet=media]').click();await touch.page.waitForTimeout(260);await openSpeakers(touch.page);
  for(const [width,height] of [[720,1280],[480,800],[360,640]]){
   await touch.page.setViewportSize({width,height});await touch.page.waitForTimeout(100);
   const name=await touch.page.locator('.spk-select').nth(1).boundingBox(),button=await touch.page.locator('.spk-transfer').nth(1).boundingBox();
@@ -242,7 +242,7 @@ const states=[
  if(process.env.SCREENSHOTS_DIR){fs.mkdirSync(process.env.SCREENSHOTS_DIR,{recursive:true});await touch.page.setViewportSize({width:720,height:1280});await touch.page.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,'speaker-transfer.png')});}
  assert.deepEqual(touch.errors,[]);await touch.page.close();check('transfer capability gating and touch layout');
  const player=await fixture(config),q=player.page;
- await q.locator('#roomMedia .meta').click();await q.waitForTimeout(250);
+ await q.locator('.nav [data-sheet=media]').click();await q.waitForTimeout(250);
  for(const [width,height] of [[720,1280],[480,800],[360,640]]){
   await q.setViewportSize({width,height});await q.waitForTimeout(100);
   const art=await q.locator('#mpArt').boundingBox(),volume=await q.locator('.mp-vol').boundingBox(),bottom=await q.locator('.mp-bottom').boundingBox(),transport=await q.locator('.mp-transport').boundingBox();
@@ -250,9 +250,51 @@ const states=[
   assert(volume.y>=transport.y+transport.height-1,'volume below transport');
   assert(volume.y+volume.height<=bottom.y+1,'volume above navigation');
   assert(bottom.y+bottom.height<=height+1,'bottom controls fit');
+  assert(art.width>=width*.60,'album fills the available width');
+  const times=await q.locator('.mp-times').boundingBox();
+  assert(transport.y-(times.y+times.height)<12,'timer sits immediately above transport');
+  assert(volume.y-(transport.y+transport.height)<12,'transport sits immediately above volume');
   assert(await q.locator('.mp-vol>svg').isVisible());assert.equal(await q.locator('#archVolumeLabel').count(),0);
  }
  assert.deepEqual(player.errors,[]);await q.close();check('centred album art and bottom volume at panel sizes');
+ const gf=await fixture({...config,display:{...config.display,touch_gesture:'lights',touch_points:3,touch_hold_ms:100}}),g=gf.page;
+ await g.clock.install();
+ const touchEvent=async(type,n,selector='body',move=0)=>g.evaluate(({type,n,selector,move})=>{
+  const target=document.querySelector(selector),touches=Array.from({length:n},(_,identifier)=>new Touch({identifier,target,clientX:200+identifier*40+move,clientY:550}));
+  target.dispatchEvent(new TouchEvent(type,{bubbles:true,cancelable:true,touches,targetTouches:touches,changedTouches:touches}));
+ },{type,n,selector,move});
+ const tick=ms=>g.clock.runFor(ms);
+ const lightCalls=()=>g.evaluate(()=>window.testCalls.filter(c=>c.domain==='light'));
+ const clearCalls=()=>g.evaluate(()=>window.testCalls=[]);
+ const tap=async()=>{await touchEvent('touchstart',3);await tick(100);await touchEvent('touchend',0);await tick(20);};
+ await tap();let lc=await lightCalls();assert.equal(lc.length,2);assert(lc.every(c=>c.service==='turn_off'));assert(lc.every(c=>c.service_data.entity_id!=='light.floor'));
+ await tick(600);await clearCalls();await tap();lc=await lightCalls();assert.deepEqual(lc.map(c=>c.service_data.brightness_pct),[35,60]);
+ await tick(600);await clearCalls();await touchEvent('touchstart',3);await tick(599);assert.equal((await lightCalls()).length,0);
+ await tick(401);lc=await lightCalls();assert(lc.length>0 && lc.every(c=>c.service==='turn_on'),'hold never toggles off');
+ const levels=lc.slice(-2).map(c=>c.service_data.brightness_pct);assert(levels[1]<60 && Math.abs(levels[0]/levels[1]-35/60)<.04,'scene proportions retained');
+ await g.evaluate(()=>window.testState({entity_id:'light.cove',state:'on',attributes:{brightness:255,supported_color_modes:['hs','color_temp']}}));
+ await tick(200);assert((await lightCalls()).at(-1).service_data.brightness_pct<60,'HA echo cannot move brightness under held fingers');
+ await touchEvent('touchend',2);await tick(20);const stopped=(await lightCalls()).length;await tick(800);assert.equal((await lightCalls()).length,stopped,'release stops ramp');await touchEvent('touchend',0);
+ await tick(600);await clearCalls();await touchEvent('touchstart',3);await tick(800);lc=await lightCalls();assert(lc.at(-1).service_data.brightness_pct>levels[1]-4,'next hold reverses upwards');await touchEvent('touchend',0);await tick(600);
+ await clearCalls();await touchEvent('touchstart',3);await touchEvent('touchstart',6);await tick(2000);await touchEvent('touchend',0);assert.equal((await lightCalls()).length,0,'extra fingers cancel');
+ await touchEvent('touchstart',3);await tick(100);await touchEvent('touchmove',3,'body',80);await tick(800);await touchEvent('touchend',0);assert.equal((await lightCalls()).length,0,'swipe cancels');
+ await touchEvent('touchstart',3);await tick(100);await touchEvent('touchcancel',0);await tick(800);assert.equal((await lightCalls()).length,0,'cancel does not toggle');
+ await g.locator('.nav [data-sheet=lights]').click();await tick(300);
+ await touchEvent('touchstart',1,'#ls0');await touchEvent('touchstart',3,'#ls0');await tick(100);await touchEvent('touchend',0,'#ls0');await tick(600);
+ lc=await lightCalls();assert.equal(lc.length,2,'multi-touch cancels underlying slider commit');assert(lc.every(c=>c.service==='turn_off'));
+ await clearCalls();await touchEvent('touchstart',3);await tick(800);lc=await lightCalls();assert(lc.every(c=>c.service==='turn_on'&&c.service_data.brightness_pct>0&&c.service_data.brightness_pct<=10),'holding from off starts gently');
+ await tick(6000);await touchEvent('touchend',0);await tick(20);assert((await lightCalls()).every(c=>c.service_data.brightness_pct<=100),'upper bound');
+ await tick(600);await clearCalls();await touchEvent('touchstart',3);await tick(6500);await touchEvent('touchend',0);await tick(20);lc=await lightCalls();assert(lc.every(c=>c.service_data.brightness_pct>=1));assert.equal(lc.at(-1).service_data.brightness_pct,1,'lower bound stays on');
+ assert.deepEqual(gf.errors,[]);await g.close();check('three-finger tap, hold, reversal, bounds, scene balance and cancellation');
+ const contrast=await fixture(config),c=contrast.page;await c.locator('.nav [data-sheet=media]').click();await c.waitForTimeout(250);
+ for(const id of ['shuf','rep']){
+  const off=await c.locator('#'+id+' svg').evaluate(e=>getComputedStyle(e).stroke);await c.locator('#'+id).click();
+  assert.equal(await c.locator('#'+id).getAttribute('aria-pressed'),'true');await c.waitForTimeout(250);
+  assert.notEqual(await c.locator('#'+id+' svg').evaluate(e=>getComputedStyle(e).stroke),off);
+  assert.equal(await c.locator('#'+id).evaluate(e=>getComputedStyle(e).backgroundColor),'rgb(232, 188, 136)');
+ }
+ if(process.env.SCREENSHOTS_DIR)await c.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,'music-refined.png')});
+ await c.close();check('Linen shuffle and repeat use a filled selected state');
  const sliderPage=await browser.newPage();
  await sliderPage.route('**/*',r=>r.fulfill({contentType:'text/html',body:r.request().url().endsWith('panel.html')?source:fs.readFileSync(path.join(__dirname,'test_slider_drag.html'),'utf8')}));
  await sliderPage.goto('http://panel.test/test_slider_drag.html');

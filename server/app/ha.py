@@ -15,6 +15,7 @@ import httpx
 from . import db
 
 _cache = {"at": 0, "states": []}
+_services = {"at": 0, "transfer": None}
 CACHE_S = 30
 
 # Why the last failure is kept: a swallowed exception here shows up as empty
@@ -71,6 +72,7 @@ def invalidate():
     """Drop the cache so a settings change takes effect on the next request."""
     _cache["at"] = 0
     _cache["states"] = []
+    _services.update(at=0, transfer=None)
 
 
 async def check(test_url="", test_token=""):
@@ -115,10 +117,42 @@ async def states(force=False):
     return _cache["states"]
 
 
+async def transfer_service_available():
+    if time.time() - _services["at"] < CACHE_S:
+        return _services["transfer"]
+    if not configured():
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=8) as c:
+            r = await c.get(f"{url()}/api/services", headers={"Authorization": f"Bearer {token()}"})
+            r.raise_for_status()
+            supported = any(s.get("domain") == "music_assistant" and
+                            "transfer_queue" in s.get("services", {}) for s in r.json())
+            _services.update(at=time.time(), transfer=supported)
+            return supported
+    except Exception:
+        return None  # Unknown is different from a confirmed unsupported player.
+
+
+def transfer_compatibility(state, service):
+    attrs = state.get("attributes") or {}
+    if state.get("state") in ("unavailable", "unknown"):
+        return "unavailable", "Speaker offline; transfer availability cannot be confirmed."
+    if not attrs.get("mass_player_type"):
+        return "unsupported", "Control only. Choose this speaker's Music Assistant entity for queue transfer."
+    if service is None:
+        return "unknown", "Music Assistant speaker; the transfer service could not be checked."
+    if not service:
+        return "unsupported", "The Music Assistant queue-transfer action is unavailable in Home Assistant."
+    return "supported", "Queue transfer supported. The source must have a playing or paused Music Assistant queue."
+
+
 async def entities(domains=None, search=""):
     """[{entity_id, name, domain, state, area}] filtered for the dropdowns."""
     out = []
-    for s in await states():
+    current = await states()
+    transfer = await transfer_service_available() if not domains or "media_player" in domains else None
+    for s in current:
         eid = s.get("entity_id", "")
         dom = eid.split(".")[0] if "." in eid else ""
         if domains and dom not in domains:
@@ -132,6 +166,10 @@ async def entities(domains=None, search=""):
             "domain": dom,
             "state": s.get("state"),
         })
+        if dom == "media_player":
+            capability, reason = transfer_compatibility(s, transfer)
+            out[-1].update(queue_transfer=capability, queue_transfer_reason=reason,
+                           music_assistant=bool((s.get("attributes") or {}).get("mass_player_type")))
     out.sort(key=lambda x: x["name"].lower())
     return out
 

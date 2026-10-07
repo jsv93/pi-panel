@@ -111,6 +111,7 @@ body.sheet-open #scrim{opacity:.55}
 .strip-row{display:flex;align-items:center;gap:18px;height:100%;padding:0 28px}
 .strip.idle .meta .t{color:var(--ink-quiet)}
 .strip.idle .pp{opacity:.3}
+#roomMedia[hidden]{display:none!important}
 .strip .prog{position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--line-soft)}
 .strip .prog i{display:block;height:100%;width:0;background:var(--accent);
   transform-origin:left center;transition:width .5s linear}
@@ -886,25 +887,29 @@ body.theme-architectural[data-background=room] #s-scenes,body.theme-architectura
 #archChoices .act[aria-pressed=true]{border-color:var(--accent);color:var(--accent)}
 body:not(.theme-architectural) #s-choices{padding:130px 36px 40px}
 body:not(.theme-architectural) #s-choices h1{margin-bottom:35px}
-body.theme-architectural #s-media{--album-size:clamp(180px,calc(var(--stage-h,1280px) - 940px),340px);padding-top:140px}
-body.theme-architectural.nav-always #s-media{--album-size:clamp(150px,calc(var(--stage-h,1280px) - 1110px),260px)}
-body.theme-architectural #s-media>h1{font-size:54px;margin-bottom:25px}
+body.theme-architectural #s-media{--album-size:clamp(150px,calc(var(--stage-h,1280px) - 690px),590px);padding-top:125px;padding-bottom:24px}
+body.theme-architectural.nav-always #s-media{--album-size:clamp(140px,calc(var(--stage-h,1280px) - 880px),400px)}
+body.theme-architectural #s-media>h1{font-size:46px;margin-bottom:16px}
 body.theme-architectural #s-media>.arch-sub{display:none!important}
 body.theme-architectural .arch-media-identity{display:flex;flex-direction:column;gap:0;margin:0;flex:none}
 body.theme-architectural .mp-art{width:var(--album-size);height:var(--album-size);flex:none;align-self:center}
-body.theme-architectural .mp-title{align-self:stretch;text-align:center;font-size:36px;line-height:1.2;max-height:86px;margin:23px 0 0}
-body.theme-architectural .mp-sub{align-self:stretch;text-align:center;font-size:22px;margin:10px 0 0;min-height:33px;max-height:66px}
-body.theme-architectural .mp-bar{height:62px;margin-top:12px;flex:none}
-body.theme-architectural .mp-bar:before,body.theme-architectural .mp-bar i,body.theme-architectural #archSeekThumb{top:30px}
+body.theme-architectural .mp-title{align-self:stretch;text-align:center;font-size:34px;line-height:1.2;max-height:41px;margin:14px 0 0;-webkit-line-clamp:1}
+body.theme-architectural .mp-sub{align-self:stretch;text-align:center;font-size:22px;margin:6px 0 0;min-height:30px;max-height:30px;-webkit-line-clamp:1}
+body.theme-architectural .mp-bar{height:44px;margin-top:auto;flex:none}
+body.theme-architectural .mp-bar:before,body.theme-architectural .mp-bar i,body.theme-architectural #archSeekThumb{top:22px}
 body.theme-architectural .mp-times{flex:none}
-body.theme-architectural .mp-transport{margin-top:17px;flex:none;min-height:100px}
-body.theme-architectural #s-media .mp-vol{margin-top:auto;padding-top:15px;display:flex;gap:19px;flex:none;min-height:97px}
+body.theme-architectural .mp-transport{margin-top:8px;flex:none;min-height:88px}
+body.theme-architectural .mp-play{width:88px;height:88px}
+body.theme-architectural #s-media .mp-vol{margin-top:8px;padding-top:0;display:flex;gap:19px;flex:none;min-height:82px}
 body.theme-architectural #s-media .mp-vol>svg{display:block;width:32px;height:32px;flex:none;stroke:var(--ink-dim)}
 body.theme-architectural #s-media .mp-vol>button{font-size:33px;width:52px;min-width:52px;min-height:82px}
 body.theme-architectural #s-media .mp-vol #archVolDown{order:1}
 body.theme-architectural #s-media .mp-vol #mVol{order:2;flex:1;min-width:0}
 body.theme-architectural #s-media .mp-vol #archVolUp{order:3}
-body.theme-architectural #s-media .mp-bottom{margin-top:10px;min-height:114px}
+body.theme-architectural #s-media .mp-bottom{margin-top:8px;min-height:104px;height:104px}
+.pal-linen{--toggle-active-bg:#e8bc88;--toggle-active-ink:#2d1d12}
+.mp-btn.edge.on{background:var(--toggle-active-bg,var(--accent-soft));color:var(--toggle-active-ink,var(--accent));border-radius:6px}
+.mp-btn.edge.on svg,body.theme-architectural .mp-btn.edge.on svg{stroke:var(--toggle-active-ink,var(--accent))}
 
 </style>
 <!-- Embedded asset licences
@@ -1216,7 +1221,7 @@ SOFTWARE.
   <div class="restart tile press" id="reload">Reload panel</div>
 </section>
 
-<section class="sheet" id="s-playback"><button class="down press" data-close aria-label="Back"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button><h1>Playback</h1><div class="arch-list"><button class="act press" id="archMiniArt"><span class="t">Mini-player artwork</span><span class="v"></span></button></div><p class="arch-info">The home player stays available when idle or paused. Playback controls follow the selected speaker.</p></section>
+<section class="sheet" id="s-playback"><button class="down press" data-close aria-label="Back"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button><h1>Playback</h1><div class="arch-list"><button class="act press" id="archMiniArt"><span class="t">Mini-player artwork</span><span class="v"></span></button></div><p class="arch-info">The home mini-player appears during playback. Music is always available in the bottom navigation. Controls follow the selected speaker.</p></section>
 <section class="sheet" id="s-media">
   <div class="down press" data-close><svg viewBox="0 0 24 24"><path d="M12 5v14m-7-7l7 7 7-7"/></svg></div>
   <div class="grip"></div>
@@ -1282,6 +1287,7 @@ SOFTWARE.
   <button data-sheet="climate"><svg class="arch-only" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"/></svg><span class="temp" id="navTemp">–<sup>°</sup></span><b>Climate</b></button>
   <button data-sheet="blinds"><svg viewBox="0 0 24 24"><path d="M3 4h18M3 9h18M3 14h18M3 19h18"/></svg><b id="coversNav">Blinds</b></button>
   <button data-sheet="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-2.9 1.2 2 2 0 11-4 0 1.7 1.7 0 00-2.9-1.2l-.1.1a2 2 0 11-2.8-2.8l.1-.1A1.7 1.7 0 004 15a2 2 0 110-4 1.7 1.7 0 001.2-2.9l-.1-.1a2 2 0 112.8-2.8l.1.1A1.7 1.7 0 0011 4a2 2 0 114 0 1.7 1.7 0 002.9 1.2l.1-.1a2 2 0 112.8 2.8l-.1.1A1.7 1.7 0 0020 11a2 2 0 110 4z"/></svg><b>Settings</b></button>
+  <button data-sheet="media"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><b>Music</b></button>
 </nav>
 
 <!-- device picker -->
@@ -1687,6 +1693,7 @@ const BASE = (/^https?:\/\//.test(HA_URL) ? HA_URL : "http://"+HA_URL).replace(/
 let target = 0;
 const speakerStates = new Map();
 let transferAvailable = false, transferBusy = false;
+let gestureDimLevels = null;
 const st = {lamp:0, bl:BL_DEF, vol:45, playing:false, title:"", artist:"", art:"",
             effect:"none", effects:[], fxEntity:"", temp:null, hum:null, playlist:"",
             setpoint:null, climateOn:false, spStep:0.5, spMin:7, spMax:35,
@@ -1832,7 +1839,7 @@ function applyState(s){
   if(SPEAKERS.some(sp=>sp[0]===id))speakerStates.set(id,s);
   const li = LIGHTS.findIndex(l=>l.entity_id===id);
   if(li >= 0){
-    LSTATE[li].level = s.state==="on" ? Math.round((s.attributes.brightness||0)/255*100) : 0;
+    if(!gestureDimLevels?.has(li))LSTATE[li].level = s.state==="on" ? Math.round((s.attributes.brightness||0)/255*100) : 0;
     /* A bulb Home Assistant cannot see says nothing about the room. Recorded
        so the preset check can leave it out rather than read it as 0%, which
        is indistinguishable from off and made one dead bulb enough to stop
@@ -2045,6 +2052,7 @@ function slider(el,get,set,onPaint){
   }
   paint(get());
   let dragging=false;
+  el.addEventListener('slider-cancel',()=>{dragging=false;el.classList.remove('live');paint(get());});
   /* A slider under a finger is not a readout. The level is only committed on
      release, so for as long as the finger is down the state this panel holds is
      still the old value -- and any update from Home Assistant, about any entity,
@@ -2459,9 +2467,10 @@ function paintProgress(){
 function paintTransport(){
   $('#archMiniArt .v').textContent=document.body.classList.contains('no-mini-art')?'Off':'On';
   const sh=$("#shuf"), rp=$("#rep");
-  if(sh) sh.classList.toggle("on", st.shuffle);
+  if(sh){sh.classList.toggle("on", st.shuffle);sh.setAttribute("aria-pressed",String(st.shuffle));}
   if(rp){
     rp.classList.toggle("on", st.repeat!=="off");
+    rp.setAttribute("aria-pressed",String(st.repeat!=="off"));
     rp.setAttribute("aria-label", "Repeat " + st.repeat);
     let badge=rp.querySelector(".mp-repeat-one");
     if(!badge){badge=document.createElement("span");badge.className="mp-repeat-one arch-only";badge.textContent="1";rp.appendChild(badge);}
@@ -2863,8 +2872,8 @@ function paintAll(){
     $("#cTemp").innerHTML   = st.temp.toFixed(1)+(theme==="architectural"?"<sup>°</sup>":"<sup>°C</sup>");
   }
   if(st.hum!=null && !isNaN(st.hum)) $("#cHum").innerHTML = Math.round(st.hum)+"<sup>%</sup>";
-  const show = st.playing || st.title;
-  /* strip stays put whether or not anything is playing — it just goes quiet */
+  const show = st.playing;
+  $("#roomMedia").hidden = !show;
   $("#roomMedia").classList.toggle("idle", !show);
   $("#roomMedia").classList.toggle("playing", !!st.playing);
   $("#rmTitle").textContent = st.title || (theme === "architectural" ? "Music" : "Nothing playing");
@@ -3147,7 +3156,7 @@ function recordDisplay(patch){
    this can be answered by looking rather than by assuming. */
 const GESTURE = (_disp.touch_gesture || "off");
 const GESTURE_POINTS = Math.max(2, Math.min(5, _disp.touch_points ?? 3));
-const GESTURE_HOLD = Math.max(100, Math.min(1500, _disp.touch_hold_ms ?? 250));
+const GESTURE_HOLD = Math.max(600, Math.min(1500, _disp.touch_hold_ms ?? 600));
 const REMEMBER = !!(_disp.remember_last_state ?? true);
 
 /* Library layout. Same override rule as the theme: the panel may switch it to
@@ -3226,25 +3235,84 @@ function gestureLights(){
 }
 
 (function watchTouches(){
-  let armed = false, hold = null, tooMany = false;
-  function cancel(){ clearTimeout(hold); hold = null; armed = false; tooMany = false; }
+  let armed=false, blocked=false, hold=null, ramp=null, dimming=false, started=0;
+  let nextDirection=-1, direction=-1, level=0, weights=[], origins=new Map(), suppressUntil=0;
+  let pendingLevels=null, sending=false;
+  function consume(e){if(e.cancelable)e.preventDefault();e.stopImmediatePropagation();suppressUntil=Date.now()+500;}
+  async function pump(){
+    if(sending || !pendingLevels)return;
+    const batch=pendingLevels;pendingLevels=null;
+    if(!live)return;
+    sending=true;
+    const results=await Promise.allSettled(batch.map(({l,pct})=>wsSend({type:'call_service',domain:'light',service:'turn_on',
+      service_data:{entity_id:l.entity_id,brightness_pct:pct}},3000)));
+    sending=false;
+    if(results.some(r=>r.status==='rejected')){pendingLevels=null;stop();blocked=true;gestureToast('Dimming interrupted — check connection');return;}
+    pump();
+  }
+  function stop(){
+    clearTimeout(hold);hold=null;clearInterval(ramp);ramp=null;
+    if(dimming){nextDirection=-direction;rememberLevels(weights);}
+    dimming=false;gestureDimLevels=null;armed=false;
+  }
+  function step(){
+    level=Math.max(1,Math.min(100,level+direction*4));
+    const batch=[];
+    for(const {l,i,weight} of weights){
+      if(!LSTATE[i].seen)continue;
+      const pct=Math.max(1,Math.round(level*weight));
+      if(LSTATE[i].level!==pct)batch.push({l,pct});
+      LSTATE[i].level=pct;gestureDimLevels.set(i,pct);
+    }
+    if(batch.length){pendingLevels=weights.filter(({i})=>LSTATE[i].seen).map(({l,i})=>({l,pct:LSTATE[i].level}));pump();}
+    paintAll();gestureToast((direction>0?'Brightening · ':'Dimming · ')+Math.round(level)+'%');bump();
+    if(level===1 || level===100){clearInterval(ramp);ramp=null;}
+  }
+  function startDim(){
+    dimming=true;
+    const members=LIGHTS.map((l,i)=>({l,i})).filter(({l,i})=>l.include_presets!==false && LSTATE[i].seen &&
+      l.entity_id.startsWith('light.') && (LSTATE[i].attrs?.modes||[]).some(m=>!['onoff','unknown'].includes(m)));
+    const active=members.filter(({i})=>LSTATE[i].level>0),isOff=!active.length;
+    weights=(isOff?members:active).map(({l,i})=>({l,i,weight:isOff?(REMEMBER&&lastOn[l.entity_id]>0?lastOn[l.entity_id]:(l.bright||100)):LSTATE[i].level}));
+    if(!weights.length){gestureToast('No dimmable scene lights');return;}
+    const peak=Math.max(...weights.map(x=>x.weight));weights.forEach(x=>x.weight/=peak);
+    level=isOff?1:peak;direction=isOff||level<=1?1:level>=100?-1:nextDirection;
+    gestureDimLevels=new Map(weights.map(({i})=>[i,LSTATE[i].level]));
+    /* One batch in flight, with only the newest desired level queued behind it.
+       A slow HA connection must not build up seconds of dimming after release. */
+    step();if(level>1 && level<100)ramp=setInterval(step,200);
+  }
   window.addEventListener("touchstart", e => {
     const n = e.touches.length;
     if(n > touchSeenMax) touchSeenMax = n;
     if(GESTURE === "off") return;
-    /* A cloth across the screen lands as a lot of points at once, and a wall
-       panel does get wiped. More than two above the target is a wipe, not a
-       hand, and it stays cancelled until every finger lifts. */
-    if(n > GESTURE_POINTS + 2) tooMany = true;
-    if(tooMany || armed || n < GESTURE_POINTS) return;
-    armed = true;
-    // Held briefly, so a stray two-then-three during a drag does not fire it.
-    hold = setTimeout(() => {
-      if(!tooMany) gestureLights();
-    }, GESTURE_HOLD);
-  }, {passive:true, capture:true});
-  window.addEventListener("touchend", e => { if(!e.touches.length) cancel(); }, {passive:true, capture:true});
-  window.addEventListener("touchcancel", cancel, {passive:true, capture:true});
+    if(n>GESTURE_POINTS){stop();blocked=true;}
+    if(blocked){consume(e);return;}
+    if(n!==GESTURE_POINTS)return;
+    consume(e);bump();
+    document.querySelectorAll('.slider').forEach(el=>el.dispatchEvent(new Event('slider-cancel')));
+    if(armed)return;
+    armed=true;started=Date.now();origins=new Map(Array.from(e.touches,t=>[t.identifier,[t.clientX,t.clientY]]));
+    hold=setTimeout(startDim,GESTURE_HOLD);
+  }, {passive:false,capture:true});
+  window.addEventListener('touchmove',e=>{
+    if(!armed&&!blocked)return;
+    consume(e);
+    if(armed&&!dimming&&Array.from(e.touches).some(t=>{const p=origins.get(t.identifier);return !p||Math.hypot(t.clientX-p[0],t.clientY-p[1])>36;})){stop();blocked=true;}
+  },{passive:false,capture:true});
+  window.addEventListener('touchend',e=>{
+    if(!armed&&!blocked)return;
+    consume(e);
+    if(armed && e.touches.length<GESTURE_POINTS){
+      const tap=!dimming&&Date.now()-started>=50;
+      stop();blocked=true;if(tap)gestureLights();
+    }
+    if(!e.touches.length)blocked=false;
+  },{passive:false,capture:true});
+  window.addEventListener('touchcancel',e=>{if(!armed&&!blocked)return;consume(e);stop();blocked=!!e.touches.length;},{passive:false,capture:true});
+  window.addEventListener('click',e=>{if(Date.now()<suppressUntil)consume(e);},true);
+  window.addEventListener('blur',()=>{stop();blocked=false;});
+  document.addEventListener('visibilitychange',()=>{if(document.hidden){stop();blocked=false;}});
 })();
 
 /* ---------- idle ---------- */

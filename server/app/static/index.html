@@ -408,6 +408,14 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
           </div>
 
           <div class="grp">
+            <h3>Queue transfer compatibility</h3>
+            <p class="hint">Speaker choices above are labelled before you add them. Choose the Music Assistant entity for queue transfer: the same physical speaker may also have a Sonos, Cast or other control-only entity. Both source and destination must support transfer.</p>
+            <div id="speakerCompatibility" aria-live="polite"></div>
+            <button class="btn" id="refreshSpeakerCompatibility" style="margin-top:12px">Refresh compatibility</button>
+            <p class="hint" id="speakerCompatibilityStatus" style="margin-top:12px">A compatible speaker can receive a queue even when idle. Offline availability is shown separately.</p>
+          </div>
+
+          <div class="grp">
             <h3>Library</h3>
             <div class="f2">
               <div><div class="lbl">BROWSE LAYOUT</div><select id="fBrowseView">
@@ -538,14 +546,13 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
             <div class="f2">
               <div><div class="lbl">GESTURE</div><select id="fGesture">
                 <option value="off">Off</option>
-                <option value="lights">Toggle the room's lights</option></select></div>
+                <option value="lights">Tap to toggle · hold to dim</option></select></div>
               <div><div class="lbl">FINGERS</div><select id="fPoints">
                 <option value="3">3</option><option value="4">4</option><option value="5">5</option>
               </select></div>
-              <div><div class="lbl">HOLD BEFORE IT FIRES (MS)</div>
-                <input type="number" id="fHold" min="100" max="1500" step="50">
-                <div class="muted" style="font-size:12px;margin-top:5px">Longer is harder
-                  to trigger by accident, shorter feels more immediate.</div></div>
+              <div><div class="lbl">HOLD TO START DIMMING (MS)</div>
+                <input type="number" id="fHold" min="600" max="1500" step="50">
+                <div class="muted" style="font-size:12px;margin-top:5px">Tap toggles on release. Hold dims; release stops. Each hold reverses direction. Dimming stops at 1% or 100%. From off, hold brightens gently. Active scene lights keep their relative levels.</div></div>
               <div><div class="lbl">RESTORE PREVIOUS LEVELS</div><select id="fRemember">
                 <option value="1">Yes — turn back on where they were</option>
                 <option value="0">No — turn back on at Bright</option></select></div>
@@ -844,11 +851,12 @@ async function loadEntities(){
 /* Entity names come from Home Assistant, so they are escaped like anything else
    a panel or a device can influence. Returns SafeHTML so it can sit inside
    another html`` without being escaped twice. */
+function transferLabel(e){return ({supported:'Queue transfer',unsupported:'Control only',unavailable:'Offline',unknown:'Transfer unverified'})[e?.queue_transfer]||'Transfer unverified';}
 function opts(list, val, blank="— none —"){
   const has = list.some(e=>e.entity_id===val);
   return html`<option value="">${blank}</option>${
     val && !has ? html`<option value="${val}" selected>${val} (missing)</option>` : ""}${
-    list.map(e => html`<option value="${e.entity_id}" ${e.entity_id===val?"selected":""}>${e.name} — ${e.entity_id}</option>`)}`;
+    list.map(e => html`<option value="${e.entity_id}" ${e.entity_id===val?"selected":""}>${e.name}${e.domain==='media_player'?' ['+transferLabel(e)+']':''} — ${e.entity_id}</option>`)}`;
 }
 /* Everything on this page that comes from the config, as opposed to from the
    panel record. Split out because loading a template refills exactly this and
@@ -862,6 +870,7 @@ function fillConfigForm(){
   $("#fClimate").innerHTML = opts(ENTITIES.climate||[], (CFG.sensors||{}).climate);
   $("#fSpeaker").innerHTML = opts(ENTITIES.media, (CFG.media||{}).default_speaker);
   $("#fSpeakerName").value = (CFG.media||{}).default_speaker_name || "";
+  renderSpeakerCompatibility();
   const d = CFG.display||{};
   const background=d.background||{};
   backgroundImage=/^[0-9a-f]{64}$/.test(background.image||'')?background.image:'';
@@ -884,7 +893,7 @@ function fillConfigForm(){
   $("#fMiniArt").value = (d.mini_art ?? true) ? "1" : "0";
   $("#fGesture").value = d.touch_gesture || "off";
   $("#fPoints").value = String(d.touch_points ?? 3);
-  $("#fHold").value = d.touch_hold_ms ?? 250;
+  $("#fHold").value = Math.max(600,d.touch_hold_ms ?? 600);
   $("#fRemember").value = (d.remember_last_state ?? true) ? "1" : "0";
   $("#fBrowseView").value = d.browse_view || "list";
   $("#fPresPin").value = d.presence_pin ?? 0;
@@ -1133,13 +1142,32 @@ function renderSpeakers(){
   }).join("");
   $("#speakerList").querySelectorAll("[data-sp]").forEach(el=>el.onchange=()=>{
     CFG.media.speakers[+el.dataset.sp] = {entity_id:el.value,
-      name:(CFG.media.speakers[+el.dataset.sp]||{}).name||""}; });
+      name:(CFG.media.speakers[+el.dataset.sp]||{}).name||""}; renderSpeakerCompatibility(); });
   $("#speakerList").querySelectorAll("[data-spn]").forEach(el=>el.onchange=()=>{
-    CFG.media.speakers[+el.dataset.spn].name = el.value; });
+    CFG.media.speakers[+el.dataset.spn].name = el.value; renderSpeakerCompatibility(); });
   $("#speakerList").querySelectorAll("[data-spd]").forEach(b=>b.onclick=()=>{
     CFG.media.speakers.splice(+b.dataset.spd,1); renderSpeakers(); });
   makeReorderable($("#speakerList"), ".sprow", CFG.media.speakers, renderSpeakers);
+  renderSpeakerCompatibility();
 }
+function renderSpeakerCompatibility(){
+  const media=CFG.media||{},selected=[{entity_id:$('#fSpeaker').value,name:'Default speaker'},...(media.speakers||[])];
+  const seen=new Set();
+  $('#speakerCompatibility').innerHTML=selected.filter(s=>{const id=typeof s==='string'?s:s.entity_id;if(!id||seen.has(id))return false;seen.add(id);return true;}).map(s=>{
+    const id=typeof s==='string'?s:s.entity_id,e=(ENTITIES.media||[]).find(e=>e.entity_id===id);
+    return html`<div style="padding:12px 0;border-bottom:1px solid var(--line)"><strong>${s.name||e?.name||id}</strong> · ${transferLabel(e)}<div class="muted" style="margin-top:4px;overflow-wrap:anywhere">${id}</div><div class="hint" style="margin-top:5px">${e?.queue_transfer_reason||'Entity missing or Home Assistant unavailable.'}</div></div>`;
+  }).join('') || '<p class="hint">Choose a default speaker or add a selectable speaker to see its compatibility.</p>';
+}
+$('#fSpeaker').addEventListener('change',renderSpeakerCompatibility);
+$('#refreshSpeakerCompatibility').onclick=async()=>{
+  const button=$('#refreshSpeakerCompatibility'),message=$('#speakerCompatibilityStatus');
+  button.disabled=true;message.textContent='Checking Home Assistant…';
+  try{
+    ENTITIES.media=await api('/entities?domain=media_player');
+    const value=$('#fSpeaker').value;$('#fSpeaker').innerHTML=opts(ENTITIES.media,value);renderSpeakers();
+    message.textContent='Compatibility refreshed. Home Assistant results may be cached for up to 30 seconds.';
+  }catch(e){message.textContent='Could not refresh: '+e.message;}finally{button.disabled=false;}
+};
 $("#addSpeaker").onclick=()=>{
   CFG.media = CFG.media||{speakers:[]}; (CFG.media.speakers=CFG.media.speakers||[]).push({entity_id:"",name:""});
   renderSpeakers(); };
@@ -1160,7 +1188,7 @@ function collect(){
                  hide_nav_on_sheets:$("#fHideNav").value === "1",
                  mini_art:$("#fMiniArt").value === "1",
                  touch_gesture:$("#fGesture").value, touch_points:+$("#fPoints").value,
-                 touch_hold_ms:+$("#fHold").value || 250,
+                 touch_hold_ms:Math.max(600,+$("#fHold").value || 600),
                  remember_last_state:$("#fRemember").value === "1",
                  browse_view:$("#fBrowseView").value,
                  presence_pin:+$("#fPresPin").value || 0,
