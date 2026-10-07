@@ -1,5 +1,20 @@
 # Architectural theme
 
+## Speaker transfer in 0.13.0
+
+The speaker picker separates selecting a speaker (tap its name) from moving
+playback (the arrow at its right). This works in all three themes. Transfer uses
+Home Assistant's `music_assistant.transfer_queue` with an explicit source and
+destination; playing queues continue playing, paused queues remain paused.
+After HA accepts the action the player opens the destination. While pending,
+repeat taps cannot submit another transfer. Errors stay in the speaker picker.
+
+Both speakers must be Music Assistant entities, with an active queue on the
+source. Offline, non-Music-Assistant and already-shared queues have disabled
+transfer controls; their normal selection remains available. Configure the
+Music Assistant version of a speaker in the server to enable its transfers.
+External inputs without an active Music Assistant queue cannot be transferred.
+
 ## Warmer Linen in 0.12.1
 
 Linen reduces green and blue relative to red in its text, surfaces, glass,
