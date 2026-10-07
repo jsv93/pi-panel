@@ -1,5 +1,13 @@
 # Architectural theme
 
+## Warmer Linen in 0.12.1
+
+Linen reduces green and blue relative to red in its text, surfaces, glass,
+scene tint and placeholder artwork. The generic room background uses a more
+strongly defocused image, embedded in the UI and shared with the server picker.
+The blur is baked into the asset; no live filter or display-wide colour filter
+is applied. Media artwork and colour-control values keep their original colours.
+
 ## Backgrounds and player in 0.12.0
 
 Linen uses a stronger cream text and brown surface palette so its warmth is
