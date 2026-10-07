@@ -25,10 +25,10 @@ const states=[
  const browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{})});
  let count=0;
  const check=(label)=>{count++;console.log('PASS '+label);};
- async function fixture(cfg){
+ async function fixture(cfg,options={}){
   const page=await browser.newPage({viewport:{width:720,height:1280}}), errors=[],requests=[];
   page.on('pageerror',e=>errors.push(e.message));
-  await page.addInitScript(({states})=>{
+  await page.addInitScript(({states,services})=>{
    window.testCalls=[];window.testStates=states;
    class FakeSocket{
     constructor(url){this.url=url;this.readyState=1;setTimeout(()=>{this.onopen?.();if(url.includes('/api/websocket')){window.testHA=this;this.emit({type:'auth_required'});}},0);}
@@ -36,14 +36,15 @@ const states=[
     send(raw){const m=JSON.parse(raw);if(!this.url.includes('/api/websocket'))return;
      if(m.type==='auth'){setTimeout(()=>this.emit({type:'auth_ok'}),0);return;}
      if(m.type==='call_service')window.testCalls.push(m);
-     const result=m.type==='get_states'?window.testStates:m.type==='media_player/browse_media'?{children:[{title:'Evening',media_class:'playlist',can_expand:true,media_content_id:'evening',media_content_type:'playlist'}]}:{};
+     if(m.service==='transfer_queue' && window.testHoldTransfer){window.testTransferResult=(error)=>this.emit({type:'result',id:m.id,success:!error,error:{message:error},result:{}});return;}
+     const result=m.type==='get_states'?window.testStates:m.type==='get_services'?services:m.type==='media_player/browse_media'?{children:[{title:'Evening',media_class:'playlist',can_expand:true,media_content_id:'evening',media_content_type:'playlist'}]}:{};
      setTimeout(()=>this.emit({type:'result',id:m.id,success:true,result}),0);
     }
     close(){this.readyState=3;}
    }
    window.WebSocket=FakeSocket;
-   window.testState=s=>window.testHA.emit({type:'event',event:{event_type:'state_changed',data:{new_state:s}}});
-  },{states});
+   window.testState=s=>{window.testStates=window.testStates.filter(x=>x.entity_id!==s.entity_id).concat(s);window.testHA.emit({type:'event',event:{event_type:'state_changed',data:{new_state:s}}});};
+  },{states:options.states||states,services:options.services??{music_assistant:{transfer_queue:{}}}});
   await page.route('**/*',async r=>{
    const u=new URL(r.request().url());
    if(r.request().method()==='POST')requests.push({path:u.pathname,body:r.request().postDataJSON()});
@@ -168,6 +169,78 @@ const states=[
  const missing=await fixture({...config,display:{...config.display,background:{mode:'image',image:'b'.repeat(64)}}});
  assert.equal(await missing.page.locator('body').evaluate(x=>x.style.getPropertyValue('--panel-background')),'var(--arch-room)');assert.deepEqual(missing.errors,[]);await missing.page.close();
  check('background choices and missing-image fallback do not break the panel');
+ const transferConfig={...config,media:{default_speaker:'media_player.room',speakers:[
+  {entity_id:'media_player.room',name:'Living room'},{entity_id:'media_player.kitchen',name:'Kitchen'},
+  {entity_id:'media_player.offline',name:'Offline'},{entity_id:'media_player.cast',name:'Cast speaker'},
+  {entity_id:'media_player.group_member',name:'Grouped room'}]}};
+ const musicState=(entity_id,state,queue)=>({entity_id,state,attributes:{mass_player_type:'player',active_queue:queue,media_title:state==='playing'?'Evening track':'',volume_level:.4}});
+ const transferStates=states.filter(s=>!s.entity_id.startsWith('media_player.')).concat([
+  musicState('media_player.room','playing','room-queue'),musicState('media_player.kitchen','idle','kitchen-queue'),
+  musicState('media_player.offline','unavailable','offline-queue'),{entity_id:'media_player.cast',state:'idle',attributes:{}},
+  musicState('media_player.group_member','playing','room-queue')]);
+ const openSpeakers=async page=>{await page.locator('#icoSpk').click();await page.waitForTimeout(260);};
+ for(const theme of ['architectural','ambient','default']){
+  const f=await fixture({...transferConfig,display:{...config.display,theme}},{states:transferStates}),s=f.page;
+  await s.locator('#roomMedia .meta').click();await s.waitForTimeout(260);await openSpeakers(s);
+  assert.equal(await s.locator('.spk-transfer').count(),5);
+  for(const i of [0,2,3,4])assert(await s.locator('.spk-transfer').nth(i).isDisabled());
+  assert(await s.locator('.spk-transfer').nth(1).isEnabled());
+  assert.match(await s.locator('.dev').nth(3).textContent(),/Control only/);
+  await s.locator('.spk-select').nth(1).click();await s.waitForTimeout(80);
+  assert.equal(await s.locator('#spkNow').textContent(),'Kitchen');assert.equal(await s.evaluate(()=>window.testCalls.length),0);
+  await openSpeakers(s);await s.locator('.spk-select').first().click();await openSpeakers(s);
+  await s.evaluate(()=>window.testHoldTransfer=true);
+  await s.locator('.spk-transfer').nth(1).click();
+  assert.match(await s.locator('#spkStatus').textContent(),/Transferring to Kitchen/);
+  assert.equal(await s.locator('#spkNow').textContent(),'Living room');
+  assert(await s.locator('.spk-select').nth(1).isDisabled());assert(await s.locator('.spk-transfer').nth(1).isDisabled());
+  await s.locator('.spk-transfer').nth(1).dispatchEvent('click');
+  const calls=await s.evaluate(()=>window.testCalls);assert.equal(calls.length,1);
+  assert.equal(calls[0].domain,'music_assistant');assert.equal(calls[0].service,'transfer_queue');
+  assert.deepEqual(calls[0].target,{entity_id:'media_player.kitchen'});
+  assert.deepEqual(calls[0].service_data,{source_player:'media_player.room',auto_play:true});
+  await s.evaluate(newState=>{window.testState(newState);window.testTransferResult();},musicState('media_player.kitchen','playing','kitchen-queue'));
+  await s.waitForFunction(()=>document.querySelector('#spkNow').textContent==='Kitchen');
+  assert.equal(await s.locator('#ovSpk').evaluate(el=>el.classList.contains('on')),false);
+  assert.equal(await s.locator('#mTitle').textContent(),'Evening track');
+  assert.deepEqual(f.errors,[]);await s.close();
+ }
+ check('speaker row selection and independent native queue transfer across all themes');
+ const tf=await fixture(transferConfig,{states:transferStates}),s=tf.page;
+ await s.locator('#roomMedia .meta').click();await s.waitForTimeout(260);await openSpeakers(s);
+ await s.evaluate(()=>window.testHoldTransfer=true);await s.locator('.spk-transfer').nth(1).click();
+ await s.evaluate(()=>window.testTransferResult('Destination refused transfer'));
+ await s.waitForFunction(()=>document.querySelector('#spkStatus').textContent.includes('not confirmed'));
+ assert(await s.locator('#ovSpk').isVisible());assert.equal(await s.locator('#spkNow').textContent(),'Living room');
+ assert(await s.locator('.spk-transfer').nth(1).isEnabled());
+ await s.evaluate(newState=>window.testState(newState),musicState('media_player.room','paused','room-queue'));
+ await s.locator('.spk-transfer').nth(1).click();
+ assert.equal((await s.evaluate(()=>window.testCalls.at(-1))).service_data.auto_play,false);
+ await s.evaluate(()=>window.testTransferResult('Cancelled in test'));await s.waitForTimeout(50);
+ for(const newState of [musicState('media_player.room','idle','room-queue'),musicState('media_player.room','playing',null)]){
+  await s.evaluate(newState=>window.testState(newState),newState);assert(await s.locator('.spk-transfer').nth(1).isDisabled());
+ }
+ await s.evaluate(newState=>window.testState(newState),musicState('media_player.room','playing','room-queue'));
+ await s.clock.install();await s.locator('.spk-transfer').nth(1).click();await s.clock.runFor(30100);
+ assert.match(await s.locator('#spkStatus').textContent(),/not confirmed.*did not respond/);
+ assert.equal(await s.locator('#spkNow').textContent(),'Living room');
+ await s.evaluate(()=>window.testTransferResult());assert.equal(await s.locator('#spkNow').textContent(),'Living room','late ACK must not change the selected speaker');
+ await s.locator('.spk-transfer').nth(1).click();await s.evaluate(()=>window.testHA.onclose());
+ await s.waitForTimeout(50);assert.match(await s.locator('#spkStatus').textContent(),/not confirmed.*disconnected/);
+ assert(await s.locator('.spk-transfer').nth(1).isDisabled());assert.deepEqual(tf.errors,[]);await s.close();
+ check('transfer failures, paused queues, empty sources, timeouts and disconnects');
+ const noTransfer=await fixture(transferConfig,{states:transferStates,services:{}});
+ await noTransfer.page.locator('#roomMedia .meta').click();await noTransfer.page.waitForTimeout(260);await openSpeakers(noTransfer.page);
+ assert(await noTransfer.page.locator('.spk-transfer').nth(1).isDisabled());assert(await noTransfer.page.locator('.spk-select').nth(1).isEnabled());await noTransfer.page.close();
+ const touch=await fixture(transferConfig,{states:transferStates});await touch.page.locator('#roomMedia .meta').click();await touch.page.waitForTimeout(260);await openSpeakers(touch.page);
+ for(const [width,height] of [[720,1280],[480,800],[360,640]]){
+  await touch.page.setViewportSize({width,height});await touch.page.waitForTimeout(100);
+  const name=await touch.page.locator('.spk-select').nth(1).boundingBox(),button=await touch.page.locator('.spk-transfer').nth(1).boundingBox();
+  assert(button.width>=43.9 && button.height>=43.9,'44px transfer touch target at minimum scale');
+  assert(button.x>=name.x+name.width+7.9,'separate touch targets');assert(button.x+button.width<=width);
+ }
+ if(process.env.SCREENSHOTS_DIR){fs.mkdirSync(process.env.SCREENSHOTS_DIR,{recursive:true});await touch.page.setViewportSize({width:720,height:1280});await touch.page.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,'speaker-transfer.png')});}
+ assert.deepEqual(touch.errors,[]);await touch.page.close();check('transfer capability gating and touch layout');
  const player=await fixture(config),q=player.page;
  await q.locator('#roomMedia .meta').click();await q.waitForTimeout(250);
  for(const [width,height] of [[720,1280],[480,800],[360,640]]){

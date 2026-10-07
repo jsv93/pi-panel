@@ -248,6 +248,16 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
 .dev.sel{color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent-line)}
 .dev svg{width:30px;height:30px;stroke:currentColor;fill:none;stroke-width:1.6;flex:none}
 .dev .sub{font-size:18px;color:var(--ink-ghost);margin-top:4px}
+.dev .spk-select{display:flex;align-items:center;gap:20px;flex:1;min-width:0;min-height:96px;text-align:left}
+.dev button{border:0;background:none;color:inherit;font:inherit;padding:0;cursor:pointer}
+.spk-label{min-width:0;overflow-wrap:anywhere}
+.spk-label>span{display:block}
+.dev .spk-transfer{display:flex;align-items:center;justify-content:center;width:88px;min-height:88px;flex:none;border-left:1px solid var(--line-soft)}
+.dev .spk-transfer svg{width:34px;height:34px}
+.dev button:disabled{opacity:.32;cursor:default}
+.dev button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+#spkStatus:empty{display:none}
+#spkStatus{overflow-wrap:anywhere}
 .qrow{display:flex;align-items:center;gap:18px;padding:16px 20px;border-radius:18px;margin-bottom:10px;
   background:rgba(30,30,40,.8);font-size:22px;color:var(--ink-dim)}
 .qrow.now{color:var(--accent)}
@@ -1300,7 +1310,8 @@ SOFTWARE.
   <div class="ov-card">
     <div class="grip"></div>
     <h2>Connect to a device</h2>
-    <p class="note" id="spkNow">Lounge TV</p>
+    <p class="note" id="spkNow"></p>
+    <p class="note" id="spkStatus" role="status" aria-live="polite"></p>
     <div id="spkList"></div>
   </div>
 </div>
@@ -1674,6 +1685,8 @@ const GLASS_TIERS = [
 const live = !!HA_TOKEN.trim();
 const BASE = (/^https?:\/\//.test(HA_URL) ? HA_URL : "http://"+HA_URL).replace(/\/+$/,"");
 let target = 0;
+const speakerStates = new Map();
+let transferAvailable = false, transferBusy = false;
 const st = {lamp:0, bl:BL_DEF, vol:45, playing:false, title:"", artist:"", art:"",
             effect:"none", effects:[], fxEntity:"", temp:null, hum:null, playlist:"",
             setpoint:null, climateOn:false, spStep:0.5, spMin:7, spMax:35,
@@ -1701,10 +1714,14 @@ function status(txt, cls){
    ============================================================ */
 let ws, wsId=1, wsReady=false;
 const pending = new Map();
-function wsSend(msg){
+function wsSend(msg, timeoutMs){
   return new Promise((res,rej)=>{
     if(!wsReady) return rej(new Error("not connected"));
-    const id = wsId++; pending.set(id,{res,rej});
+    const id = wsId++;
+    const timer = timeoutMs ? setTimeout(()=>{
+      pending.delete(id); rej(new Error("Home Assistant did not respond in time"));
+    },timeoutMs) : null;
+    pending.set(id,{res,rej,timer});
     ws.send(JSON.stringify(Object.assign({id}, msg)));
   });
 }
@@ -1765,20 +1782,30 @@ function connect(){
       wsSend({type:"get_states"})
         .then(r=>{ (r||[]).forEach(applyState); paintAll(); })
         .catch(e=>status("state load failed: "+(e.message||e),"bad"));
-      wsSend({type:"subscribe_events", event_type:"state_changed"});
+      wsSend({type:"subscribe_events", event_type:"state_changed"})
+        .catch(e=>status("state updates unavailable: "+(e.message||e),"bad"));
+      wsSend({type:"get_services"},10000).then(r=>{
+        transferAvailable=!!r?.music_assistant?.transfer_queue; paintSpeakers();
+      }).catch(()=>{transferAvailable=false;paintSpeakers();});
       return;
     }
     if(m.type==="auth_invalid"){ status("token rejected","bad"); return; }
     if(m.type==="result" && pending.has(m.id)){
-      const p = pending.get(m.id); pending.delete(m.id);
+      const p = pending.get(m.id); pending.delete(m.id); clearTimeout(p.timer);
       if(m.success) p.res(m.result); else p.rej(m.error);
       return;
     }
     if(m.type==="event" && m.event && m.event.event_type==="state_changed"){
-      applyState(m.event.data.new_state); paintAll();
+      const data=m.event.data;
+      if(!data.new_state)speakerStates.delete(data.entity_id);
+      applyState(data.new_state); paintAll();
     }
   };
-  ws.onclose = ()=>{ wsReady=false; reportHA(false); status("disconnected — retrying","bad"); setTimeout(connect,3000); };
+  ws.onclose = ()=>{
+    wsReady=false; transferAvailable=false; speakerStates.clear();
+    for(const p of pending.values()){clearTimeout(p.timer);p.rej(new Error("Home Assistant disconnected"));}
+    pending.clear();paintSpeakers();reportHA(false);status("disconnected — retrying","bad");setTimeout(connect,3000);
+  };
   ws.onerror = ()=>{ status("cannot reach "+BASE,"bad"); ws.close(); };
 }
 function call(domain,service,data){
@@ -1802,6 +1829,7 @@ async function sign(path){
 function applyState(s){
   if(!s) return;
   const id = s.entity_id;
+  if(SPEAKERS.some(sp=>sp[0]===id))speakerStates.set(id,s);
   const li = LIGHTS.findIndex(l=>l.entity_id===id);
   if(li >= 0){
     LSTATE[li].level = s.state==="on" ? Math.round((s.attributes.brightness||0)/255*100) : 0;
@@ -1876,7 +1904,10 @@ function applyState(s){
     st.shuffle = !!s.attributes.shuffle;
     st.repeat  = s.attributes.repeat || "off";
     st.canSeek = ((s.attributes.supported_features||0) & 16) !== 0;   /* SEEK */
-    sign(s.attributes.entity_picture).then(u=>{ st.art=u; paintArt(); });
+    const picture=s.attributes.entity_picture;
+    sign(picture).then(u=>{
+      if(SPEAKERS[target]?.[0]===id && speakerStates.get(id)?.attributes.entity_picture===picture){st.art=u;paintArt();}
+    });
   }
 }
 
@@ -1938,6 +1969,7 @@ document.querySelectorAll("[data-sheet]").forEach(b=>b.addEventListener("click",
 document.querySelectorAll("[data-close]").forEach(b=>b.addEventListener("click",()=>openSheet==="choices"&&theme!=="architectural"?showSheet("settings"):theme==="architectural"?archBack():closeSheet()));
 $("#roomMedia").addEventListener("click", e=>{ if(!e.target.closest(".slider")) showSheet("media"); });
 function ovOpen(id){
+  if(id==="#ovSpk"){$("#spkStatus").textContent="";paintSpeakers();}
   if(theme==="architectural"){
     document.body.classList.add('arch-overlay-open');
     const previous=archOverlays.at(-1);if(previous&&previous!==id)$(previous).classList.remove('on');
@@ -2292,24 +2324,71 @@ function paintLightSheet(){
 }
 
 /* ---------- speakers ---------- */
+function speakerTransferReason(i){
+  if(transferBusy)return "Transfer in progress";
+  if(i===target)return "Current speaker";
+  if(!live || !wsReady)return "Home Assistant disconnected";
+  const source=speakerStates.get(SPEAKERS[target]?.[0]),dest=speakerStates.get(SPEAKERS[i]?.[0]);
+  if(!dest || ["unavailable","unknown"].includes(dest.state))return "Speaker unavailable";
+  if(!transferAvailable)return "Queue transfer unavailable";
+  if(!source || !["playing","paused"].includes(source.state))return "Nothing playing to transfer";
+  if(!source.attributes.mass_player_type || !source.attributes.active_queue)return "Play from a Music Assistant queue to transfer";
+  if(!dest.attributes.mass_player_type)return "Music Assistant speaker required";
+  if(source.attributes.active_queue===dest.attributes.active_queue)return "Already using this queue";
+  return "";
+}
+function paintSpeakers(){
+  $("#spkNow").textContent=SPEAKERS[target]?.[1] || "No speakers configured";
+  $("#spkList").setAttribute("aria-busy",String(transferBusy));
+  $("#spkList").querySelectorAll(".dev").forEach((row,i)=>{
+    row.classList.toggle("sel",i===target);
+    const select=row.querySelector(".spk-select"),button=row.querySelector(".spk-transfer");
+    select.disabled=transferBusy;select.setAttribute("aria-pressed",String(i===target));
+    const reason=speakerTransferReason(i);
+    button.disabled=!!reason;button.title=reason || "Transfer playback here";
+    button.setAttribute("aria-label","Transfer playback to "+SPEAKERS[i][1]+(reason?"; "+reason:""));
+    const state=speakerStates.get(SPEAKERS[i][0]);
+    row.querySelector(".sub").textContent=i===target?"Current speaker":
+      !state || ["unavailable","unknown"].includes(state.state)?"Unavailable":
+      !state.attributes.mass_player_type?"Control only · transfer unavailable":"";
+  });
+}
+function selectSpeaker(i){
+  target=i;browseStack.length=0;
+  Object.assign(st,{title:"",artist:"",art:"",playing:false,pos:0,dur:0,reportedPos:-1,shuffle:false,repeat:"off",canSeek:false});
+  applyState(speakerStates.get(SPEAKERS[i][0]));paintAll();ovClose();
+  if(live)wsSend({type:"get_states"}).then(r=>{(r||[]).forEach(applyState);paintAll();})
+    .catch(e=>status("state load failed: "+(e.message||e),"bad"));
+  bump();
+}
+async function transferSpeaker(i){
+  const reason=speakerTransferReason(i);
+  if(reason){if(!transferBusy)$("#spkStatus").textContent=reason;return;}
+  /* Snapshot before any await. Selecting another room must never turn it into
+     the source, and a transfer is one native queue operation, not play + stop. */
+  const source=SPEAKERS[target][0],destination=SPEAKERS[i][0];
+  const autoPlay=speakerStates.get(source).state==="playing";
+  transferBusy=true;paintSpeakers();bump();
+  $("#spkStatus").textContent="Transferring to "+SPEAKERS[i][1]+"…";
+  try{
+    await wsSend({type:"call_service",domain:"music_assistant",service:"transfer_queue",
+      target:{entity_id:destination},service_data:{source_player:source,auto_play:autoPlay}},30000);
+    $("#spkStatus").textContent="Playback transferred to "+SPEAKERS[i][1];
+    selectSpeaker(i);
+  }catch(e){
+    $("#spkStatus").textContent="Transfer not confirmed. Check the speakers before retrying. "+(e.message||"Please try again.");
+  }finally{transferBusy=false;paintSpeakers();}
+}
 SPEAKERS.forEach(function(sp,i){
   const d=document.createElement("div");
-  d.className="dev press"+(i===target?" sel":"");
-  d.innerHTML='<svg viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2"/><circle cx="12" cy="15" r="3.2"/></svg><span></span>';
-  d.querySelector("span").textContent=sp[1];
-  d.addEventListener("click",()=>{
-    target=i; browseStack.length=0;
-    document.querySelectorAll(".dev").forEach((x,j)=>x.classList.toggle("sel",j===i));
-    $("#spkNow").textContent=sp[1];
-    ovClose();
-    st.title=""; st.artist=""; st.art=""; st.playing=false;
-    if(live) wsSend({type:"get_states"})
-      .then(r=>{ (r||[]).forEach(applyState); paintAll(); })
-      .catch(e=>status("state load failed: "+(e.message||e),"bad"));
-    bump();
-  });
+  d.className="dev";
+  d.innerHTML='<button type="button" class="spk-select press"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2"/><circle cx="12" cy="15" r="3.2"/></svg><span class="spk-label"><span class="spk-name"></span><span class="sub"></span></span></button><button type="button" class="spk-transfer press"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 12h13m-5-5 5 5-5 5M21 5v14" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
+  d.querySelector(".spk-name").textContent=sp[1];
+  d.querySelector(".spk-select").addEventListener("click",()=>{if(!transferBusy)selectSpeaker(i);});
+  d.querySelector(".spk-transfer").addEventListener("click",()=>transferSpeaker(i));
   $("#spkList").appendChild(d);
 });
+paintSpeakers();
 
 /* ---------- transport ---------- */
 function cmd(s){ if(!SPEAKERS[target]) return; if(live) call("media_player",s,{entity_id:SPEAKERS[target][0]}); bump(); }
@@ -2770,6 +2849,7 @@ function paintPresets(){
     "\nconfig v" + (CFG._version ?? "?") + " · " + detail.join(" · ");
 }
 function paintAll(){
+  if($("#ovSpk").classList.contains("on"))paintSpeakers();
   paintPresetsSoon();
   LIGHTS.forEach((l,i)=>{
     if(lampSliders[i]) lampSliders[i].paint(LSTATE[i].level);
