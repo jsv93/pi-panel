@@ -908,6 +908,11 @@ async function loadTemplateList(sel){
   $("#fTemplate").innerHTML = html`${tpls.map(t=>
     html`<option value="${t.name}" ${t.name===sel?"selected":""}>${t.name}</option>`)}`;
 }
+function ramUsage(m){
+  const used=m.ram_used_mb,total=m.ram_total_mb,pct=m.ram_used_pct;
+  if(![used,total,pct].every(Number.isFinite)||total<=0||used<0||used>total||pct<0||pct>100)return '—';
+  return pct.toFixed(1)+'% · '+used.toLocaleString()+' / '+total.toLocaleString()+' MiB';
+}
 async function openPanel(id){
   CUR = await api("/panels/"+id);
   CFG = JSON.parse(JSON.stringify(CUR.config));
@@ -925,7 +930,8 @@ async function openPanel(id){
 
   const m = CUR.panel.metrics||{};
   $("#diagStrip").innerHTML = [
-    ["CPU", m.cpu_temp?m.cpu_temp+"°C":"—"], ["Disk free", m.disk_free||"—"],
+    ["CPU", m.cpu_temp?m.cpu_temp+"°C":"—"],
+    ["RAM", ramUsage(m)], ["Disk free", m.disk_free||"—"],
     /* Raw value over the device's own maximum, not a percentage: two panels at
        "100%" are two different numbers, which is the whole question when one
        screen looks dimmer than the other. */

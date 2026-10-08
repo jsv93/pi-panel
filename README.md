@@ -46,6 +46,11 @@ Full notes, including what it asks for and why: [docs/INTEGRATION.md](docs/INTEG
 Runs as a Home Assistant add-on, behind ingress. It provisions panels over SSH
 while they are being installed, then only ever pushes configuration to them.
 
+The panel diagnostics show system RAM usage as a percentage and used / total
+MiB, updated on the agent's 30-second heartbeat. Used RAM is
+`MemTotal - MemAvailable` from `/proc/meminfo`, so reclaimable cache is not
+mistaken for memory pressure. Missing readings from older agents display `—`.
+
 Set a real `admin_password` before putting it on a network — `host_network` means
 it answers on port 8099 directly, bypassing Home Assistant's own authentication.
 The GUI warns while the shipped default is still in place.
