@@ -437,11 +437,36 @@ def disk_writes():
     return out
 
 
+MEMINFO = Path("/proc/meminfo")
+
+
+def memory_usage():
+    """System RAM, counting reclaimable memory as available rather than used."""
+    try:
+        values = {}
+        for line in MEMINFO.read_text().splitlines():
+            fields = line.split()
+            if len(fields) == 3 and fields[0] in ("MemTotal:", "MemAvailable:") and fields[2] == "kB":
+                values[fields[0][:-1]] = int(fields[1])
+        total, available = values["MemTotal"], values["MemAvailable"]
+        if total <= 0 or not 0 <= available <= total:
+            return {}
+        # MemFree alone treats useful filesystem cache as exhausted RAM.
+        # MemAvailable is the kernel's estimate of headroom without swapping.
+        used = total - available
+        return {"ram_used_mb": round(used / 1024),
+                "ram_total_mb": round(total / 1024),
+                "ram_used_pct": round(used / total * 100, 1)}
+    except (OSError, ValueError, KeyError):
+        return {}  # Missing metrics must never prevent a heartbeat.
+
+
 def metrics():
     m = {"ui_version": AGENT_VER}
     m.update(kiosk_gpu())
     m.update(backlight_state())
     m.update(disk_writes())
+    m.update(memory_usage())
     m["presence"] = PRESENCE_STATE
     # Same reasoning as presence: a gateway that is not answering should say
     # so where it can be read, not only in the journal.

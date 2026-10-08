@@ -1,5 +1,14 @@
 # Tests
 
+## RAM diagnostics
+
+    python tests/test_ram_metrics.py
+
+Needs the server requirements and httpx. Reads temporary `/proc/meminfo`
+fixtures through the actual agent, checks available-memory calculations and
+missing/invalid readings, then verifies that a real server heartbeat preserves
+the numeric RAM metrics for the admin UI.
+
 ## Architectural theme
 
     python tests/test_theme_display.py
@@ -18,7 +27,8 @@ with deterministic HA entities. Set `PANEL_DB` to a scratch database and
 `ADMIN_PASSWORD=local-qa-only`, start
 `python -m uvicorn serve_media_under_ingress:outer --app-dir tests --port 8877`,
 then run `node tests/test_media_admin.cjs`. It verifies compatibility labels,
-selection, refresh without losing edits, and saved settings.
+selection, refresh without losing edits, saved settings, and RAM diagnostics
+including zero usage and missing readings from older agents.
 
     stub_dali_gateway.py   a Lunatone DALI-2 IoT gateway, to the shapes in
                            Lunatone's API documentation M0023
