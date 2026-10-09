@@ -55,7 +55,7 @@ possible effect was to make things worse.
 The enforcement behind it is still in place and still tested — writes from here
 are refused with a 409 — so the mode can return the day there is something in
 Home Assistant worth owning config with. The obvious candidate is display
-settings driven by automations: brightness by time of day, glass tier, the
+settings driven by automations: brightness by time of day, the
 diagnostics overlay. Those are things the server's GUI genuinely cannot do,
 because it has no automation engine, and they would justify the switch. Fleet
 monitoring on its own does not.

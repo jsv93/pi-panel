@@ -31,7 +31,7 @@ const states=[
   await page.addInitScript(({states,services})=>{
    window.testCalls=[];window.testStates=states;
    class FakeSocket{
-    constructor(url){this.url=url;this.readyState=1;setTimeout(()=>{this.onopen?.();if(url.includes('/api/websocket')){window.testHA=this;this.emit({type:'auth_required'});}},0);}
+    constructor(url){this.url=url;this.readyState=1;setTimeout(()=>{this.onopen?.();if(url.includes('/api/websocket')){window.testHA=this;this.emit({type:'auth_required'});}else window.testAgent=this;},0);}
     emit(d){this.onmessage?.({data:JSON.stringify(d)});}
     send(raw){const m=JSON.parse(raw);if(!this.url.includes('/api/websocket'))return;
      if(m.type==='auth'){setTimeout(()=>this.emit({type:'auth_ok'}),0);return;}
@@ -117,10 +117,71 @@ const states=[
  await e.locator('#ovLight [data-ov-back]').click();await eback();assert(await e.locator('#s-lights').isVisible());await eback();
  await e.locator('.nav [data-sheet=media]').click();await e.waitForTimeout(220);await e.locator('#shuf').click();assert.equal((await e.evaluate(()=>window.testCalls.at(-1))).service,'shuffle_set');await e.locator('#s-media [data-sheet=playback]').click();await e.waitForTimeout(220);assert.equal(await e.locator('#archShuffle,#archRepeat').count(),0);await e.locator('#archMiniArt').click();assert.equal(await e.locator('#archMiniArt .v').textContent(),'On');await eback();assert(await e.locator('#s-media').isVisible());await eback();
  await e.emulateMedia({reducedMotion:'reduce'});await e.locator('.nav [data-sheet=scenes]').click();assert.equal(await e.locator('#s-scenes').evaluate(x=>getComputedStyle(x).animationName),'none');await eback();
- await e.locator('#archMenu').click();await e.waitForTimeout(220);await e.locator('#archRoomLinks [data-sheet=settings]').click();await e.waitForTimeout(220);await e.locator('#s-settings [data-sheet=display]').click();await e.waitForTimeout(220);await e.locator('#glassRow').click();await e.waitForTimeout(220);
- assert.deepEqual(await e.locator('#archChoices .t').allTextContents(),['Full','No sheet','Tiles only','Off']);await eback();await eback();await e.locator('#s-settings [data-sheet=diagnostics]').click();await e.waitForTimeout(220);await e.locator('#diagRow').click();assert(await e.locator('#scrollTestRow').isVisible());
+ await e.locator('#archMenu').click();await e.waitForTimeout(220);await e.locator('#archRoomLinks [data-sheet=settings]').click();await e.waitForTimeout(220);await e.locator('#s-settings [data-sheet=display]').click();await e.waitForTimeout(220);assert.equal(await e.locator('#glassRow,#stGlass').count(),0);await eback();await e.locator('#s-settings [data-sheet=diagnostics]').click();await e.waitForTimeout(220);await e.locator('#diagRow').click();assert(await e.locator('#scrollTestRow').isVisible());
  assert.deepEqual(edit.errors,[]);await e.close();check('preview navigation, scene capture and failure, membership, drag protection, colour, effects and diagnostics');
- for(const theme of ['default','ambient']){const f=await fixture({...config,display:{...config.display,theme,palette:theme==='ambient'?'ember':'midnight'}});assert.equal(await f.page.locator('.nav button:visible').count(),5);assert.equal(await f.page.locator('.nav [data-sheet=scenes]').isVisible(),false);assert.equal(await f.page.locator('#homeReadings .setpoint').count(),1);assert.deepEqual(f.errors,[]);await f.page.close();check(theme+' navigation and thermostat retained');}
+ for(const theme of ['default','ambient']){const f=await fixture({...config,display:{...config.display,theme,palette:theme==='ambient'?'ember':'midnight'}});assert.equal(await f.page.locator('.nav button:visible').count(),5);assert.equal(await f.page.locator('.nav [data-sheet=scenes]').isVisible(),true);assert.equal(await f.page.locator('.nav [data-sheet=settings]').count(),0);assert(await f.page.locator('#archMenu').isVisible());assert.equal(await f.page.locator('#homeReadings .setpoint').count(),1);assert.deepEqual(f.errors,[]);await f.page.close();check(theme+' navigation and thermostat retained');}
+
+ for(const theme of ['default','ambient','architectural']){
+  const f=await fixture({...config,display:{...config.display,theme,touch_gesture:'lights',touch_points:3,glass_tier:0}}),q=f.page;
+  const session=await q.context().newCDPSession(q);
+  const swipe=async(dx,dy=0,options={})=>{
+   const x=options.x??350,y=options.y??600;
+   await session.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
+   for(let i=1;i<=5;i++)await session.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x+dx*i/5,y:y+dy*i/5}]});
+   await session.send('Input.dispatchTouchEvent',{type:options.cancel?'touchCancel':'touchEnd',touchPoints:[]});
+   await q.waitForTimeout(240);
+  };
+  const current=()=>q.evaluate(()=>document.querySelector('.sheet.on')?.id||'home');
+  const home=async()=>{for(let n=0;await current()!=='home'&&n<6;n++){await q.locator('.sheet.on [data-close]').click();await q.waitForTimeout(260);}assert.equal(await current(),'home');};
+  const ordered=['s-scenes','s-lights','s-climate','s-blinds','s-media'];
+  for(const name of ordered){await swipe(-170);assert.equal(await current(),name,theme+' forward swipe');}
+  await swipe(-170);assert.equal(await current(),'s-media','last screen does not wrap');
+  for(const name of ['s-blinds','s-climate','s-lights','s-scenes','home']){await swipe(170);assert.equal(await current(),name,theme+' reverse swipe');}
+  await swipe(170);assert.equal(await current(),'home','home boundary');
+  await swipe(-25);assert.equal(await current(),'home','short drag');
+  await swipe(-30,-170);assert.equal(await current(),'home','vertical gesture');
+  await swipe(-170,0,{cancel:true});assert.equal(await current(),'home','cancelled gesture');
+  await q.locator('.nav [data-sheet=lights]').click();await q.waitForTimeout(260);
+  if(theme!=='architectural'){
+   const box=await q.locator('#ls0').boundingBox();
+   await swipe(160,0,{x:box.x+60,y:box.y+box.height/2});
+   assert.equal(await current(),'s-lights','brightness drag must stay on Lights');
+   assert((await q.evaluate(()=>window.testCalls)).some(x=>x.service_data?.entity_id==='light.downlights'));
+  }
+  await q.locator('.sheet.on [data-close]').click();await q.waitForTimeout(260);
+  const callsBefore=await q.evaluate(()=>window.testCalls.length);
+  // A swipe beginning on a scene control must not become a scene tap.
+  if(theme!=='architectural'){
+   const box=await q.locator('#room [data-preset=bright]').boundingBox();
+   await swipe(-160,0,{x:box.x+box.width*.7,y:box.y+box.height*.5});
+   assert.equal(await current(),'s-scenes');assert.equal(await q.evaluate(()=>window.testCalls.length),callsBefore);
+   await q.locator('#s-scenes [data-close]').click();await q.waitForTimeout(260);
+  }
+  await q.locator('#archMenu').click();await q.waitForTimeout(260);
+  if(theme==='architectural'){await q.locator('#archRoomLinks [data-sheet=settings]').click();await q.locator('#archSettingsLinks [data-sheet=display]').click();}
+  else assert.equal(await current(),'s-settings');
+  await q.locator('#paletteRow').click();await q.waitForTimeout(260);
+  assert.equal(await q.locator('#s-choices .down').evaluate(el=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)');
+  assert.equal(await q.locator('#s-choices .down').evaluate(el=>getComputedStyle(el).borderTopWidth),'0px');
+  for(const name of ['Midnight','Ember','Slate','Heath','Mono','Linen']){
+   await q.locator('#archChoices button').filter({hasText:name}).click();
+   const paint=await q.locator('#s-scenes .preset').first().evaluate(el=>({bg:getComputedStyle(el).backgroundColor,image:getComputedStyle(el).backgroundImage,blur:getComputedStyle(el).backdropFilter}));
+   assert.match(paint.bg,/, 0\.48\)$/);assert.match(paint.image,/linear-gradient/);assert.equal(paint.blur,'none');
+  }
+  assert.equal(await q.locator('#glassRow,#glassV,#stGlass').count(),0);
+  await swipe(-170);assert.equal(await current(),'s-choices','submenus keep their back navigation');
+  await q.locator('#s-choices [data-close]').click();await q.waitForTimeout(260);
+  assert.equal(await current(),theme==='architectural'?'s-display':'s-settings');
+  await home();
+  // A sleep-screen swipe only wakes the panel, then a fresh swipe navigates.
+  await q.evaluate(()=>window.testAgent.emit({type:'sleep'}));await swipe(-170);assert.equal(await current(),'home');await q.waitForTimeout(480);
+  await swipe(-170);assert.equal(await current(),'s-scenes');
+  await q.locator('#s-scenes [data-sheet=scene-edit]').click();await q.waitForTimeout(260);
+  assert(await q.locator('#s-scene-edit #saveSoftRow').isVisible());
+  await q.locator('#s-scene-edit [data-close]').click();await q.waitForTimeout(260);assert.equal(await current(),'s-scenes');
+  if(process.env.SCREENSHOTS_DIR){await home();await q.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,theme+'-translucent-home.png')});}
+  assert.deepEqual(f.errors,[]);await q.close();check(theme+' real-touch swipe order, boundaries, controls, back buttons and all palette translucency');
+ }
  const empty=await fixture({...config,media:{},sensors:{temperature:'sensor.temperature'},lights:[]});await empty.page.locator('.nav [data-sheet=media]').click();await empty.page.waitForTimeout(260);for(const id of ['pp','prev','next','shuf','rep'])await empty.page.locator('#'+id).click();await empty.page.locator('#icoSearch').click();await empty.page.waitForTimeout(260);assert.equal(await empty.page.locator('#bList').textContent(),'No speakers configured');assert.deepEqual(empty.errors,[]);await empty.page.close();check('unconfigured media does not throw or send commands');
  const pinned=await fixture({...config,display:{...config.display,hide_nav_on_sheets:false}});
  await pinned.page.locator('.nav [data-sheet=media]').click();await pinned.page.waitForTimeout(260);
@@ -145,7 +206,7 @@ const states=[
  for(const theme of ['default','ambient','architectural']){
   const f=await fixture({...config,display:{...config.display,theme}}),q=f.page;
   if(theme==='architectural'){await q.locator('#archMenu').click();await q.locator('#archRoomLinks [data-sheet=settings]').click();await q.locator('#archSettingsLinks [data-sheet=display]').click();}
-  else await q.locator('.nav [data-sheet=settings]').click();
+  else await q.locator('#archMenu').click();
   await q.locator('#paletteRow').click();await q.waitForTimeout(250);
   assert.equal(await q.locator('#archChoices button').count(),6);
   assert.equal(f.requests.filter(r=>r.path==='/display').length,0,'opening a list must not change the selection');

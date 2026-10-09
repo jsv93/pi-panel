@@ -21,6 +21,9 @@ to `msedge` to use installed Edge, or install Playwright Chromium. Optionally
 set `SCREENSHOTS_DIR` to save screenshots. It uses stubbed HA/agent responses,
 exercises both navigation visibility settings and all three themes, and runs
 the existing slider drag regression test against the shipped HTML.
+Real browser touch events cover swipe order, boundaries, cancellation, wake,
+slider isolation and scene-button click suppression. It also checks all six
+palette surfaces and the shared back-button reset across the three themes.
 
 The media admin browser check uses the real server under the ingress prefix,
 with deterministic HA entities. Set `PANEL_DB` to a scratch database and

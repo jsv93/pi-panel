@@ -73,6 +73,9 @@ body{width:720px;height:var(--stage-h,1280px);overflow:hidden;position:relative;
    generates a pointer-enter event, so anything that reintroduces a cursor
    never gets a chance to be told to hide it again. */
 *{cursor:none!important}
+/* Native button chrome must not leak into shared submenu controls. */
+button{appearance:none;-webkit-appearance:none;background:none;border:0;color:inherit;font:inherit}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 /* no filter: a blurred 40px surface under backdrop-filter layers is the single
    most expensive thing on this page. Soft radial gradients look the same. */
 body::before{content:"";position:fixed;inset:0;pointer-events:none;
@@ -589,28 +592,6 @@ body.theme-ambient .chk.on{background:var(--accent);border-color:var(--accent)}
 body.theme-ambient .chk svg{stroke:var(--on-accent)}
 body.theme-ambient #identify{background:var(--accent);color:var(--on-accent)}
 
-/* Ambient's surfaces are opaque, so a backdrop-filter behind them composites a
-   blur nobody can see. Rather than offer a control that provably does nothing,
-   the row is not there. The tier still exists and still A/Bs the default theme,
-   which is what CLAUDE.md keeps it for. */
-body.theme-ambient #glassRow{display:none}
-
-/* ---------- glass tiers (toggled live from Settings) ---------- */
-/* :not(.theme-ambient):not(.theme-architectural) is load-bearing, not tidiness. These carry the same
-   specificity as Ambient's own chrome rules and are declared after them, so
-   without it they win on source order and repaint the transparent navbar and
-   borderless sheets that Ambient is. That only showed up once glass started
-   defaulting to off, which is to say it would have shipped. */
-body.ng-sheets:not(.theme-ambient):not(.theme-architectural) .sheet{
-  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
-  background:var(--sheet-bg)}
-body.ng-nav:not(.theme-ambient):not(.theme-architectural) .nav{
-  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
-  background:var(--nav-bg)}
-body.ng-tiles:not(.theme-ambient):not(.theme-architectural) .tile{
-  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
-  background:var(--tile)}
-
 #conn{position:absolute;top:8px;left:12px;font-size:15px;z-index:99;letter-spacing:.4px}
 #conn.ok{color:var(--ok)} #conn.bad{color:var(--bad)} #conn.wait{color:var(--ink-quiet)}
 #fps{position:absolute;top:8px;right:12px;font-size:15px;color:var(--ok);z-index:99;font-variant-numeric:tabular-nums}
@@ -757,7 +738,6 @@ body.theme-architectural .sheet[aria-hidden=false]{visibility:visible}
    Only transform and opacity move. A page's final state never waits for motion. */
 body.theme-architectural{--dur:.18s}
 .pal-linen{--arch-glass:linear-gradient(135deg,rgba(242,197,142,.085),rgba(242,197,142,.015) 60%),rgba(41,24,13,.48);--arch-glass-edge:rgba(230,182,127,.14);--arch-glass-top:rgba(255,214,160,.025);--arch-scene-shade:linear-gradient(180deg,rgba(30,17,9,.73),rgba(30,17,9,.86));--arch-selected:rgba(224,170,104,.65)}
-body{--arch-glass:var(--tile);--arch-glass-edge:var(--tile-line);--arch-glass-top:var(--line-soft);--arch-scene-shade:linear-gradient(var(--sheet-bg),var(--sheet-bg));--arch-selected:var(--accent-line)}
 body.theme-architectural .sheet,
 body.theme-architectural .sheet[aria-hidden=true],
 body.theme-architectural .sheet[aria-hidden=false]{display:none;transform:none;transition:none;visibility:visible;opacity:1;padding:166px 65px 34px;flex-direction:column;overscroll-behavior:contain}
@@ -911,6 +891,38 @@ body.theme-architectural #s-media .mp-bottom{margin-top:8px;min-height:104px;hei
 .mp-btn.edge.on{background:var(--toggle-active-bg,var(--accent-soft));color:var(--toggle-active-ink,var(--accent));border-radius:6px}
 .mp-btn.edge.on svg,body.theme-architectural .mp-btn.edge.on svg{stroke:var(--toggle-active-ink,var(--accent))}
 
+
+/* Every theme uses the same static translucent finish. Only the palette tint
+   changes; there are no backdrop samples, including for legacy glass settings. */
+:root,.pal-midnight{--arch-glass:linear-gradient(135deg,rgba(190,200,229,.085),rgba(190,200,229,.015) 60%),rgba(22,22,34,.48);--arch-glass-edge:rgba(175,185,219,.14);--arch-glass-top:rgba(215,222,247,.025);--arch-scene-shade:linear-gradient(180deg,rgba(12,12,23,.73),rgba(12,12,23,.86));--arch-selected:rgba(93,202,165,.65)}
+.pal-ember{--arch-glass:linear-gradient(135deg,rgba(247,193,149,.085),rgba(247,193,149,.015) 60%),rgba(39,25,16,.48);--arch-glass-edge:rgba(238,174,117,.14);--arch-glass-top:rgba(255,215,175,.025);--arch-scene-shade:linear-gradient(180deg,rgba(28,17,10,.73),rgba(28,17,10,.86));--arch-selected:rgba(238,139,66,.65)}
+.pal-slate{--arch-glass:linear-gradient(135deg,rgba(179,205,231,.085),rgba(179,205,231,.015) 60%),rgba(20,27,36,.48);--arch-glass-edge:rgba(161,191,219,.14);--arch-glass-top:rgba(214,231,250,.025);--arch-scene-shade:linear-gradient(180deg,rgba(12,18,26,.73),rgba(12,18,26,.86));--arch-selected:rgba(111,168,220,.65)}
+.pal-heath{--arch-glass:linear-gradient(135deg,rgba(228,184,215,.085),rgba(228,184,215,.015) 60%),rgba(32,20,35,.48);--arch-glass-edge:rgba(217,160,200,.14);--arch-glass-top:rgba(246,211,236,.025);--arch-scene-shade:linear-gradient(180deg,rgba(24,13,27,.73),rgba(24,13,27,.86));--arch-selected:rgba(217,139,168,.65)}
+.pal-mono{--arch-glass:linear-gradient(135deg,rgba(220,220,220,.085),rgba(220,220,220,.015) 60%),rgba(25,25,25,.48);--arch-glass-edge:rgba(205,205,205,.14);--arch-glass-top:rgba(240,240,240,.025);--arch-scene-shade:linear-gradient(180deg,rgba(14,14,14,.73),rgba(14,14,14,.86));--arch-selected:rgba(242,242,242,.65)}
+body .tile,body .sheet,body .nav{backdrop-filter:none;-webkit-backdrop-filter:none}
+body:not(.theme-architectural) :is(.tile,.preset,.dev,.qrow,.bitem,.mp-bottom),
+body.theme-ambient :is(.lamp,.act){background:var(--arch-glass)!important;border:1px solid var(--arch-glass-edge)!important;box-shadow:inset 0 1px 0 var(--arch-glass-top)}
+body:not(.theme-architectural) .dev.sel{background:var(--accent-soft)!important;border-color:var(--accent)!important}
+body:not(.theme-architectural) .preset.active{border-color:var(--arch-selected)!important}
+body:not(.theme-architectural) .nav{background:var(--arch-glass)}
+#archMenu{position:absolute;right:24px;top:18px;display:grid;place-items:center;width:100px;height:100px;border-radius:8px;color:var(--ink)}
+#archMenu svg{width:32px;height:32px;fill:none;stroke:currentColor;stroke-width:1.5}
+body:not(.theme-architectural) #s-scenes,
+body:not(.theme-architectural) #s-scene-edit,
+body:not(.theme-architectural) #s-scene-members{padding:125px 36px 40px;overflow-y:auto;scrollbar-width:none;will-change:transform}
+body:not(.theme-architectural) #s-scenes .arch-sub{text-align:center;color:var(--ink-quiet);font-size:22px;margin-top:12px}
+body:not(.theme-architectural) #s-scenes .presets{margin-top:48px}
+body:not(.theme-architectural) #s-scenes .arch-bottom{display:block;min-height:88px;width:100%;margin-top:36px;font-size:24px;color:var(--ink-dim);border-top:1px solid var(--line-soft)}
+body:not(.theme-architectural) :is(#s-scene-edit,#s-scene-members) :is(.arch-sub,.arch-info){font-size:22px;line-height:1.5;color:var(--ink-quiet);margin:24px 0}
+body:not(.theme-architectural) :is(#s-scene-edit,#s-scene-members) .act{width:100%;text-align:left;font:inherit;margin-top:18px}
+.sheet[aria-hidden=true]{visibility:hidden}
+#room,.sheet,#roomMedia{touch-action:pan-y}
+.slider,.mp-bar{touch-action:none}
+body .sheet.on.swipe-next{animation:page-swipe-next .18s ease-out;transition:none}
+body .sheet.on.swipe-prev{animation:page-swipe-prev .18s ease-out;transition:none}
+@keyframes page-swipe-next{from{opacity:.35;transform:translateX(24px)}to{opacity:1;transform:translateX(0)}}
+@keyframes page-swipe-prev{from{opacity:.35;transform:translateX(-24px)}to{opacity:1;transform:translateX(0)}}
+
 </style>
 <!-- Embedded asset licences
 Inter font:
@@ -1063,7 +1075,7 @@ SOFTWARE.
 <div id="scrim"></div>
 <div id="room">
   <div class="arch-only" id="archHeading"><h1 id="archRoom"></h1><button id="archTemp" data-sheet="climate" aria-label="Open Climate">–°</button></div>
-  <button class="arch-only press" id="archMenu" data-sheet="room-menu" aria-label="Room menu"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></button>
+  <button class="press" id="archMenu" data-sheet="room-menu" aria-label="Room menu"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></button>
   <!-- Wrapped so a theme can reorder these two without moving them in the
        source. Ambient puts the room and day above the clock; the default keeps
        them below. Both read the same element, so nothing forks. -->
@@ -1180,7 +1192,6 @@ SOFTWARE.
     <div class="row"><span class="k">LunaControl</span><span id="stLuna"><span class="dot wait"></span>–</span></div>
     <div class="row"><span class="k">Backlight service</span><span id="stBL"><span class="dot wait"></span>–</span></div>
     <div class="row"><span class="k">Network</span><span id="stNet">–</span></div>
-    <div class="row"><span class="k">Glass</span><span id="stGlass">–</span></div>
     <div class="row"><span class="k">Theme</span><span id="stTheme">–</span></div>
     <div class="row"><span class="k">Uptime</span><span id="sUp">–</span></div>
     <div class="row diagonly"><span class="k">Renderer</span><span id="stGL">–</span></div>
@@ -1191,9 +1202,6 @@ SOFTWARE.
   <div class="acts">
     <div class="act tile press" id="wifiRow">
       <span class="t">Wi-Fi setup</span><span class="v" id="wifiV">–</span>
-      <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
-    <div class="act tile press" id="glassRow">
-      <span class="t">Change glass</span><span class="v" id="glassV">Full</span>
       <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
     <div class="act tile press" id="themeRow">
       <span class="t">Theme</span><span class="v" id="themeV">Default</span>
@@ -1282,11 +1290,10 @@ SOFTWARE.
 </section>
 
 <nav class="nav" aria-label="Room controls">
-  <button class="arch-only" data-sheet="scenes"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 13.74a2 2 0 0 1-2 0L2.5 8.87a1 1 0 0 1 0-1.74L11 2.26a2 2 0 0 1 2 0l8.5 4.87a1 1 0 0 1 0 1.74z"/><path d="m20 14.285 1.5.845a1 1 0 0 1 0 1.74L13 21.74a2 2 0 0 1-2 0l-8.5-4.87a1 1 0 0 1 0-1.74l1.5-.845"/></svg><b>Scenes</b></button>
+  <button data-sheet="scenes"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 13.74a2 2 0 0 1-2 0L2.5 8.87a1 1 0 0 1 0-1.74L11 2.26a2 2 0 0 1 2 0l8.5 4.87a1 1 0 0 1 0 1.74z"/><path d="m20 14.285 1.5.845a1 1 0 0 1 0 1.74L13 21.74a2 2 0 0 1-2 0l-8.5-4.87a1 1 0 0 1 0-1.74l1.5-.845"/></svg><b>Scenes</b></button>
   <button data-sheet="lights"><svg viewBox="0 0 24 24"><path d="M9 18h6m-5 3h4M12 2a6 6 0 00-3.5 10.9c.4.3.5.7.5 1.1h6c0-.4.1-.8.5-1.1A6 6 0 0012 2z"/></svg><b>Lights</b></button>
   <button data-sheet="climate"><svg class="arch-only" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"/></svg><span class="temp" id="navTemp">–<sup>°</sup></span><b>Climate</b></button>
   <button data-sheet="blinds"><svg viewBox="0 0 24 24"><path d="M3 4h18M3 9h18M3 14h18M3 19h18"/></svg><b id="coversNav">Blinds</b></button>
-  <button data-sheet="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-2.9 1.2 2 2 0 11-4 0 1.7 1.7 0 00-2.9-1.2l-.1.1a2 2 0 11-2.8-2.8l.1-.1A1.7 1.7 0 004 15a2 2 0 110-4 1.7 1.7 0 001.2-2.9l-.1-.1a2 2 0 112.8-2.8l.1.1A1.7 1.7 0 0011 4a2 2 0 114 0 1.7 1.7 0 002.9 1.2l.1-.1a2 2 0 112.8 2.8l-.1.1A1.7 1.7 0 0020 11a2 2 0 110 4z"/></svg><b>Settings</b></button>
   <button data-sheet="media"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><b>Music</b></button>
 </nav>
 
@@ -1409,7 +1416,7 @@ const OFF_MS   = (_disp.backlight_off_s ?? 0) * 1000;
 const SCREEN_W = +(_disp.screen_width  ?? 0) || 0;
 const SCREEN_H = +(_disp.screen_height ?? 0) || 0;
 /* Connection status and frame counter. Bring-up tools, off by default. */
-/* Same override rule as the glass tier: the panel may turn diagnostics on to
+/* The panel may turn diagnostics on to
    take a look, but a value pushed from the server wins once it changes. Set
    here as well as in applyDiag() so an enabled panel does not flash without
    the overlays while the rest of the script parses. */
@@ -1424,7 +1431,6 @@ try{
 if(diag) document.body.classList.add("diag");
 const BL_MIN   = _disp.backlight_min ?? 5;
 const BL_DEF   = _disp.backlight_default ?? 100;
-const GLASS_DEFAULT = _disp.glass_tier ?? 3;
 const BL_URL   = "http://127.0.0.1:8081";
 /* Applied straight away rather than in a paint pass: the theme changes the
    ground colour, and a frame of the default palette before the ambient one
@@ -1440,7 +1446,7 @@ function moveArchControl(selector, host){
 moveArchControl('#saveSoftRow','#archSceneSaves');
 moveArchControl('#saveBrightRow','#archSceneSaves');
 moveArchControl('#s-settings>.lamp','#archDisplayControls');
-for(const id of ['themeRow','paletteRow','glassRow']) moveArchControl('#'+id,'#archDisplayActions');
+for(const id of ['themeRow','paletteRow']) moveArchControl('#'+id,'#archDisplayActions');
 moveArchControl('#s-settings>.rows','#archDiagnosticStatus');
 for(const id of ['diagRow','scrollTestRow']) moveArchControl('#'+id,'#archDiagnosticActions');
 function arrangeArchControls(on){
@@ -1448,7 +1454,7 @@ function arrangeArchControls(on){
     const node=$('#'+id);if(!node.dataset.originalSvg)node.dataset.originalSvg=node.innerHTML;
     node.innerHTML=on?ARCH_ICONS[key]:node.dataset.originalSvg;
   }
-  for(const {node,marker,host} of archMoves){if(on)host.appendChild(node);else marker.after(node);}
+  for(const {node,marker,host} of archMoves){if(on||host.id==='archSceneSaves')host.appendChild(node);else marker.after(node);}
   for(const el of document.querySelectorAll('.down')){
     if(!el.dataset.originalIcon)el.dataset.originalIcon=el.querySelector('svg').innerHTML;
     el.querySelector('svg').innerHTML=on?'<path d="M15 18l-6-6 6-6"/>':el.dataset.originalIcon;
@@ -1526,10 +1532,10 @@ function archPaintLights(){
   $('#archAllLights').textContent=LSTATE.some(s=>s.level>0)?'Turn all off':'Turn all on';
 }
 function archChoicePage(kind){
-  const choices=kind==='theme'?THEMES:kind==='palette'?PALETTES:GLASS_TIERS.map((tier,i)=>({id:i,name:tier.name}));
-  const selected=kind==='theme'?theme:kind==='palette'?palette:glassTier;
+  const choices=kind==='theme'?THEMES:PALETTES;
+  const selected=kind==='theme'?theme:palette;
   const host=$('#archChoices');host.innerHTML='';
-  $('#archChoicesTitle').textContent=({theme:'Theme',palette:'Theme colours',glass:'Glass tier'})[kind];
+  $('#archChoicesTitle').textContent=({theme:'Theme',palette:'Theme colours'})[kind];
   choices.forEach(choice=>{
     const row=document.createElement('button');row.className='act press';row.setAttribute('aria-pressed',String(choice.id===selected));
     row.innerHTML='<span class="t"></span><span class="v"></span>';row.querySelector('.t').textContent=choice.name;
@@ -1539,7 +1545,6 @@ function archChoicePage(kind){
         theme=choice.id;applyTheme();paintArt();paintAll();recordDisplay({theme});
         archTrail=theme==='architectural'?['room-menu','settings','display']:['settings'];
       }else if(kind==='palette'){palette=choice.id;applyPalette();recordDisplay({palette});}
-      else {glassTier=choice.id;applyGlass();recordDisplay({glass_tier:glassTier});}
       archChoicePage(kind);bump();
     });host.appendChild(row);
   });
@@ -1614,6 +1619,8 @@ function applyBackground(){
 }
 function applyTheme(){
   const architectural = theme === "architectural";
+  $("#archMenu").dataset.sheet = architectural ? "room-menu" : "settings";
+  $("#archMenu").setAttribute("aria-label", architectural ? "Room menu" : "Settings");
   arrangeArchControls(architectural);
   // Move the existing thermostat control; its listeners and state stay shared.
   const targetHost = architectural ? $("#archClimateTarget") : $("#homeReadings");
@@ -1680,13 +1687,6 @@ applyPalette();
 
 if(!(_disp.hide_nav_on_sheets ?? true)) document.body.classList.add("nav-always");
 if(!(_disp.mini_art ?? true)) document.body.classList.add("no-mini-art");
-
-const GLASS_TIERS = [
-  {name:"Full",       cls:""},
-  {name:"No sheet",   cls:"ng-sheets"},
-  {name:"Tiles only", cls:"ng-sheets ng-nav"},
-  {name:"Off",        cls:"ng-sheets ng-nav ng-tiles"},
-];
 
 const live = !!HA_TOKEN.trim();
 const BASE = (/^https?:\/\//.test(HA_URL) ? HA_URL : "http://"+HA_URL).replace(/\/+$/,"");
@@ -1926,16 +1926,17 @@ document.querySelectorAll(".sheet").forEach(el=>el.setAttribute("aria-hidden","t
 $("#archStandby").addEventListener("click",()=>sleepNow());
 $("#archRoomStandby").addEventListener("click",()=>sleepNow());
 function showSheet(name,nav={}){
-  if(theme==="architectural"){
+  {
     if(nav.remember && openSheet && openSheet!==name)archTrail.push(openSheet);
     const back=$("#s-"+name)?.querySelector(".down");
     if(back)back.dataset.backLabel=archTrail.length?archPageLabel(archTrail.at(-1)):(name==='room-menu'?'Home':ROOM);
     if(name==="scene-members")archPaintMembers();
     if(name==="lights"||name==="light-detail")archPaintLights();
   }
-  document.querySelectorAll(".sheet").forEach(x=>{x.classList.remove("on");x.setAttribute("aria-hidden","true");});
+  document.querySelectorAll(".sheet").forEach(x=>{x.classList.remove("on","swipe-next","swipe-prev");x.setAttribute("aria-hidden","true");});
   const el = $("#s-"+name); if(!el) return;
   el.classList.add("on");
+  if(nav.swipe)el.classList.add(nav.swipe>0?"swipe-next":"swipe-prev");
   el.setAttribute("aria-hidden","false");
   if(theme==='architectural')el.querySelectorAll('.slider').forEach(sl=>sl.dispatchEvent(new Event('slider-layout')));
   document.body.classList.add("sheet-open");
@@ -1943,7 +1944,7 @@ function showSheet(name,nav={}){
   document.querySelectorAll(".nav button").forEach(b=>b.classList.toggle("on", b.dataset.sheet===name));
   /* sliders fill AFTER the sheet lands: two animations at once is the thing
      that made this feel busy, and the sequence reads better anyway. */
-  if(theme!=="architectural")el.querySelectorAll(".slider").forEach(sl=>{
+  if(theme!=="architectural"&&!nav.swipe)el.querySelectorAll(".slider").forEach(sl=>{
     const f = sl.querySelector(".fill");
     const to = (f.dataset.to || 0) / 100;
     f.style.transition = "none";
@@ -1960,7 +1961,7 @@ function showSheet(name,nav={}){
 }
 function closeSheet(silent){
   archTrail=[];
-  document.querySelectorAll(".sheet").forEach(x=>{x.classList.remove("on");x.setAttribute("aria-hidden","true");});
+  document.querySelectorAll(".sheet").forEach(x=>{x.classList.remove("on","swipe-next","swipe-prev");x.setAttribute("aria-hidden","true");});
   document.body.classList.remove("sheet-open");
   document.querySelectorAll(".nav button").forEach(b=>b.classList.remove("on"));
   openSheet = null;
@@ -1970,10 +1971,11 @@ function closeSheet(silent){
   if(!silent) bump();
 }
 document.querySelectorAll("[data-sheet]").forEach(b=>b.addEventListener("click",()=>{
-  if(theme==="architectural"){archNavigate(b.dataset.sheet,!!b.closest(".nav,#room"));return;}
-  if(openSheet===b.dataset.sheet) closeSheet(); else showSheet(b.dataset.sheet);
+  const fromHome=!!b.closest(".nav,#room");
+  if(theme!=="architectural"&&openSheet===b.dataset.sheet&&fromHome)closeSheet();
+  else archNavigate(b.dataset.sheet,fromHome);
 }));
-document.querySelectorAll("[data-close]").forEach(b=>b.addEventListener("click",()=>openSheet==="choices"&&theme!=="architectural"?showSheet("settings"):theme==="architectural"?archBack():closeSheet()));
+document.querySelectorAll("[data-close]").forEach(b=>b.addEventListener("click",()=>archBack()));
 $("#roomMedia").addEventListener("click", e=>{ if(!e.target.closest(".slider")) showSheet("media"); });
 function ovOpen(id){
   if(id==="#ovSpk"){$("#spkStatus").textContent="";paintSpeakers();}
@@ -1999,6 +2001,51 @@ document.querySelectorAll("[data-ovclose]").forEach(e=>e.addEventListener("click
 $("#icoSearch").addEventListener("click",()=>{ browseStack.length=0; showSheet("browse"); });
 $("#icoSpk").addEventListener("click",()=>ovOpen("#ovSpk"));
 $("#icoMore").addEventListener("click",()=>{ buildQueue(); ovOpen("#ovQueue"); });
+
+
+/* Horizontal room navigation is independent of device controls. A touch starts
+   as undecided, yields to vertical scrolling, and commits one page on release.
+   Register before the multi-touch watcher so a second finger always cancels it. */
+(function watchPageSwipes(){
+  let start=null, suppressUntil=0;
+  // Block the compatibility click from a swipe, but accept a fresh tap at once.
+  window.addEventListener('pointerdown',()=>{suppressUntil=0;},{passive:true,capture:true});
+  const pages=()=>Array.from(document.querySelectorAll('.nav button[data-sheet]'))
+    .filter(el=>getComputedStyle(el).display!=='none').map(el=>el.dataset.sheet);
+  const blocked=()=>document.hidden||document.querySelector('.ov.on')||$('#idle').classList.contains('on')||Date.now()-wokeAt<450;
+  window.addEventListener('touchstart',e=>{
+    start=null;
+    if(e.touches.length!==1||blocked()||(openSheet&&!pages().includes(openSheet)))return;
+    if(e.target.closest('.slider,.mp-bar,input,select,textarea,.nav,.ov,[role=slider]'))return;
+    const t=e.touches[0];
+    start={id:t.identifier,x:t.clientX,y:t.clientY,at:Date.now(),page:openSheet,horizontal:false};
+  },{passive:true,capture:true});
+  window.addEventListener('touchmove',e=>{
+    if(!start)return;
+    if(e.touches.length!==1||blocked()){start=null;return;}
+    const t=e.touches[0],dx=Math.abs(t.clientX-start.x),dy=Math.abs(t.clientY-start.y);
+    if(t.identifier!==start.id||(!start.horizontal&&dy>18&&dy>dx)){start=null;return;}
+    if(dx>18&&dx>dy*1.5)start.horizontal=true;
+    if(start.horizontal&&e.cancelable)e.preventDefault();
+  },{passive:false,capture:true});
+  window.addEventListener('touchend',e=>{
+    const origin=start;start=null;
+    if(!origin||e.touches.length||blocked()||openSheet!==origin.page)return;
+    const t=Array.from(e.changedTouches).find(t=>t.identifier===origin.id);if(!t)return;
+    const dx=t.clientX-origin.x,dy=t.clientY-origin.y;
+    const threshold=Math.min(90,document.body.getBoundingClientRect().width*.16);
+    if(Math.abs(dx)<threshold||Math.abs(dx)<Math.abs(dy)*1.5||Date.now()-origin.at>1200)return;
+    if(e.cancelable)e.preventDefault();e.stopImmediatePropagation();suppressUntil=Date.now()+500;
+    const order=[null,...pages()],direction=dx<0?1:-1,index=order.indexOf(openSheet),next=index+direction;
+    if(next<0||next>=order.length)return;
+    archTrail=[];
+    if(order[next])showSheet(order[next],{swipe:direction});else closeSheet();
+  },{passive:false,capture:true});
+  window.addEventListener('touchcancel',()=>{start=null;},{passive:true,capture:true});
+  window.addEventListener('blur',()=>{start=null;});
+  document.addEventListener('visibilitychange',()=>{start=null;});
+  window.addEventListener('click',e=>{if(Date.now()<suppressUntil){e.preventDefault();e.stopImmediatePropagation();}},true);
+})();
 
 /* queue: HA has no generic queue API, so surface what the player does expose */
 function buildQueue(){
@@ -2890,47 +2937,11 @@ function paintAll(){
   paintTransport(); paintProgress(); paintArt();
 }
 
-/* ---------- glass tier ---------- */
-/* The on-panel toggle persists so it survives a reload, but a value pushed
-   from the server has to win -- otherwise the first person to touch the toggle
-   locks the setting out of the config forever, which is exactly what happened.
-   Remember which config value the local override was made against: if that has
-   since changed, the server has spoken more recently and the override is
-   stale. */
-let glassTier = GLASS_DEFAULT;
-try{
-  const v = localStorage.getItem("glassTier");
-  const base = localStorage.getItem("glassBase");
-  if(v !== null && base !== null && parseInt(base) === GLASS_DEFAULT){
-    glassTier = parseInt(v);
-  } else {
-    localStorage.removeItem("glassTier");
-    localStorage.setItem("glassBase", GLASS_DEFAULT);
-  }
-}catch(e){}
-function applyGlass(){
-  document.body.classList.remove("ng-sheets","ng-nav","ng-tiles");
-  const t = GLASS_TIERS[glassTier % GLASS_TIERS.length];
-  if(t.cls) t.cls.split(" ").forEach(c=>document.body.classList.add(c));
-  const el = $("#glassV"); if(el) el.textContent = t.name;
-  const st = $("#stGlass"); if(st) st.textContent = t.name;
-  try{
-    localStorage.setItem("glassTier", glassTier);
-    localStorage.setItem("glassBase", GLASS_DEFAULT);
-  }catch(e){}
-}
+/* ---------- display choices ---------- */
 const thr = $("#themeRow");
 if(thr) thr.addEventListener("click",()=>archChoicePage("theme"));
 const par = $("#paletteRow");
 if(par) par.addEventListener("click",()=>archChoicePage("palette"));
-
-const gr = $("#glassRow");
-if(gr) gr.addEventListener("click",()=>{
-  if(theme==="architectural"){archChoicePage("glass");return;}
-  glassTier = (glassTier+1) % GLASS_TIERS.length;
-  applyGlass(); recordDisplay({glass_tier: glassTier}); bump();
-});
-applyGlass();
 
 /* ---------- LunaControl ---------- */
 async function checkLuna(){
