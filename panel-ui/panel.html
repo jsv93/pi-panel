@@ -560,18 +560,7 @@ body.theme-ambient .slider.thin{height:28px;border-radius:14px}
 body.theme-ambient .slider.ct{background:linear-gradient(90deg,#FFB25E,#FFE9CC,#CFE3FF)}
 body.theme-ambient .fill{background:linear-gradient(180deg,var(--accent),var(--accent-deep));border-radius:8px}
 
-/* Pill behind the active icon instead of a tinted label, and no rule along the
-   top -- the whole point of the theme is that nothing is separated by a line. */
-/* Above the sheets rather than under them, so the active pill is visible while
-   a sub-page is open. Off by default: the sheets were drawn full-height. */
-body.nav-always .nav{z-index:46}
-body.nav-always .sheet{bottom:var(--nav)}
-/* The player is full-bleed by design -- artwork, transport and volume are laid
-   out against the whole screen -- so it goes over the navbar regardless. */
-body.nav-always #s-media{bottom:0;z-index:47}
-/* The scrim covered the whole stage, so with the navbar visible the strip
-   below the sheet was dimmed to near-black: the dark band under the bar. */
-body.nav-always #scrim{bottom:var(--nav)}
+/* Hidden-navigation panels retain their original home layout. */
 body.theme-ambient .nav{background:transparent;border-top:0;
   backdrop-filter:none;-webkit-backdrop-filter:none;padding:0 30px 18px}
 body.theme-ambient .nav button{gap:9px;color:var(--ink-ghost)}
@@ -636,9 +625,6 @@ body.theme-architectural .nav button[data-sheet=settings],body.theme-architectur
 body.theme-architectural .nav svg{width:32px;height:32px;stroke-width:1.5}
 body.theme-architectural .nav b{font-size:22px;font-weight:300;letter-spacing:.15px}
 body.theme-architectural .nav button.on{color:var(--accent)}
-body.theme-architectural.nav-always .sheet{bottom:190px}
-body.theme-architectural.nav-always #s-media{bottom:190px;z-index:45}
-body.theme-architectural.nav-always.sheet-open .nav{background:var(--bg-bot)}
 body.theme-architectural .strip{left:65px;right:65px;bottom:228px;height:154px;border-radius:10px;border:1px solid var(--tile-line);background:var(--tile);box-shadow:inset 0 1px 0 var(--line-soft)}
 body.theme-architectural .strip-row{padding:24px 26px;gap:22px}
 body.theme-architectural .strip .art{width:38px;height:48px;border:0;border-radius:0;background:none}
@@ -871,7 +857,6 @@ body.theme-architectural[data-background=room] #s-scenes,body.theme-architectura
 body:not(.theme-architectural) #s-choices{padding:130px 36px 40px}
 body:not(.theme-architectural) #s-choices h1{margin-bottom:35px}
 body.theme-architectural #s-media{--album-size:clamp(150px,calc(var(--stage-h,1280px) - 690px),590px);padding-top:125px;padding-bottom:24px}
-body.theme-architectural.nav-always #s-media{--album-size:clamp(140px,calc(var(--stage-h,1280px) - 880px),400px)}
 body.theme-architectural #s-media>h1{font-size:46px;margin-bottom:16px}
 body.theme-architectural #s-media>.arch-sub{display:none!important}
 body.theme-architectural .arch-media-identity{display:flex;flex-direction:column;gap:0;margin:0;flex:none}
@@ -908,6 +893,40 @@ body.theme-ambient :is(.lamp,.act){background:var(--arch-glass)!important;border
 body:not(.theme-architectural) .dev.sel{background:var(--accent-soft)!important;border-color:var(--accent)!important}
 body:not(.theme-architectural) .preset.active{border-color:var(--arch-selected)!important}
 body:not(.theme-architectural) .nav{background:var(--arch-glass)}
+/* Labels teach the destinations on Home; the same icon anchors stay fixed on
+   every page. The rail itself never participates in a page's swipe animation.
+   Its 112px targets still exceed 44px at the smallest supported stage scale. */
+body.nav-always{--nav-clearance:136px}
+body.nav-always .nav{left:56px;right:56px;bottom:24px;height:144px;padding:0;
+  gap:0;border:0;background:none;z-index:46}
+body.nav-always .nav button{position:relative;min-width:0;min-height:112px;
+  color:var(--ink-quiet);border-radius:6px}
+body.nav-always .nav button svg,body.nav-always .nav button.on svg{display:block!important;position:absolute;bottom:54px;
+  width:36px;height:36px;padding:0;background:none;border-radius:0;stroke-width:1.5}
+body.nav-always .nav #navTemp{display:none}
+body.nav-always .nav b{position:absolute;bottom:14px;font-size:22px;font-weight:300;line-height:1.2}
+body.nav-always.sheet-open .nav{height:112px}
+body.nav-always.sheet-open .nav b{display:none}
+body.nav-always .nav button.on{color:var(--ink)}
+body.nav-always .nav button.on:after{content:'';position:absolute;bottom:36px;
+  left:calc(50% - 15px);width:30px;height:3px;background:currentColor;border-radius:1px}
+body.nav-always .sheet,body.nav-always #s-media,body.nav-always #scrim{bottom:var(--nav-clearance)}
+body.nav-always.sheet-open:after{content:'';position:absolute;left:0;right:0;bottom:0;
+  height:var(--nav-clearance);background:var(--bg-bot);z-index:44;pointer-events:none}
+body.theme-architectural.nav-always .ov{bottom:var(--nav-clearance)}
+body.theme-architectural.nav-always #s-media{--album-size:clamp(140px,calc(var(--stage-h,1280px) - 690px - var(--nav-clearance)),590px)}
+/* The original player assumed a full-height sheet. Reserve the rail before
+   sizing its artwork so transport, volume and library controls cannot overlap. */
+body.nav-always:not(.theme-architectural) #s-media{display:flex;flex-direction:column;overflow-y:auto;will-change:transform;padding-bottom:24px}
+body.nav-always:not(.theme-architectural) .mp-art{width:clamp(140px,calc(var(--stage-h,1280px) - 875px),560px);
+  height:clamp(140px,calc(var(--stage-h,1280px) - 875px),560px);flex:none}
+body.nav-always:not(.theme-architectural) .mp-title,
+body.nav-always:not(.theme-architectural) .mp-sub{flex:none}
+body.nav-always:not(.theme-architectural) .mp-bar{flex:none;margin-top:auto}
+body.nav-always:not(.theme-architectural) .mp-times,
+body.nav-always:not(.theme-architectural) .mp-transport{flex:none}
+body.nav-always:not(.theme-architectural) .mp-vol{position:relative;left:auto;right:auto;bottom:auto;flex:none;margin-top:12px;min-height:64px}
+body.nav-always:not(.theme-architectural) .mp-bottom{position:relative;left:auto;right:auto;bottom:auto;flex:none;margin-top:18px}
 #archMenu{position:absolute;right:24px;top:18px;display:grid;place-items:center;width:100px;height:100px;border-radius:8px;color:var(--ink)}
 #archMenu svg{width:32px;height:32px;fill:none;stroke:currentColor;stroke-width:1.5}
 body:not(.theme-architectural) #s-scenes,
@@ -1631,6 +1650,7 @@ function applyTheme(){
   $("#archClimateTarget").hidden = !CLIMATE;
   $("#climateEmpty").style.display = architectural && CLIMATE ? "none" : "";
   $("#coversNav").textContent = architectural ? "Covers" : "Blinds";
+  $('.nav [data-sheet=blinds]').setAttribute('aria-label',architectural?'Covers':'Blinds');
   $("#coversHeading").textContent = architectural ? "Covers" : "Blinds";
   $("#coversEmpty").textContent = architectural ? "No covers configured" : "Blinds";
   $("#archRoom").textContent = ROOM;
@@ -1688,7 +1708,7 @@ function applyPalette(){
 }
 applyPalette();
 
-if(!(_disp.hide_nav_on_sheets ?? true)) document.body.classList.add("nav-always");
+if(!(_disp.hide_nav_on_sheets ?? false)) document.body.classList.add("nav-always");
 if(!(_disp.mini_art ?? true)) document.body.classList.add("no-mini-art");
 
 const live = !!HA_TOKEN.trim();
@@ -1925,6 +1945,16 @@ function applyState(s){
    Sheets (popups over the room)
    ============================================================ */
 let openSheet = null;
+function paintRoomNavigation(name){
+  const parent=({'light-detail':'lights','scene-edit':'scenes','scene-members':'scenes',browse:'media',playback:'media'})[name]||name;
+  document.querySelectorAll('.nav button').forEach(b=>{
+    const active=b.dataset.sheet===parent;
+    b.classList.toggle('on',active);
+    b.setAttribute('aria-label',b.querySelector('b').textContent);
+    if(active)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');
+  });
+}
+paintRoomNavigation(null);
 document.querySelectorAll(".sheet").forEach(el=>el.setAttribute("aria-hidden","true"));
 $("#archStandby").addEventListener("click",()=>sleepNow());
 $("#archRoomStandby").addEventListener("click",()=>sleepNow());
@@ -1944,7 +1974,7 @@ function showSheet(name,nav={}){
   if(theme==='architectural')el.querySelectorAll('.slider').forEach(sl=>sl.dispatchEvent(new Event('slider-layout')));
   document.body.classList.add("sheet-open");
   openSheet = name;
-  document.querySelectorAll(".nav button").forEach(b=>b.classList.toggle("on", b.dataset.sheet===name));
+  paintRoomNavigation(name);
   /* sliders fill AFTER the sheet lands: two animations at once is the thing
      that made this feel busy, and the sequence reads better anyway. */
   if(theme!=="architectural"&&!nav.swipe)el.querySelectorAll(".slider").forEach(sl=>{
@@ -1966,7 +1996,7 @@ function closeSheet(silent){
   archTrail=[];
   document.querySelectorAll(".sheet").forEach(x=>{x.classList.remove("on","swipe-next","swipe-prev");x.setAttribute("aria-hidden","true");});
   document.body.classList.remove("sheet-open");
-  document.querySelectorAll(".nav button").forEach(b=>b.classList.remove("on"));
+  paintRoomNavigation(null);
   openSheet = null;
   /* silent when the panel is putting itself to sleep: bump() restores the
      backlight and cancels the idle timers, so closing a sheet on the way down
@@ -1975,7 +2005,8 @@ function closeSheet(silent){
 }
 document.querySelectorAll("[data-sheet]").forEach(b=>b.addEventListener("click",()=>{
   const fromHome=!!b.closest(".nav,#room");
-  if(theme!=="architectural"&&openSheet===b.dataset.sheet&&fromHome)closeSheet();
+  if(b.closest('.nav')){ovClose(true);archNavigate(b.dataset.sheet,true);}
+  else if(theme!=="architectural"&&openSheet===b.dataset.sheet&&fromHome)closeSheet();
   else archNavigate(b.dataset.sheet,fromHome);
 }));
 document.querySelectorAll("[data-close]").forEach(b=>b.addEventListener("click",()=>archBack()));

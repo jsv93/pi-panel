@@ -467,8 +467,8 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
                 <div class="muted" style="font-size:12px;margin-top:5px">Colour only.
                   Any palette works under every theme.</div></div>
               <div><div class="lbl">NAVBAR ON SUB-PAGES</div><select id="fHideNav">
-                <option value="1">Hidden — sub-pages cover it</option>
-                <option value="0">Always visible</option></select></div>
+                <option value="0">Compact icons — labels on Home</option>
+                <option value="1">Hidden — sub-pages cover it</option></select></div>
               <div><div class="lbl">ALBUM ART ON THE NOW-PLAYING BAR</div><select id="fMiniArt">
                 <option value="1">Show</option>
                 <option value="0">Hide — title only</option></select></div>
@@ -879,7 +879,7 @@ function fillConfigForm(){
   $("#fBlOff").value = d.backlight_off_s ?? 0;
   renderScreens(d.dsi_overlay ?? "");
   $("#fDiag").value = d.diagnostics ? "1" : "0";
-  $("#fHideNav").value = (d.hide_nav_on_sheets ?? true) ? "1" : "0";
+  $("#fHideNav").value = (d.hide_nav_on_sheets ?? false) ? "1" : "0";
   $("#fMiniArt").value = (d.mini_art ?? true) ? "1" : "0";
   $("#fGesture").value = d.touch_gesture || "off";
   $("#fPoints").value = String(d.touch_points ?? 3);

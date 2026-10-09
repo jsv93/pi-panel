@@ -365,6 +365,63 @@ const states=[
  }
  if(process.env.SCREENSHOTS_DIR)await c.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,'music-refined.png')});
  await c.close();check('Linen shuffle and repeat use a filled selected state');
+ for(const theme of ['default','ambient','architectural']){
+  const f=await fixture({...config,display:{...config.display,theme,hide_nav_on_sheets:false}}),q=f.page;
+  await q.evaluate(()=>window.testState({entity_id:'media_player.room',state:'playing',attributes:{media_title:'Quiet spaces',media_artist:'Evening collection',media_duration:214,media_position:72,volume_level:.4,supported_features:65535}}));
+  for(const [width,height] of [[720,1280],[480,800],[320,610]]){
+   await q.setViewportSize({width,height});await q.waitForTimeout(100);
+   const homeIcons=await q.locator('.nav button>svg').evaluateAll(xs=>xs.map(x=>({x:x.getBoundingClientRect().x,y:x.getBoundingClientRect().y})));
+   assert.equal(await q.locator('.nav b:visible').count(),5,'Home labels');
+   for(const name of ['scenes','lights','climate','blinds','media']){
+    await q.locator('.nav [data-sheet='+name+']').click();await q.waitForTimeout(240);
+    assert.equal(await q.locator('.nav b:visible').count(),0,'compact page labels');
+    assert.equal(await q.locator('.nav [aria-current=page]').getAttribute('data-sheet'),name);
+    const geometry=await q.evaluate(()=>{
+     const nav=document.querySelector('.nav'),sheet=document.querySelector('.sheet.on');
+     return {nav:nav.getBoundingClientRect().toJSON(),sheet:sheet.getBoundingClientRect().toJSON(),buttons:[...nav.querySelectorAll('button')].map(x=>({box:x.getBoundingClientRect().toJSON(),icon:x.querySelector('svg').getBoundingClientRect().toJSON(),label:x.getAttribute('aria-label')}))};
+    });
+    assert(geometry.sheet.bottom<=geometry.nav.top+.5,'page stays clear of navigation');
+    assert(geometry.buttons.every((b,i)=>Math.abs(b.icon.x-homeIcons[i].x)<.1&&Math.abs(b.icon.y-homeIcons[i].y)<.1),'icons keep their Home positions');
+    assert(geometry.buttons.every(b=>b.box.width>=44&&b.box.height>=44&&b.label),'44px targets and accessible names');
+    assert.equal(await q.locator('.nav button.on').evaluate(x=>getComputedStyle(x,'::after').height),'3px','active underline');
+    if(name==='media'){
+     const art=await q.locator('#mpArt').boundingBox(),title=await q.locator('#mTitle').boundingBox(),volume=await q.locator('.mp-vol').boundingBox(),bottom=await q.locator('.mp-bottom').boundingBox(),transport=await q.locator('.mp-transport').boundingBox(),times=await q.locator('.mp-times').boundingBox();
+     assert(Math.abs(art.width-art.height)<2&&Math.abs(art.x+art.width/2-width/2)<2,'centred square album');
+     assert(title.y>=art.y+art.height-1,'title below artwork');
+     assert(times.y>=title.y+title.height-1,'timer below title');
+     assert(volume.y>=transport.y+transport.height-1,'volume below transport');
+     assert(bottom.y>=volume.y+volume.height-1,'music actions below volume');
+     assert(bottom.y+bottom.height<=geometry.sheet.bottom+1,JSON.stringify({theme,width,geometry,bottom}));
+    }
+    if(process.env.SCREENSHOTS_DIR&&width===720&&['scenes','media'].includes(name))await q.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,theme+'-compact-'+name+'.png')});
+   }
+   await q.locator('.sheet.on [data-close]').click();await q.waitForTimeout(220);
+   assert.equal(await q.locator('.nav b:visible').count(),5);assert.equal(await q.locator('.nav [aria-current]').count(),0);
+   if(process.env.SCREENSHOTS_DIR&&width===720)await q.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,theme+'-labelled-home.png')});
+  }
+  await q.setViewportSize({width:720,height:1280});
+  const session=await q.context().newCDPSession(q);
+  for(const name of ['scenes','lights','climate','blinds','media']){
+   await session.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:450,y:550}]});
+   await session.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:230,y:550}]});
+   await q.evaluate(()=>{window.railFrames=[];const until=performance.now()+220;const sample=()=>{const nav=document.querySelector('.nav'),sheet=document.querySelector('.sheet.on');window.railFrames.push({visible:getComputedStyle(nav).visibility,opacity:getComputedStyle(nav).opacity,top:nav.getBoundingClientRect().top,labels:document.querySelectorAll('.nav b').length&&getComputedStyle(document.querySelector('.nav b')).display,sheet:sheet?.id});if(performance.now()<until)requestAnimationFrame(sample);};requestAnimationFrame(sample);});
+   await session.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await q.waitForTimeout(250);
+   assert.equal(await q.locator('.sheet.on').getAttribute('id'),'s-'+name);
+   const frames=await q.evaluate(()=>window.railFrames);assert(frames.length>0&&frames.every(x=>x.visible==='visible'&&x.opacity==='1'&&(!x.sheet||x.labels==='none')),'rail remains visible through swipes: '+JSON.stringify(frames));
+   const pageFrames=frames.filter(x=>x.sheet);assert(pageFrames.length>0&&pageFrames.every(x=>Math.abs(x.top-pageFrames[0].top)<.1),'rail stays stationary');
+  }
+  await q.locator('#icoSearch').click();await q.waitForTimeout(220);
+  assert.equal(await q.locator('.nav [aria-current=page]').getAttribute('data-sheet'),'media','library belongs to Music');
+  await q.locator('.nav [data-sheet=scenes]').click();await q.waitForTimeout(220);
+  await q.locator('#s-scenes [data-sheet=scene-edit]').click();await q.waitForTimeout(220);
+  assert.equal(await q.locator('.nav [aria-current=page]').getAttribute('data-sheet'),'scenes');
+  await q.locator('.nav [data-sheet=media]').click();await q.waitForTimeout(220);await q.locator('#icoSpk').click();await q.waitForTimeout(220);
+  if(theme==='architectural'){
+   await q.locator('.nav [data-sheet=lights]').click();await q.waitForTimeout(220);assert.equal(await q.locator('.ov.on').count(),0);assert.equal(await q.locator('.sheet.on').getAttribute('id'),'s-lights');
+  }else{await q.locator('.ov.on [data-ovclose]').first().click();}
+  assert.deepEqual(f.errors,[]);await q.close();check(theme+' compact navigation: labels, fixed icons, all page layouts, swipe frames and nested pages');
+ }
+
  const sliderPage=await browser.newPage();
  await sliderPage.route('**/*',r=>r.fulfill({contentType:'text/html',body:r.request().url().endsWith('panel.html')?source:fs.readFileSync(path.join(__dirname,'test_slider_drag.html'),'utf8')}));
  await sliderPage.goto('http://panel.test/test_slider_drag.html');
