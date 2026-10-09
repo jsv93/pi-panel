@@ -945,6 +945,59 @@ body .sheet.on.swipe-prev{animation:page-swipe-prev .18s ease-out;transition:non
 @keyframes page-swipe-next{from{opacity:.35;transform:translateX(24px)}to{opacity:1;transform:translateX(0)}}
 @keyframes page-swipe-prev{from{opacity:.35;transform:translateX(-24px)}to{opacity:1;transform:translateX(0)}}
 
+/* Focused music player: one playback row, compact volume and header tools.
+   Sizes are in the panel's 720px stage; targets stay at least 44 physical px. */
+body[class] #s-media.music-player{--player-tap:max(80px,calc(44px / var(--scale,1)));--player-play:max(119px,var(--player-tap));--album-size:clamp(140px,calc(var(--stage-h,1280px) - var(--nav-clearance,0px) - 578px - (var(--player-tap) - 80px)),486px);display:flex;flex-direction:column;padding:148px 65px 16px;overflow:hidden}
+body.theme-architectural #s-media.music-player:not(.on){display:none}
+body[class] #s-media.music-player>h1,body[class] #s-media.music-player>.grip{display:none}
+body[class] #s-media.music-player .down{max-width:calc(100% - 285px)}
+body[class] #s-media.music-player .mp-tools{position:absolute;right:40px;top:32px;display:flex;gap:8px}
+body[class] #s-media.music-player button{font:inherit;color:var(--ink);border:0;background:none;padding:0;box-shadow:none}
+body[class] #s-media.music-player .mp-tools button,body[class] #s-media.music-player #icoSpk{width:var(--player-tap);height:var(--player-tap);min-height:var(--player-tap);display:grid;place-items:center;border-radius:6px}
+body[class] #s-media.music-player .mp-tools svg,body[class] #s-media.music-player #icoSpk svg{width:29px;height:29px;stroke:var(--ink-quiet);stroke-width:1.5;fill:none}
+body[class] #s-media.music-player .arch-media-identity{display:flex;flex-direction:column;align-items:stretch;flex:none;gap:0;margin:0}
+body[class] #s-media.music-player .mp-art{width:var(--album-size);height:var(--album-size);margin:0 auto;flex:none;border:0;border-radius:0}
+body[class] #s-media.music-player .mp-title{font-size:38px;font-weight:300;line-height:44px;letter-spacing:-1px;display:block;white-space:nowrap;text-align:center;align-self:stretch;margin:28px 0 0;max-height:44px;overflow:hidden;text-overflow:ellipsis}
+body[class] #s-media.music-player .mp-sub{font-size:22px;line-height:30px;display:block;white-space:nowrap;text-align:center;align-self:stretch;margin:8px 0 0;min-height:30px;max-height:30px;overflow:hidden;text-overflow:ellipsis}
+body[class] #s-media.music-player .mp-bar{height:80px;min-height:var(--player-tap);margin-top:auto;flex:none;overflow:visible;border:0;border-radius:0;background:none}
+body[class] #s-media.music-player .mp-bar:before{content:'';position:absolute;top:50%;left:0;right:0;height:2px;background:var(--line)}
+body[class] #s-media.music-player #mFill{position:absolute;inset:50% auto auto 0;width:100%;height:2px;background:var(--ink);transform-origin:left;transition:none}
+body[class] #s-media.music-player #archSeekThumb{display:block;position:absolute;left:0;top:50%;width:100%;height:0;pointer-events:none}
+body[class] #s-media.music-player #archSeekThumb:after{content:'';position:absolute;left:-5px;top:-4px;width:10px;height:10px;border-radius:50%;background:var(--ink)}
+body[class] #s-media.music-player .mp-wave{position:absolute;left:0;top:calc(50% - 16px);height:32px;overflow:hidden;pointer-events:none;display:none}
+body[class] #s-media.music-player .mp-wave svg{display:block;height:32px;max-width:none;stroke:var(--ink);stroke-width:2;fill:none;animation:player-wave 2.8s linear infinite;animation-play-state:paused}
+body[class] #s-media.music-player.mp-playing .mp-wave{display:block}
+body[class] #s-media.music-player.mp-playing #mFill{visibility:hidden}
+body[class] #s-media.music-player.on.mp-playing .mp-wave svg{animation-play-state:running}
+body.page-hidden #s-media.music-player .mp-wave svg,body.panel-idle #s-media.music-player .mp-wave svg,body.arch-overlay-open #s-media.music-player .mp-wave svg{animation-play-state:paused}
+@keyframes player-wave{to{transform:translateX(-44px)}}
+body[class] #s-media.music-player .mp-times{font-size:19px;line-height:22px;margin:-10px 0 0;flex:none;color:var(--ink-quiet)}
+body[class] #s-media.music-player .mp-transport{margin:0;padding:0;gap:8px;flex:none;height:var(--player-play);min-height:var(--player-play);justify-content:space-between}
+body[class] #s-media.music-player .mp-btn{width:var(--player-tap);height:var(--player-tap);border-radius:6px;flex:none}
+body[class] #s-media.music-player .mp-play{width:var(--player-play);height:var(--player-play);border-radius:6px;flex:none}
+body[class] #s-media.music-player .mp-btn svg{width:45px;height:45px;stroke:currentColor;stroke-width:1.5;fill:none}
+body[class] #s-media.music-player .mp-btn.edge svg{width:31px;height:31px;stroke:var(--ink-quiet);fill:none}
+body[class] #s-media.music-player .mp-play svg{width:72px;height:72px;stroke:currentColor;stroke-width:1.7;fill:none}
+body[class] #s-media.music-player .mp-btn.edge.on{background:var(--toggle-active-bg,var(--accent-soft));color:var(--toggle-active-ink,var(--accent))}
+body[class] #s-media.music-player .mp-btn.edge.on svg{stroke:currentColor}
+body[class] #s-media.music-player .mp-repeat-one{display:block;position:absolute;top:8px;right:12px;font-size:18px}
+body[class] #s-media.music-player .mp-vol{position:static;display:flex;justify-content:center;align-items:center;gap:28px;margin:0;padding:0;flex:none;min-height:var(--player-tap)}
+body[class] #s-media.music-player #mpVolumeButton{display:flex;align-items:center;justify-content:center;gap:14px;width:auto;min-width:140px;min-height:var(--player-tap);font-size:23px;color:var(--ink-quiet);border-radius:6px;font-variant-numeric:tabular-nums}
+body[class] #s-media.music-player #mpVolumeButton svg{width:29px;height:29px;fill:none;stroke:currentColor;stroke-width:1.5}
+body[class] #s-media.music-player #mpVolumePopup{position:absolute;left:50px;right:50px;bottom:16px;padding:12px 32px 24px;background:var(--ov-bg);border:1px solid var(--line);border-radius:10px;z-index:3;box-shadow:0 12px 40px rgba(0,0,0,.18)}
+body[class] #s-media.music-player #mpVolumePopup[hidden]{display:none}
+body[class] #s-media.music-player .mp-volume-heading{display:flex;align-items:center;gap:18px;min-height:var(--player-tap);font-size:24px}
+body[class] #s-media.music-player #mpVolumeReadout{margin-left:auto;font-size:22px;color:var(--ink-quiet)}
+body[class] #s-media.music-player #mpVolumeClose{display:grid;place-items:center;width:var(--player-tap);height:var(--player-tap);border-radius:6px}
+body[class] #s-media.music-player #mpVolumeClose svg{width:29px;height:29px;stroke:var(--ink-quiet);stroke-width:1.5;fill:none}
+body[class] #s-media.music-player #mVol{height:var(--player-tap);border:0;border-radius:0;background:none}
+body[class] #s-media.music-player #mVol .track{top:calc(50% - 1px);bottom:auto;height:2px;background:var(--track);border-radius:0}
+body[class] #s-media.music-player #mVol .fill{background:var(--ink);border-radius:0}
+body[class] #s-media.music-player #mVol .knob{width:18px;height:18px;background:var(--ink);box-shadow:none}
+body[class] #s-media.music-player button:focus-visible,body[class] #s-media.music-player [role=slider]:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+body[class] #s-media.music-player #mpVolumeButton:disabled{opacity:.4}
+@media(prefers-reduced-motion:reduce){body[class] #s-media.music-player.mp-playing .mp-wave{display:none}body[class] #s-media.music-player.mp-playing #mFill{visibility:visible}body[class] #s-media.music-player .mp-wave svg{animation:none}}
+
 </style>
 <!-- Embedded asset licences
 Inter font:
@@ -1222,6 +1275,7 @@ SOFTWARE.
        Mixed together there was no way to tell which lines did something when
        touched. -->
   <div class="acts">
+    <button class="act tile press" id="archMiniArt"><span class="t">Home player artwork</span><span class="v"></span></button>
     <div class="act tile press" id="wifiRow">
       <span class="t">Wi-Fi setup</span><span class="v" id="wifiV">–</span>
       <svg class="ch" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
@@ -1251,12 +1305,14 @@ SOFTWARE.
   <div class="restart tile press" id="reload">Reload panel</div>
 </section>
 
-<section class="sheet" id="s-playback"><button class="down press" data-close aria-label="Back"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button><h1>Playback</h1><div class="arch-list"><button class="act press" id="archMiniArt"><span class="t">Mini-player artwork</span><span class="v"></span></button></div><p class="arch-info">The home mini-player appears during playback. Music is always available in the bottom navigation. Controls follow the selected speaker.</p></section>
-<section class="sheet" id="s-media">
+<section class="sheet music-player" id="s-media">
   <div class="down press" data-close><svg viewBox="0 0 24 24"><path d="M12 5v14m-7-7l7 7 7-7"/></svg></div>
   <div class="grip"></div>
 
-  <button class="arch-more arch-only" data-sheet="playback">Options</button><h1 class="arch-only">Music</h1><p class="arch-sub arch-only" data-room-label></p>
+  <div class="mp-tools">
+    <button class="press" id="icoSearch" aria-label="Browse music"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4.3-4.3"/></svg></button>
+    <button class="press" id="icoMore" aria-label="Queue"></button>
+  </div><h1>Music</h1>
   <div class="arch-media-identity">
   <div class="mp-art" id="mpArt">
     <svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
@@ -1269,29 +1325,24 @@ SOFTWARE.
   <div class="mp-sub" id="mArtist"></div>
   </div>
 
-  <div class="mp-bar" id="mBar"><i id="mFill"></i><span class="arch-only" id="archSeekThumb"></span></div>
+  <div class="mp-bar" id="mBar" role="slider" tabindex="0" aria-label="Playback position" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"><i id="mFill"></i><span class="mp-wave" aria-hidden="true"><svg height="32"><path/></svg></span><span id="archSeekThumb"></span></div>
   <div class="mp-times"><span id="mElapsed">0:00</span><span id="mDur">0:00</span></div>
 
   <div class="mp-transport">
-    <div class="mp-btn edge press" id="shuf"><svg viewBox="0 0 24 24"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg></div>
-    <div class="mp-btn press" id="prev"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3 6l9-6v12z"/></svg></div>
-    <div class="mp-play press" id="pp"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
-    <div class="mp-btn press" id="next"><svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 6l9 6-9 6z"/></svg></div>
-    <div class="mp-btn edge press" id="rep"><svg viewBox="0 0 24 24"><path d="M17 2l4 4-4 4M3 11V9a4 4 0 014-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 01-4 4H3"/></svg></div>
+    <button class="mp-btn edge press" id="shuf"><svg viewBox="0 0 24 24"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg></button>
+    <button class="mp-btn press" id="prev"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3 6l9-6v12z"/></svg></button>
+    <button class="mp-play press" id="pp"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button>
+    <button class="mp-btn press" id="next"><svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 6l9 6-9 6z"/></svg></button>
+    <button class="mp-btn edge press" id="rep"><svg viewBox="0 0 24 24"><path d="M17 2l4 4-4 4M3 11V9a4 4 0 014-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 01-4 4H3"/></svg></button>
   </div>
 
-  <div class="mp-vol"><button class="arch-only" id="archVolDown" aria-label="Decrease volume">−</button>
-    <svg viewBox="0 0 24 24"><path d="M11 5L6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 010 7"/></svg>
-    <div class="slider" id="mVol"><div class="fill"></div></div><button class="arch-only" id="archVolUp" aria-label="Increase volume">+</button>
+  <div class="mp-vol">
+    <button class="press" id="mpVolumeButton" aria-label="Adjust volume" aria-expanded="false" aria-controls="mpVolumePopup"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5L6 9H2v6h4l5 4zM15.5 8.5a5 5 0 010 7"/></svg><span id="mpVolumeValue">0%</span></button>
+    <button class="press" id="icoSpk" aria-label="Select speaker"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2"/><circle cx="12" cy="15" r="3.2"/><circle cx="12" cy="6.5" r="1"/></svg></button>
   </div>
-
-  <div class="mp-bottom">
-    <div class="mp-ico" id="icoSpk" title="Speakers">
-      <svg viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2"/><circle cx="12" cy="15" r="3.2"/><circle cx="12" cy="6.5" r="1"/></svg></div>
-    <div class="mp-ico" id="icoSearch" title="Browse">
-      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4.3-4.3"/></svg></div>
-    <div class="mp-ico" id="icoMore" title="Queue">
-      <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg></div>
+  <div id="mpVolumePopup" role="group" aria-labelledby="mpVolumeLabel" hidden>
+    <div class="mp-volume-heading"><span id="mpVolumeLabel">Volume</span><output id="mpVolumeReadout">0%</output><button id="mpVolumeClose" class="press" aria-label="Close volume"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg></button></div>
+    <div class="slider" id="mVol" role="slider" tabindex="0" aria-label="Volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="fill"></div></div>
   </div>
 </section>
 
@@ -1468,13 +1519,13 @@ function moveArchControl(selector, host){
 moveArchControl('#saveSoftRow','#archSceneSaves');
 moveArchControl('#saveBrightRow','#archSceneSaves');
 moveArchControl('#s-settings>.lamp','#archDisplayControls');
+moveArchControl('#archMiniArt','#archSettingsLinks');
 for(const id of ['themeRow','paletteRow']) moveArchControl('#'+id,'#archDisplayActions');
 moveArchControl('#s-settings>.rows','#archDiagnosticStatus');
 for(const id of ['diagRow','scrollTestRow']) moveArchControl('#'+id,'#archDiagnosticActions');
 function arrangeArchControls(on){
   for(const [id,key] of [['shuf','Shuffle'],['prev','SkipBack'],['next','SkipForward'],['rep','Repeat'],['icoMore','ListMusic']]){
-    const node=$('#'+id);if(!node.dataset.originalSvg)node.dataset.originalSvg=node.innerHTML;
-    node.innerHTML=on?ARCH_ICONS[key]:node.dataset.originalSvg;
+    $('#'+id).innerHTML=ARCH_ICONS[key];
   }
   for(const {node,marker,host} of archMoves){if(on||host.id==='archSceneSaves')host.appendChild(node);else marker.after(node);}
   for(const el of document.querySelectorAll('.down')){
@@ -1603,12 +1654,8 @@ function setupArchPages(){
     const next=Math.min(st.spMax,Math.max(st.spMin,Math.round((st.spMin+v/100*(st.spMax-st.spMin))/st.spStep)*st.spStep));
     st.setpoint=next;paintSetpoint();if(live)call('climate','set_temperature',{entity_id:CLIMATE,temperature:next});bump();
   });
-  for(const [id,dir] of [['archVolDown',-5],['archVolUp',5]])$('#'+id).addEventListener('click',()=>{
-    if(!SPEAKERS[target])return;st.vol=Math.max(0,Math.min(100,st.vol+dir));mvS.paint(st.vol);
-    if(live)call('media_player','volume_set',{entity_id:SPEAKERS[target][0],volume_level:st.vol/100});bump();
-  });
   document.addEventListener('keydown',e=>{
-    if(theme!=='architectural'||e.key!=='Escape')return;
+    if(e.defaultPrevented||theme!=='architectural'||e.key!=='Escape')return;
     if(document.querySelector('.ov.on'))ovClose();else if(openSheet)archBack();
   });
   archPaintLights();
@@ -1959,10 +2006,11 @@ document.querySelectorAll(".sheet").forEach(el=>el.setAttribute("aria-hidden","t
 $("#archStandby").addEventListener("click",()=>sleepNow());
 $("#archRoomStandby").addEventListener("click",()=>sleepNow());
 function showSheet(name,nav={}){
+  closeVolume();
   {
     if(nav.remember && openSheet && openSheet!==name)archTrail.push(openSheet);
     const back=$("#s-"+name)?.querySelector(".down");
-    if(back)back.dataset.backLabel=archTrail.length?archPageLabel(archTrail.at(-1)):(name==='room-menu'?'Home':ROOM);
+    if(back)back.dataset.backLabel=name==='browse'?'Music':archTrail.length?archPageLabel(archTrail.at(-1)):(name==='room-menu'?'Home':ROOM);
     if(name==="scene-members")archPaintMembers();
     if(name==="lights"||name==="light-detail")archPaintLights();
   }
@@ -1993,6 +2041,7 @@ function showSheet(name,nav={}){
   bump();
 }
 function closeSheet(silent){
+  closeVolume();
   archTrail=[];
   document.querySelectorAll(".sheet").forEach(x=>{x.classList.remove("on","swipe-next","swipe-prev");x.setAttribute("aria-hidden","true");});
   document.body.classList.remove("sheet-open");
@@ -2012,6 +2061,7 @@ document.querySelectorAll("[data-sheet]").forEach(b=>b.addEventListener("click",
 document.querySelectorAll("[data-close]").forEach(b=>b.addEventListener("click",()=>archBack()));
 $("#roomMedia").addEventListener("click", e=>{ if(!e.target.closest(".slider")) showSheet("media"); });
 function ovOpen(id){
+  closeVolume();
   if(id==="#ovSpk"){$("#spkStatus").textContent="";paintSpeakers();}
   if(theme==="architectural"){
     document.body.classList.add('arch-overlay-open');
@@ -2224,8 +2274,38 @@ const lampSliders = [];
   if(!LIGHTS.length) host.innerHTML = '<div class="hint2">No lights configured for this panel</div>';
 })();
 const blS = slider($("#bl"), ()=>st.bl, v=>{ st.bl=Math.max(BL_MIN,v); $("#blV").textContent=st.bl+"%"; setBacklight(st.bl); });
-const mvS = slider($("#mVol"), ()=>st.vol, v=>{ st.vol=v;
-  if(live && SPEAKERS[target]) call("media_player","volume_set",{entity_id:SPEAKERS[target][0],volume_level:v/100}); });
+function paintVolume(v){
+  $('#mpVolumeValue').textContent=Math.round(v)+'%';$('#mpVolumeReadout').textContent=Math.round(v)+'%';
+  $('#mVol').setAttribute('aria-valuenow',Math.round(v));$('#mVol').setAttribute('aria-valuetext',Math.round(v)+' percent');
+}
+function commitVolume(v){
+  if(!SPEAKERS[target])return;
+  st.vol=Math.max(0,Math.min(100,Math.round(v)));paintVolume(st.vol);
+  if(live)call('media_player','volume_set',{entity_id:SPEAKERS[target][0],volume_level:st.vol/100});
+}
+const mvS=slider($('#mVol'),()=>st.vol,commitVolume,paintVolume);
+function closeVolume(restoreFocus=false){
+  const popup=$('#mpVolumePopup');if(popup.hidden)return;
+  $('#mVol').dispatchEvent(new Event('slider-cancel'));popup.hidden=true;
+  $('#mpVolumeButton').setAttribute('aria-expanded','false');
+  if(restoreFocus)$('#mpVolumeButton').focus({preventScroll:true});
+}
+$('#mpVolumeButton').addEventListener('click',()=>{
+  if(!$('#mpVolumePopup').hidden){closeVolume(true);return;}
+  if(!SPEAKERS[target])return;
+  $('#mpVolumePopup').hidden=false;$('#mpVolumeButton').setAttribute('aria-expanded','true');
+  $('#mVol').dispatchEvent(new Event('slider-layout'));mvS.paint(st.vol);$('#mVol').focus({preventScroll:true});bump();
+});
+$('#mpVolumeClose').addEventListener('click',()=>closeVolume(true));
+document.addEventListener('pointerdown',e=>{if(!e.target.closest('#mpVolumePopup,#mpVolumeButton'))closeVolume();},true);
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&!$('#mpVolumePopup').hidden){e.preventDefault();closeVolume(true);}
+},true);
+$('#mVol').addEventListener('keydown',e=>{
+  const delta={ArrowLeft:-5,ArrowDown:-5,ArrowRight:5,ArrowUp:5}[e.key];
+  if(delta===undefined&&!['Home','End'].includes(e.key))return;
+  e.preventDefault();commitVolume(e.key==='Home'?0:e.key==='End'?100:st.vol+delta);mvS.paint(st.vol);bump();
+});
 $("#blV").textContent = st.bl+"%";
 
 async function setBacklight(pct){
@@ -2519,6 +2599,21 @@ $("#mBar").addEventListener("click",e=>{
   bump();
 });
 
+function drawPlayerWave(){
+  const width=$('#mBar').clientWidth+44,svg=$('.mp-wave svg');
+  svg.setAttribute('width',width);svg.setAttribute('viewBox','0 0 '+width+' 32');
+  let d='';for(let x=0;x<=width;x+=2)d+=(x?'L':'M')+x+' '+(16+2.7*Math.sin(x*Math.PI/22)).toFixed(2);
+  svg.querySelector('path').setAttribute('d',d);
+}
+new ResizeObserver(drawPlayerWave).observe($('#mBar'));
+$('#mBar').addEventListener('keydown',e=>{
+  const delta={ArrowLeft:-5,ArrowDown:-5,ArrowRight:5,ArrowUp:5}[e.key];
+  if(delta===undefined&&!['Home','End'].includes(e.key))return;
+  e.preventDefault();if(!st.dur||!SPEAKERS[target]||(live&&!st.canSeek))return;
+  const p=Math.max(0,Math.min(st.dur,e.key==='Home'?0:e.key==='End'?st.dur:curPos()+delta));
+  st.pos=p;st.posAt=Date.now();paintProgress();
+  if(live)call('media_player','media_seek',{entity_id:SPEAKERS[target][0],seek_position:Math.round(p)});bump();
+});
 /* ---------- progress ---------- */
 function fmt(sec){
   sec = Math.max(0, Math.round(sec));
@@ -2536,10 +2631,13 @@ function paintProgress(){
   const pct = st.dur ? (p/st.dur*100) : 0;
   const f = $("#mFill"), sp = $("#stripProg");
   if(f){
-    f.style.width = theme === "architectural" ? "100%" : pct+"%";
-    f.style.transform = theme === "architectural" ? "scaleX("+(pct/100)+")" : "";
+    f.style.width="100%";f.style.transform="scaleX("+(pct/100)+")";
   }
   if(sp) sp.style.width = pct+"%";
+  $('.mp-wave').style.width=pct+'%';$('#s-media').classList.toggle('mp-playing',st.playing&&st.dur>0);
+  $('#mBar').setAttribute('aria-valuemax',st.dur||0);$('#mBar').setAttribute('aria-valuenow',Math.round(p));
+  $('#mBar').setAttribute('aria-valuetext',fmt(p)+' of '+fmt(st.dur||0));
+  $('#mBar').setAttribute('aria-disabled',String(!st.dur||!SPEAKERS[target]||(live&&!st.canSeek)));
   $("#archSeekThumb").style.transform="translateX("+pct+"%)";
   const e1=$("#mElapsed"), e2=$("#mDur");
   if(e1) e1.textContent = st.dur ? fmt(p) : "0:00";
@@ -2554,12 +2652,15 @@ function paintTransport(){
     rp.setAttribute("aria-pressed",String(st.repeat!=="off"));
     rp.setAttribute("aria-label", "Repeat " + st.repeat);
     let badge=rp.querySelector(".mp-repeat-one");
-    if(!badge){badge=document.createElement("span");badge.className="mp-repeat-one arch-only";badge.textContent="1";rp.appendChild(badge);}
+    if(!badge){badge=document.createElement("span");badge.className="mp-repeat-one";badge.textContent="1";rp.appendChild(badge);}
     badge.style.visibility = st.repeat === "one" ? "visible" : "hidden";
   }
-  for(const [id,label] of [["#pp",st.playing?"Pause":"Play"],["#rmPP",st.playing?"Pause":"Play"],["#prev","Previous track"],["#next","Next track"],["#shuf","Shuffle"]]){
+  for(const [id,label] of [["#pp",st.playing?"Pause":"Play"],["#rmPP",st.playing?"Pause":"Play"],["#prev","Previous track"],["#next","Next track"],["#shuf","Shuffle"],["#rep","Repeat "+st.repeat]]){
     const el=$(id);el.setAttribute("aria-label",label);el.setAttribute("aria-disabled",String(!SPEAKERS[target]));
+    if(el.tagName==='BUTTON')el.disabled=!SPEAKERS[target];
   }
+  $('#mpVolumeButton').disabled=!SPEAKERS[target];
+  $('#icoSpk').setAttribute('aria-label','Select speaker, '+((SPEAKERS[target]||[])[1]||'none configured'));
   const wave=$("#icoWave");
   if(wave) wave.classList.toggle("dim", !st.playing);
 }
@@ -2961,8 +3062,8 @@ function paintAll(){
   $("#rmArtist").textContent = theme === "architectural" ? (st.title ? (st.artist || (st.playing ? "Playing" : "Paused")) : "Nothing playing") : st.artist;
   $("#mTitle").textContent  = st.title || "Nothing playing";
   const spkName = (SPEAKERS[target]||[])[1] || "";
-  $("#mArtist").textContent = theme==="architectural"&&!st.title ? "Browse your music library" : (st.artist ? st.artist+"  ·  "+spkName : spkName);
-  $("#pp").innerHTML = theme==="architectural" ? ARCH_ICONS[st.playing?"Pause":"Play"] : (st.playing?PAUSE:PLAY);
+  $("#mArtist").textContent = !st.title ? "Browse your music library" : (st.artist || spkName);
+  $("#pp").innerHTML = ARCH_ICONS[st.playing?"Pause":"Play"];
   $("#rmPP").innerHTML = theme==="architectural" ? ARCH_ICONS[st.playing?"Pause":"Play"] : (st.playing?PAUSE:PLAY);
   /* Effects are repainted by paintLightSheet, against the light they belong
      to, rather than from here against a room-wide st.effect that no longer

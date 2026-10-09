@@ -63,6 +63,56 @@ const states=[
   await page.evaluate(()=>document.fonts.ready);
   return {page,errors,requests};
  }
+ for(const theme of ['architectural','ambient','default']){
+  const f=await fixture({...config,display:{...config.display,theme,hide_nav_on_sheets:false}}),q=f.page;
+  await q.locator('.nav [data-sheet=media]').click();await q.waitForTimeout(260);
+  await q.evaluate(()=>window.testState({entity_id:'media_player.room',state:'playing',attributes:{media_title:'Quiet spaces',media_artist:'Evening collection',media_duration:214,media_position:72,volume_level:.4,supported_features:65535}}));
+  for(const [width,height] of [[720,1280],[480,800],[320,610]]){
+   await q.setViewportSize({width,height});await q.waitForTimeout(100);
+   const box=await q.evaluate(()=>{
+    const rect=s=>document.querySelector(s).getBoundingClientRect().toJSON();
+    return {art:rect('#mpArt'),title:rect('#mTitle'),artist:rect('#mArtist'),bar:rect('#mBar'),times:rect('.mp-times'),transport:rect('.mp-transport'),volume:rect('.mp-vol'),nav:rect('.nav'),sizes:[...document.querySelectorAll('.mp-transport svg')].map(x=>x.getBoundingClientRect().width),targets:[...document.querySelectorAll('#s-media button')].filter(x=>x.checkVisibility()).map(x=>({id:x.id,...x.getBoundingClientRect().toJSON()}))};
+   });
+   assert(box.art.y+box.art.height<=box.title.y+1,'art above title');
+   assert(box.artist.y+box.artist.height<=box.bar.y+1,JSON.stringify(box));
+   assert(box.volume.y+box.volume.height<=box.nav.y+1,'volume clears navigation');
+   assert(box.targets.every(x=>x.width>=43.9&&x.height>=43.9),JSON.stringify({theme,width,targets:box.targets}));
+   assert(box.sizes[0]<box.sizes[1]&&box.sizes[1]<box.sizes[2]&&box.sizes[2]>box.sizes[3]&&box.sizes[3]>box.sizes[4]);
+   assert.equal(await q.locator('#mVol').isVisible(),false);
+   await q.locator('#mpVolumeButton').click();assert(await q.locator('#mVol').isVisible());
+   const slider=await q.locator('#mVol').boundingBox();
+   await q.mouse.move(slider.x+slider.width*.7,slider.y+slider.height/2);await q.mouse.down();
+   await q.evaluate(()=>window.testState({entity_id:'media_player.room',state:'playing',attributes:{media_title:'Quiet spaces',media_duration:214,volume_level:.2}}));
+   assert.equal(await q.locator('#mpVolumeReadout').textContent(),'70%','HA state does not move a held volume slider');
+   await q.mouse.up();assert.equal((await q.evaluate(()=>window.testCalls.at(-1))).service,'volume_set');
+   assert.equal((await q.evaluate(()=>window.testCalls.at(-1))).service_data.volume_level,.7);
+   assert(await q.locator('#mpVolumePopup').isVisible());
+   await q.locator('#mVol').press('ArrowLeft');assert.equal(await q.locator('#mpVolumeReadout').textContent(),'65%');
+   await q.locator('#mVol').press('Escape');assert.equal(await q.locator('#mpVolumeButton').getAttribute('aria-expanded'),'false');
+   assert(await q.locator('#s-media').isVisible(),'Escape closes volume only');
+  }
+  await q.setViewportSize({width:480,height:800});
+  await q.evaluate(()=>window.testState({entity_id:'media_player.room',state:'playing',attributes:{media_title:'Quiet spaces',media_artist:'Evening collection',media_duration:214,media_position:72,volume_level:.4,supported_features:65535}}));
+  await q.locator('#mpVolumeButton').click();await q.locator('#mpArt').click();assert(!(await q.locator('#mpVolumePopup').isVisible()));
+  await q.locator('#mpVolumeButton').click();await q.locator('#mpVolumeClose').click();assert(!(await q.locator('#mpVolumePopup').isVisible()));
+  await q.locator('#mBar').press('End');assert.equal((await q.evaluate(()=>window.testCalls.at(-1))).service_data.seek_position,214);
+  await q.locator('#mBar').press('Home');assert.equal((await q.evaluate(()=>window.testCalls.at(-1))).service_data.seek_position,0);
+  await q.locator('#shuf').click();assert.equal(await q.locator('#shuf').getAttribute('aria-pressed'),'true');
+  await q.locator('#rep').click();await q.locator('#rep').click();assert.equal(await q.locator('#rep').getAttribute('aria-label'),'Repeat one');
+  await q.locator('#pp').click();assert(!(await q.locator('.mp-wave').isVisible()));await q.locator('#pp').click();assert(await q.locator('.mp-wave').isVisible());
+  assert.equal(await q.locator('#icoSearch').innerText(),'');await q.locator('#icoSearch').click();await q.waitForTimeout(260);assert(await q.locator('#bList').isVisible());await q.locator('#bBack').click();await q.waitForTimeout(260);
+  await q.locator('#icoMore').click();assert(await q.locator('#ovQueue').isVisible());
+  if(theme!=='architectural'){await q.locator('#ovQueue .ov-bg').click({position:{x:5,y:5}});await q.waitForTimeout(260);}
+  await q.locator('.nav [data-sheet=media]').click();await q.waitForTimeout(260);
+  await q.locator('#mpVolumeButton').click();await q.locator('.nav [data-sheet=lights]').click();await q.waitForTimeout(260);assert(!(await q.locator('#mpVolumePopup').isVisible()));
+  await q.locator('.nav [data-sheet=media]').click();await q.waitForTimeout(260);
+  await q.emulateMedia({reducedMotion:'reduce'});assert.equal(await q.locator('.mp-wave svg').evaluate(x=>getComputedStyle(x).animationName),'none');assert(!(await q.locator('.mp-wave').isVisible()));
+  await q.emulateMedia({reducedMotion:'no-preference'});
+  await q.evaluate(()=>window.testState({entity_id:'media_player.room',state:'playing',attributes:{media_title:'Quiet spaces',media_artist:'Evening collection',media_duration:214,media_position:72,volume_level:.4,supported_features:65535}}));
+  if(process.env.SCREENSHOTS_DIR){fs.mkdirSync(process.env.SCREENSHOTS_DIR,{recursive:true});await q.waitForTimeout(500);await q.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,theme+'-focused-player.png')});await q.locator('#mpVolumeButton').click();await q.waitForTimeout(500);await q.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,theme+'-volume-popup.png')});}
+  assert.deepEqual(f.errors,[]);await q.close();check(theme+' focused player: hierarchy, sizes, popup drag protection, seeking, modes, library, queue and reduced motion');
+ }
+
  const {page:p,errors,requests}=await fixture(config);
  const open=async(name)=>{await p.locator('[data-sheet="'+name+'"]:visible').first().click();await p.waitForTimeout(260);};
  const back=async()=>{await p.locator('.sheet.on [data-close]').click();await p.waitForTimeout(260);};
@@ -115,7 +165,7 @@ const states=[
  await e.locator('#lightBody button').filter({hasText:'Colour'}).click();await e.waitForTimeout(220);assert(await e.locator('#ovColour').isVisible());await e.locator('#archColourHost .sw').first().click();assert.deepEqual((await e.evaluate(()=>window.testCalls.at(-1))).service_data.hs_color,[0,85]);
  await e.locator('#ovColour [data-ov-back]').click();assert(await e.locator('#ovLight').isVisible());await e.locator('#archEffect').selectOption('Slow glow');assert.equal((await e.evaluate(()=>window.testCalls.at(-1))).service_data.effect,'Slow glow');
  await e.locator('#ovLight [data-ov-back]').click();await eback();assert(await e.locator('#s-lights').isVisible());await eback();
- await e.locator('.nav [data-sheet=media]').click();await e.waitForTimeout(220);await e.locator('#shuf').click();assert.equal((await e.evaluate(()=>window.testCalls.at(-1))).service,'shuffle_set');await e.locator('#s-media [data-sheet=playback]').click();await e.waitForTimeout(220);assert.equal(await e.locator('#archShuffle,#archRepeat').count(),0);await e.locator('#archMiniArt').click();assert.equal(await e.locator('#archMiniArt .v').textContent(),'On');await eback();assert(await e.locator('#s-media').isVisible());await eback();
+ await e.locator('.nav [data-sheet=media]').click();await e.waitForTimeout(220);await e.locator('#shuf').click();assert.equal((await e.evaluate(()=>window.testCalls.at(-1))).service,'shuffle_set');await eback();await e.locator('#archMenu').click();await e.waitForTimeout(220);await e.locator('#archRoomLinks [data-sheet=settings]').click();await e.waitForTimeout(220);assert.equal(await e.locator('#archShuffle,#archRepeat').count(),0);await e.locator('#archMiniArt').click();assert.equal(await e.locator('#archMiniArt .v').textContent(),'On');await eback();assert(await e.locator('#s-room-menu').isVisible());await eback();
  await e.emulateMedia({reducedMotion:'reduce'});await e.locator('.nav [data-sheet=scenes]').click();assert.equal(await e.locator('#s-scenes').evaluate(x=>getComputedStyle(x).animationName),'none');await eback();
  await e.locator('#archMenu').click();await e.waitForTimeout(220);await e.locator('#archRoomLinks [data-sheet=settings]').click();await e.waitForTimeout(220);await e.locator('#s-settings [data-sheet=display]').click();await e.waitForTimeout(220);assert.equal(await e.locator('#glassRow,#stGlass').count(),0);await eback();await e.locator('#s-settings [data-sheet=diagnostics]').click();await e.waitForTimeout(220);await e.locator('#diagRow').click();assert(await e.locator('#scrollTestRow').isVisible());
  assert.deepEqual(edit.errors,[]);await e.close();check('preview navigation, scene capture and failure, membership, drag protection, colour, effects and diagnostics');
@@ -189,7 +239,7 @@ const states=[
   if(process.env.SCREENSHOTS_DIR){await home();await q.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,theme+'-translucent-home.png')});}
   assert.deepEqual(f.errors,[]);await q.close();check(theme+' real-touch swipe order, boundaries, controls, back buttons and all palette translucency');
  }
- const empty=await fixture({...config,media:{},sensors:{temperature:'sensor.temperature'},lights:[]});await empty.page.locator('.nav [data-sheet=media]').click();await empty.page.waitForTimeout(260);for(const id of ['pp','prev','next','shuf','rep'])await empty.page.locator('#'+id).click();await empty.page.locator('#icoSearch').click();await empty.page.waitForTimeout(260);assert.equal(await empty.page.locator('#bList').textContent(),'No speakers configured');assert.deepEqual(empty.errors,[]);await empty.page.close();check('unconfigured media does not throw or send commands');
+ const empty=await fixture({...config,media:{},sensors:{temperature:'sensor.temperature'},lights:[]});await empty.page.locator('.nav [data-sheet=media]').click();await empty.page.waitForTimeout(260);for(const id of ['pp','prev','next','shuf','rep']){assert(await empty.page.locator('#'+id).isDisabled());await empty.page.locator('#'+id).evaluate(b=>b.click());}assert.equal(await empty.page.evaluate(()=>window.testCalls.length),0);await empty.page.locator('#icoSearch').click();await empty.page.waitForTimeout(260);assert.equal(await empty.page.locator('#bList').textContent(),'No speakers configured');assert.deepEqual(empty.errors,[]);await empty.page.close();check('unconfigured media does not throw or send commands');
  const pinned=await fixture({...config,display:{...config.display,hide_nav_on_sheets:false}});
  await pinned.page.locator('.nav [data-sheet=media]').click();await pinned.page.waitForTimeout(260);
  assert(await pinned.page.locator('.nav').isVisible());
@@ -313,16 +363,16 @@ const states=[
  await q.locator('.nav [data-sheet=media]').click();await q.waitForTimeout(250);
  for(const [width,height] of [[720,1280],[480,800],[360,640]]){
   await q.setViewportSize({width,height});await q.waitForTimeout(100);
-  const art=await q.locator('#mpArt').boundingBox(),volume=await q.locator('.mp-vol').boundingBox(),bottom=await q.locator('.mp-bottom').boundingBox(),transport=await q.locator('.mp-transport').boundingBox();
+  const art=await q.locator('#mpArt').boundingBox(),volume=await q.locator('.mp-vol').boundingBox(),bottom=await q.locator('#s-media').boundingBox(),transport=await q.locator('.mp-transport').boundingBox();
   assert(Math.abs(art.x+art.width/2-width/2)<2,'album is centred');assert(Math.abs(art.width-art.height)<2,'album stays square');
   assert(volume.y>=transport.y+transport.height-1,'volume below transport');
-  assert(volume.y+volume.height<=bottom.y+1,'volume above navigation');
+  assert(volume.y+volume.height<=bottom.y+bottom.height+1,'volume fits above navigation');
   assert(bottom.y+bottom.height<=height+1,'bottom controls fit');
-  assert(art.width>=width*.60,'album fills the available width');
+  assert(art.width>=width*.5,'large album fits the available height');
   const times=await q.locator('.mp-times').boundingBox();
   assert(transport.y-(times.y+times.height)<12,'timer sits immediately above transport');
   assert(volume.y-(transport.y+transport.height)<12,'transport sits immediately above volume');
-  assert(await q.locator('.mp-vol>svg').isVisible());assert.equal(await q.locator('#archVolumeLabel').count(),0);
+  assert(await q.locator('#mpVolumeButton svg').isVisible());assert.equal(await q.locator('#archVolumeLabel').count(),0);
  }
  assert.deepEqual(player.errors,[]);await q.close();check('centred album art and bottom volume at panel sizes');
  const gf=await fixture({...config,display:{...config.display,touch_gesture:'lights',touch_points:3,touch_hold_ms:100}}),g=gf.page;
@@ -385,12 +435,12 @@ const states=[
     assert(geometry.buttons.every(b=>b.box.width>=44&&b.box.height>=44&&b.label),'44px targets and accessible names');
     assert.equal(await q.locator('.nav button.on').evaluate(x=>getComputedStyle(x,'::after').height),'3px','active underline');
     if(name==='media'){
-     const art=await q.locator('#mpArt').boundingBox(),title=await q.locator('#mTitle').boundingBox(),volume=await q.locator('.mp-vol').boundingBox(),bottom=await q.locator('.mp-bottom').boundingBox(),transport=await q.locator('.mp-transport').boundingBox(),times=await q.locator('.mp-times').boundingBox();
+     const art=await q.locator('#mpArt').boundingBox(),title=await q.locator('#mTitle').boundingBox(),volume=await q.locator('.mp-vol').boundingBox(),bottom=await q.locator('#s-media').boundingBox(),transport=await q.locator('.mp-transport').boundingBox(),times=await q.locator('.mp-times').boundingBox();
      assert(Math.abs(art.width-art.height)<2&&Math.abs(art.x+art.width/2-width/2)<2,'centred square album');
      assert(title.y>=art.y+art.height-1,'title below artwork');
      assert(times.y>=title.y+title.height-1,'timer below title');
      assert(volume.y>=transport.y+transport.height-1,'volume below transport');
-     assert(bottom.y>=volume.y+volume.height-1,'music actions below volume');
+     assert(volume.y+volume.height<=bottom.y+bottom.height+1,'compact volume fits above navigation');
      assert(bottom.y+bottom.height<=geometry.sheet.bottom+1,JSON.stringify({theme,width,geometry,bottom}));
     }
     if(process.env.SCREENSHOTS_DIR&&width===720&&['scenes','media'].includes(name))await q.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,theme+'-compact-'+name+'.png')});
