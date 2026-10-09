@@ -19,11 +19,14 @@ The Python check needs the server requirements and httpx. The browser check
 needs Playwright in the development environment only; set `PLAYWRIGHT_CHANNEL`
 to `msedge` to use installed Edge, or install Playwright Chromium. Optionally
 set `SCREENSHOTS_DIR` to save screenshots. It uses stubbed HA/agent responses,
-exercises both navigation visibility settings and all three themes, and runs
+exercises hidden and compact navigation settings in all three themes, and runs
 the existing slider drag regression test against the shipped HTML.
 Real browser touch events cover swipe order, boundaries, cancellation, wake,
 slider isolation and scene-button click suppression. It also checks all six
 palette surfaces and the shared back-button reset across the three themes.
+Compact navigation checks cover Home labels, stationary icon positions and
+underlines through swipe animation frames, accessible touch targets, nested
+page selection, and player layout above the rail at 320/480/720px widths.
 
 The media admin browser check uses the real server under the ingress prefix,
 with deterministic HA entities. Set `PANEL_DB` to a scratch database and

@@ -103,10 +103,9 @@ DEFAULT_TEMPLATE = {
         # warm, borderless one. A theme changes only appearance -- every
         # measurement and every control is the same in both.
         "theme": "default",
-        # Whether a sub-page covers the navbar. It always did; the Ambient
-        # theme puts an active marker on the navbar, which is invisible if the
-        # bar is covered the moment you navigate.
-        "hide_nav_on_sheets": True,
+        # Compact icons remain visible on subpages; Home also shows labels.
+        # Keep the hidden mode for panels explicitly configured to use it.
+        "hide_nav_on_sheets": False,
         # The thumbnail on the now-playing strip. The full player's artwork is
         # the page itself and is never hidden; this is only about whether a
         # 72px thumbnail earns its width on a bar that is mostly a title.
