@@ -128,13 +128,20 @@ const states=[
    const x=options.x??350,y=options.y??600;
    await session.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
    for(let i=1;i<=5;i++)await session.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x+dx*i/5,y:y+dy*i/5}]});
+   await q.evaluate(()=>{
+    window.navFrames=[];const until=performance.now()+220;
+    const sample=()=>{const sheet=document.querySelector('.sheet.on');window.navFrames.push({sheet:sheet?.id,opacity:sheet?+getComputedStyle(sheet).opacity:1,visibility:getComputedStyle(document.querySelector('.nav')).visibility});if(performance.now()<until)requestAnimationFrame(sample);};requestAnimationFrame(sample);
+   });
    await session.send('Input.dispatchTouchEvent',{type:options.cancel?'touchCancel':'touchEnd',touchPoints:[]});
    await q.waitForTimeout(240);
+   const frames=await q.evaluate(()=>window.navFrames);assert(frames.length>0);
+   assert(frames.every(f=>f.visibility===(f.sheet?'hidden':'visible')),theme+' nav must never flash through a fading page: '+JSON.stringify(frames));
   };
   const current=()=>q.evaluate(()=>document.querySelector('.sheet.on')?.id||'home');
   const home=async()=>{for(let n=0;await current()!=='home'&&n<6;n++){await q.locator('.sheet.on [data-close]').click();await q.waitForTimeout(260);}assert.equal(await current(),'home');};
   const ordered=['s-scenes','s-lights','s-climate','s-blinds','s-media'];
   for(const name of ordered){await swipe(-170);assert.equal(await current(),name,theme+' forward swipe');}
+  assert((await q.evaluate(()=>window.navFrames)).some(f=>f.opacity<1),'sample the transition, not just its final state');
   await swipe(-170);assert.equal(await current(),'s-media','last screen does not wrap');
   for(const name of ['s-blinds','s-climate','s-lights','s-scenes','home']){await swipe(170);assert.equal(await current(),name,theme+' reverse swipe');}
   await swipe(170);assert.equal(await current(),'home','home boundary');
@@ -319,7 +326,9 @@ const states=[
  }
  assert.deepEqual(player.errors,[]);await q.close();check('centred album art and bottom volume at panel sizes');
  const gf=await fixture({...config,display:{...config.display,touch_gesture:'lights',touch_points:3,touch_hold_ms:100}}),g=gf.page;
- await g.clock.install();
+ // Keep the 599 ms boundary independent of real time between tool round trips.
+ await g.clock.install({time:new Date('2026-10-09T12:00:00Z')});
+ await g.clock.pauseAt(new Date('2026-10-09T12:00:01Z'));
  const touchEvent=async(type,n,selector='body',move=0)=>g.evaluate(({type,n,selector,move})=>{
   const target=document.querySelector(selector),touches=Array.from({length:n},(_,identifier)=>new Touch({identifier,target,clientX:200+identifier*40+move,clientY:550}));
   target.dispatchEvent(new TouchEvent(type,{bubbles:true,cancelable:true,touches,targetTouches:touches,changedTouches:touches}));
