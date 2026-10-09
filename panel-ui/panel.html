@@ -165,6 +165,9 @@ body.theme-ambient .lamp .slider .knob{width:20px;height:20px}
 .nav button.on{color:var(--accent)}
 .nav .temp{font-size:32px;font-weight:300;line-height:30px;font-variant-numeric:tabular-nums}
 .nav .temp sup{font-size:15px;vertical-align:super}
+/* A fading or translated page cannot hide the home nav by occlusion alone.
+   Hide it for the whole page state, including the first animation frame. */
+body.sheet-open:not(.nav-always)>.nav{visibility:hidden;pointer-events:none}
 
 .sheet{position:absolute;left:0;right:0;top:0;bottom:0;z-index:45;padding:0 32px;
   border-radius:34px 34px 0 0;background:var(--sheet-bg);
