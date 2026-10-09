@@ -41,6 +41,16 @@ Then **Settings → Devices & Services → Add Integration → Pi Panel**.
 
 Full notes, including what it asks for and why: [docs/INTEGRATION.md](docs/INTEGRATION.md).
 
+## Panel navigation and appearance
+
+On the panel, swipe left or right through the bottom navigation in order:
+Scenes, Lights, Climate, Covers (Blinds), Music. Home sits before Scenes;
+swiping right from Scenes returns home. The ends do not wrap. Sliders, vertical
+scrolling, submenus and three-finger lighting gestures retain their own actions.
+Default and Ambient open Settings from the top-right three-dot button.
+Every theme and palette uses a fixed, static translucent finish; the Glass
+setting has been removed. No live backdrop blur is required.
+
 ## The config server
 
 Runs as a Home Assistant add-on, behind ingress. It provisions panels over SSH

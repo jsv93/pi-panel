@@ -12,6 +12,7 @@ const {chromium}=require('playwright'),assert=require('node:assert/strict'),path
  const page=await context.newPage(),errors=[],failures=[];
  page.on('pageerror',e=>errors.push(e.message));page.on('response',r=>{if(r.status()>=400)failures.push(r.url()+' '+r.status());});
  await page.goto(base+'/');await page.waitForSelector('#app:visible');await page.evaluate(()=>openPanel('media-qa'));
+ assert.equal(await page.locator('#fGlass').count(),0);
  assert.match(await page.locator('#diagStrip').textContent(),/RAM\s*—/);
  for(const [used,pct,expected] of [[448,43.8,'43.8% · 448 / 1,024 MiB'],[0,0,'0.0% · 0 / 1,024 MiB']]){
   assert((await api.post(base+'/api/heartbeat',{data:{panel_id:'media-qa',metrics:{ram_used_mb:used,ram_total_mb:1024,ram_used_pct:pct}}})).ok());

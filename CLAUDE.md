@@ -57,7 +57,7 @@ Corollaries:
 
 Three things, and the list is closed:
 
-- its own screen — backlight, glass tier, diagnostics, wifi (local, not config)
+- its own screen — backlight, diagnostics, wifi (local, not config)
 - the Soft and Bright **levels**, captured from whatever is on the sliders
 - whether one light **takes part** in Soft and Bright
 
@@ -83,21 +83,20 @@ ran.
 
 ## Panel UI performance constraints (measured, not theoretical)
 
-The Pi 5 renders 720x1280 with `backdrop-filter` glass. Frame budget is tight:
+The Pi 5 renders 720x1280. Measurements with `backdrop-filter` glass established
+these limits; the current UI uses static translucent surfaces:
 
 - **Never animate `filter`** — forces re-rasterisation every frame. Use
   `transform` and `opacity` only; both are compositor-only.
 - **Never animate `width`/`height`** — layout properties. Slider fills use
   `transform: scaleX()` for this reason.
 - Blur radius costs scale with radius. Lists of many `backdrop-filter` elements
-  will tank frame rate; keep glass on hero elements only.
-- The glass tier toggle in Settings exists to A/B this. Don't remove it. It now
-  ships at "Off": measured, the three glass surfaces (.tile, .nav, .sheet) cost
-  24 composited blur passes a frame and produce nothing visible, because every
-  one of them sits at 74-98% opacity over a near-black page whose only detail is
-  two very soft radial gradients. A blur needs high-frequency content behind it
-  and this UI has none. Ambient never had glass at all, which is the whole of
-  why it measured faster.
+  will tank frame rate.
+- All themes use static translucent surfaces, matching Architectural/Linen.
+  Glass-tier controls were removed at the user's request. Do not reintroduce
+  live backdrop blur: the previous three surfaces (.tile, .nav, .sheet) cost
+  24 composited blur passes per frame. Legacy glass_tier configuration remains
+  accepted for older agents but does not change the current UI.
 - Theme and palette are separate. A theme is structure -- geometry, type,
   whether a surface has an edge. A palette is colour. Anything colour-shaped in
   a theme block is a bug; put it in the palette tokens so it works under both.

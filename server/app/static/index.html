@@ -466,15 +466,6 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
                 <option value="linen">Linen — soft, warm neutral</option></select>
                 <div class="muted" style="font-size:12px;margin-top:5px">Colour only.
                   Any palette works under every theme.</div></div>
-              <div><div class="lbl">GLASS TIER</div><select id="fGlass">
-                <option value="3">Off — recommended</option>
-                <option value="2">Tiles only</option>
-                <option value="1">No sheet</option>
-                <option value="0">Full</option></select>
-                <div class="muted" style="font-size:12px;margin-top:5px">Measured as
-                  24 blur surfaces a frame for an effect this UI's own content is too
-                  dark and too soft to show. Kept as an A/B. No effect under Ambient or Architectural,
-                  which do not use live blur.</div></div>
               <div><div class="lbl">NAVBAR ON SUB-PAGES</div><select id="fHideNav">
                 <option value="1">Hidden — sub-pages cover it</option>
                 <option value="0">Always visible</option></select></div>
@@ -878,7 +869,6 @@ function fillConfigForm(){
   $('#fBackgroundColour').value=background.colour||'#2b2018';
   $('#fBackgroundUpload').value='';$('#fBackgroundStatus').textContent='';paintBackgroundForm();
   $("#fIdle").value = d.idle_timeout_s ?? 45;
-  $("#fGlass").value = d.glass_tier ?? 3;
   $("#fTheme").value = d.theme || "default";
   $("#fPalette").value = d.palette || "";
   const dl = CFG.dali||{};
@@ -1186,7 +1176,7 @@ function collect(){
   CFG.sensors = {temperature:$("#fTemp").value, humidity:$("#fHum").value,
                  climate:$("#fClimate").value};
   CFG.dali = {gateway:$("#fDaliGw").value.trim(), poll_s:+$("#fDaliPoll").value||0};
-  CFG.display = {background:{mode:$('#fBackground').value,colour:$('#fBackgroundColour').value,image:backgroundImage},idle_timeout_s:+$("#fIdle").value, glass_tier:+$("#fGlass").value, theme:$("#fTheme").value, palette:$("#fPalette").value,
+  CFG.display = {background:{mode:$('#fBackground').value,colour:$('#fBackgroundColour').value,image:backgroundImage},idle_timeout_s:+$("#fIdle").value, glass_tier:CFG.display.glass_tier ?? 3, theme:$("#fTheme").value, palette:$("#fPalette").value,
                  backlight_default:+$("#fBlDef").value, backlight_min:+$("#fBlMin").value,
                  backlight_off_s:+$("#fBlOff").value,
                  dsi_overlay:$("#fDsiOverlay").value.trim(),
