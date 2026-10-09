@@ -27,6 +27,9 @@ palette surfaces and the shared back-button reset across the three themes.
 Compact navigation checks cover Home labels, stationary icon positions and
 underlines through swipe animation frames, accessible touch targets, nested
 page selection, and player layout above the rail at 320/480/720px widths.
+Music checks cover the playback icon hierarchy, compact volume popup, held
+slider protection during HA updates, keyboard volume/seek, shuffle/repeat,
+Browse and Queue access, and reduced-motion progress in all three themes.
 
 The media admin browser check uses the real server under the ingress prefix,
 with deterministic HA entities. Set `PANEL_DB` to a scratch database and
