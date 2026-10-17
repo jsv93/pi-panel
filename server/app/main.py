@@ -700,6 +700,8 @@ _HA_URL_RE = re.compile(
 def check_config(cfg):
     if not isinstance(cfg, dict):
         raise HTTPException(400, "config must be an object")
+    if "bluetooth" in cfg:
+        check_bluetooth(cfg["bluetooth"])
     if isinstance(cfg.get("display"), dict) and "background" in cfg["display"]:
         try:
             backgrounds.validate(cfg["display"]["background"])
@@ -713,6 +715,15 @@ def check_config(cfg):
     url = conn.get("ha_url")
     if url not in (None, "") and (not isinstance(url, str) or not _HA_URL_RE.match(url)):
         raise HTTPException(400, "connection.ha_url must be a host or an http(s) address")
+
+
+def check_bluetooth(value):
+    if not isinstance(value, dict):
+        raise HTTPException(400, "bluetooth must be an object")
+    if set(value) - {"mode"}:
+        raise HTTPException(400, "unknown Bluetooth setting")
+    if value.get("mode", "existing") not in ("existing", "on", "off"):
+        raise HTTPException(400, "Bluetooth mode must be existing, on or off")
 
 
 # ---------------------------------------------------------------- panel auth
@@ -1198,6 +1209,25 @@ async def put_config(panel_id: str, request: Request):
     v = db.save_config(panel_id, data)
     pushed = await notify(panel_id, {"type": "config_updated", "version": v})
     return {"version": v, "pushed": pushed}
+
+
+@app.patch("/api/panels/{panel_id}/bluetooth", dependencies=[Depends(require_admin), Depends(require_config_owner)])
+async def put_bluetooth(panel_id: str, request: Request):
+    panel = db.get_panel(panel_id)
+    if not panel:
+        raise HTTPException(404, "unknown panel")
+    if panel.get("kind") != "pi":
+        raise HTTPException(400, "Bluetooth scanner management requires a Pi panel")
+    try:
+        value = await request.json()
+    except ValueError:
+        raise HTTPException(400, "not valid JSON")
+    check_bluetooth(value)
+    cfg = db.get_config(panel_id) or {}
+    cfg["bluetooth"] = {**db.merged_config(panel_id).get("bluetooth", {}), **value}
+    version = db.save_config(panel_id, cfg)
+    pushed = await notify(panel_id, {"type": "config_updated", "version": version})
+    return {"version": version, "pushed": pushed}
 
 
 @app.get("/api/panels/{panel_id}/config/export", dependencies=[Depends(require_admin)])

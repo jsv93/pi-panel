@@ -78,6 +78,9 @@ DEFAULT_TEMPLATE = {
     # only if measurement shows it does not; the manual contradicts itself and
     # the hardware is the arbiter. See docs/DALI-INTEGRATION.md.
     "dali": {"gateway": "", "poll_s": 0},
+    # Observe existing installations until the operator opts into management.
+    # An upgrade must not stop the Bluetooth trial or turn on an unused radio.
+    "bluetooth": {"mode": "existing"},
     "media": {"default_speaker": "", "default_speaker_name": "", "speakers": []},
     "sensors": {"temperature": "", "humidity": "", "climate": ""},
     "display": {
