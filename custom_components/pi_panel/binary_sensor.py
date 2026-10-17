@@ -15,6 +15,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import PiPanelEntry
 from .entity import PanelEntity
+from .discovery import watch_panels
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -47,11 +48,8 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: PiPanelEntry, add: AddEntitiesCallback
 ) -> None:
     coordinator = entry.runtime_data
-    add(
-        PanelBinarySensor(coordinator, pid, desc)
-        for pid in coordinator.data
-        for desc in BINARY_SENSORS
-    )
+    watch_panels(entry, add, lambda pid: (
+        PanelBinarySensor(coordinator, pid, desc) for desc in BINARY_SENSORS))
 
 
 class PanelBinarySensor(PanelEntity, BinarySensorEntity):

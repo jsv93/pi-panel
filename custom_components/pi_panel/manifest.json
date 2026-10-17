@@ -1,7 +1,7 @@
 {
   "domain": "pi_panel",
   "name": "Pi Panel",
-  "version": "0.10.0",
+  "version": "0.19.0",
   "codeowners": [
     "@jsv93"
   ],

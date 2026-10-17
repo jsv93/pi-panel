@@ -371,6 +371,22 @@ systemctl restart panel-agent panel-backlight
 
 echo "    agent server: $(systemctl show -p Environment --value panel-agent | tr ' ' '\n' | grep PANEL_SERVER || echo '(unset)')"
 
+# All installation paths (SSH, first boot and manual bootstrap) converge here.
+# A scanner failure must never strand the display. The agent exposes the failure
+# in Room detection; subsequent normal agent updates never run this installer.
+echo "==> Bluetooth scanner"
+if curl -fsSL "$SERVER/bundle/install-bluetooth.py" -o /opt/panel/install-bluetooth.py && \
+   curl -fsSL "$SERVER/bundle/bt-proxy-3929ecb.tar.gz" -o /opt/panel/bt-proxy-3929ecb.tar.gz; then
+  if ! python3 /opt/panel/install-bluetooth.py \
+       --archive /opt/panel/bt-proxy-3929ecb.tar.gz --panel-id "$PANEL_ID" \
+       --ha-url __BLUETOOTH_HA_Q__ --mode __BLUETOOTH_MODE_Q__; then
+    echo "WARNING: Bluetooth setup incomplete; see Room detection. Panel setup continues." >&2
+  fi
+else
+  echo '{"status":"Installation incomplete: scanner bundle download failed","managed":false}' > /opt/panel/bluetooth-provision.json
+  echo "WARNING: scanner download failed; panel setup continues." >&2
+fi
+
 echo "==> waiting for the agent to reach the server"
 for _ in $(seq 1 20); do
   # Tolerant of spacing: FastAPI emits {"seen":true} with no space, and an
@@ -1660,15 +1676,19 @@ async def bootstrap(request: Request, t: str = ""):
         print(f"[server] {pid}: installing, so its token is reset for a fresh claim")
     # The DSI overlay is per panel: a 5-inch and a 4.3-inch Waveshare need
     # different lines, and the official display needs none at all.
-    overlay = (db.merged_config(pid).get("display") or {}).get("dsi_overlay", "")
+    config = db.merged_config(pid)
+    overlay = (config.get("display") or {}).get("dsi_overlay", "")
     body = (BOOTSTRAP
             .replace("__SERVER__", _server_url(request))
             .replace("__PANEL_ID__", pid)
-            .replace("__DSI_OVERLAY_Q__", shlex.quote(overlay or "")))
+            .replace("__DSI_OVERLAY_Q__", shlex.quote(overlay or ""))
+            .replace("__BLUETOOTH_HA_Q__", shlex.quote((config.get("connection") or {}).get("ha_url") or "http://homeassistant.local:8123"))
+            .replace("__BLUETOOTH_MODE_Q__", shlex.quote((config.get("bluetooth") or {}).get("mode", "existing"))))
     return Response(content=body, media_type="text/x-shellscript")
 
 
 BUNDLE_FILES = ("panel.html", "panel-agent.py", "backlight.py", "kiosk-launch.sh",
+                "install-bluetooth.py", "bt-proxy-3929ecb.tar.gz",
                 "outfit-200.woff2", "outfit-300.woff2",
                 "outfit-400.woff2", "outfit-500.woff2")
 

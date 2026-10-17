@@ -1480,6 +1480,19 @@ async def bluetooth_loop():
             sample = await reconcile_bluetooth(cfg.get("bluetooth") or {})
         except Exception as error:
             sample = {"bluetooth_status": str(error)[:150]}
+        try:
+            provision = json.loads((PANEL_DIR / "bluetooth-provision.json").read_text())
+            # Only the provisioning installer opts hardware into HA enrollment.
+            # Existing Study/third-party scanners must not be reconfigured.
+            sample["bluetooth_managed"] = bool(provision.get("managed") and
+                                               provision.get("panel_id") == PANEL_ID)
+            sample["bluetooth_provision"] = provision.get("status", "Unknown")
+            if sample["bluetooth_managed"]:
+                sample["bluetooth_mac"] = provision.get("mac", "")
+            elif not sample.get("bluetooth_installed"):
+                sample["bluetooth_status"] = provision.get("status", sample.get("bluetooth_status"))
+        except (OSError, ValueError, TypeError):
+            pass
         BLUETOOTH_METRICS.clear()
         BLUETOOTH_METRICS.update(sample, bluetooth_sample_at=time.time())
         await asyncio.sleep(15)

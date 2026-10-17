@@ -474,6 +474,10 @@ def create_provisional_panel(room, template, room_label=None):
         )
     cfg = merged_config(panel_id)
     cfg["room_label"] = room_label or room or cfg.get("room_label", "Room")
+    # Fresh hardware opts in; legacy/default templates remain observe-only.
+    # A template explicitly set to Disabled remains disabled.
+    if (cfg.get("bluetooth") or {}).get("mode", "existing") == "existing":
+        cfg["bluetooth"] = {"mode": "on"}
     save_config(panel_id, cfg)
     return panel_id
 
