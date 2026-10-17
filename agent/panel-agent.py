@@ -467,6 +467,7 @@ def metrics():
     m.update(backlight_state())
     m.update(disk_writes())
     m.update(memory_usage())
+    m.update(BLUETOOTH_METRICS)
     m["presence"] = PRESENCE_STATE
     # Same reasoning as presence: a gateway that is not answering should say
     # so where it can be read, not only in the journal.
@@ -1381,6 +1382,109 @@ async def dali_state_ep(request):
     return web.json_response(dali_public())
 
 
+# A scanner is a separate optional service. Managing it here uses the signed,
+# cached config and still works while HA or the config server is unavailable.
+# Never accept a service name/command from configuration. Keep the installed
+# Study pilot identity: replacing it would orphan HA's scanner calibration.
+BLUETOOTH_UNITS = ("panel-bt-proxy.service", "study-bt-proxy.service")
+BLUETOOTH_METRICS = {"bluetooth_status": "Checking scanner"}
+
+
+async def bluetooth_command(*args):
+    proc = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "systemctl", *args, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE)
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=12)
+        return proc.returncode == 0, out.decode(errors="replace").strip(), err.decode(errors="replace").strip()
+    except asyncio.CancelledError:
+        if proc and proc.returncode is None:
+            proc.kill()
+            await proc.communicate()
+        raise
+    except Exception as error:
+        if proc and proc.returncode is None:
+            proc.kill()
+            await proc.communicate()
+        return False, "", type(error).__name__
+
+
+async def bluetooth_sample():
+    found = []
+    for unit in BLUETOOTH_UNITS:
+        ok, output, error = await bluetooth_command(
+            "show", unit, "--property=LoadState,ActiveState,UnitFileState,MainPID", "--no-pager")
+        props = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+        if not ok and props.get("LoadState") != "not-found":
+            raise RuntimeError("Cannot inspect scanner service")
+        if props.get("LoadState") not in (None, "not-found"):
+            found.append((unit, props))
+    if len(found) > 1:
+        raise RuntimeError("Multiple scanner services installed; resolve before managing")
+    return found[0] if found else (None, {})
+
+
+async def reconcile_bluetooth(cfg):
+    mode = cfg.get("mode", "existing")
+    if mode not in ("existing", "on", "off"):
+        raise RuntimeError("Invalid scanner configuration; service unchanged")
+    unit, props = await bluetooth_sample()
+    if not unit:
+        return {"bluetooth_status": "Scanner not installed", "bluetooth_installed": False}
+    # State comparison makes a heartbeat idempotent. A missing/failed/blocked
+    # service is reported, never hidden by restarting it on every loop.
+    if mode != "existing":
+        if props.get("LoadState") != "loaded":
+            raise RuntimeError("Scanner service is not loaded; inspect its installation")
+        enabled = props.get("UnitFileState") == "enabled"
+        want_boot = mode == "on"
+        commands = []
+        if enabled != want_boot:
+            commands.append(("enable" if want_boot else "disable", unit))
+        active = props.get("ActiveState")
+        if mode == "on" and active == "inactive":
+            commands.append(("start", unit))
+        elif mode == "off" and active not in ("inactive", "failed"):
+            commands.append(("stop", unit))
+        for command in commands:
+            ok, _, _ = await bluetooth_command(*command)
+            if not ok:
+                raise RuntimeError("Scanner change failed; inspect service permissions/logs")
+        if commands:
+            unit, props = await bluetooth_sample()
+    active = props.get("ActiveState", "unknown")
+    result = {"bluetooth_installed": True, "bluetooth_service": unit,
+              "bluetooth_active": active == "active",
+              "bluetooth_boot": props.get("UnitFileState", "unknown"),
+              "bluetooth_status": {"active": "Running", "inactive": "Stopped",
+                                   "failed": "Failed — inspect scanner logs"}.get(active, active),
+              "bluetooth_adapter": "hci0" if Path("/sys/class/bluetooth/hci0").exists() else "Not detected"}
+    try:
+        pid = int(props.get("MainPID", "0"))
+        if pid > 0:
+            for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+                if line.startswith("VmRSS:"):
+                    result["bluetooth_memory_mb"] = round(int(line.split()[1]) / 1024, 1)
+    except (OSError, ValueError, IndexError):
+        pass
+    return result
+
+
+async def bluetooth_loop():
+    while True:
+        try:
+            # Missing config means observation, not disable. Invalid data must
+            # not change an existing service or stop other agent tasks.
+            cfg = json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
+            sample = await reconcile_bluetooth(cfg.get("bluetooth") or {})
+        except Exception as error:
+            sample = {"bluetooth_status": str(error)[:150]}
+        BLUETOOTH_METRICS.clear()
+        BLUETOOTH_METRICS.update(sample, bluetooth_sample_at=time.time())
+        await asyncio.sleep(15)
+
+
 async def main():
     print(f"[agent] {PANEL_ID} ({HOSTNAME}) -> {SERVER}")
     await serve_ui()                      # start serving immediately: the panel
@@ -1405,7 +1509,7 @@ async def main():
         # used to sit in the same gather as everything else, behind the
         # register loop below -- so with the server down at boot, neither ever
         # started. Now they start here, whatever the server is doing.
-        await asyncio.gather(server_side(session), presence_loop(), dali_loop())
+        await asyncio.gather(server_side(session), presence_loop(), dali_loop(), bluetooth_loop())
 
 
 async def server_side(session):

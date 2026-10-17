@@ -71,6 +71,10 @@ h2{font-size:14px;font-weight:600}
 .nav div:hover{color:var(--ink);background:rgba(255,255,255,.04)}
 .nav div.on{background:var(--ok-soft);color:var(--ok);font-weight:500}
 .sect{display:none} .sect.on{display:block}
+.sect[data-s="tracking"] .hint,.sect[data-s="tracking"] .muted{color:var(--quiet)}
+.sect[data-s="tracking"] .lbl{color:var(--dim);display:block}
+.sect[data-s="tracking"] .btn{min-height:44px;display:inline-flex;align-items:center;text-decoration:none}
+#bluetoothStatus{color:var(--ink)}
 .f2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 /* Named groups inside a section. Display had grown to fourteen controls in two
    undifferentiated grids, and finding the one you just added meant reading all
@@ -315,6 +319,7 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
         <div data-s="lights">Lights &amp; presets</div>
         <div data-s="media">Media</div>
         <div data-s="sensors">Sensors</div>
+        <div data-s="tracking">Room detection</div>
         <div data-s="display">Display</div>
         <div data-s="diag">Diagnostics</div>
       </div>
@@ -443,6 +448,46 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
             <p class="hint">Its setpoint is the tile on the panel's home screen, with plus
               and minus. Leave empty and the tile is hidden.</p>
             <select id="fClimate"></select>
+          </div>
+        </div>
+
+        <div class="sect" data-s="tracking">
+          <h2 style="margin-bottom:14px">Room detection</h2>
+          <div class="grp">
+            <h3>Bluetooth scanner</h3>
+            <p class="hint">This Pi listens for nearby phones and tags. ESPHome carries the
+              readings to Home Assistant; Bermuda compares receivers to identify the room.</p>
+            <div class="f2">
+              <div><label class="lbl" for="fBluetoothMode">SCANNER</label>
+                <select id="fBluetoothMode">
+                  <option value="existing">Keep existing setup</option>
+                  <option value="on">Enabled · managed by Panel Server</option>
+                  <option value="off">Disabled · managed by Panel Server</option>
+                </select>
+              </div>
+            </div>
+            <p id="bluetoothModeHint" class="muted" style="font-size:12px;margin-top:10px"></p>
+            <div style="display:flex;gap:10px;align-items:center;margin-top:14px">
+              <button class="btn primary" id="saveBluetoothBtn">Apply scanner settings</button>
+              <button class="btn" id="refreshBluetoothBtn">Refresh status</button>
+            </div>
+            <div id="bluetoothStatus" class="diag" aria-live="polite"></div>
+            <p class="muted" style="font-size:12px;margin-top:12px">Status is reported by the panel;
+              allow up to 45 seconds after applying. Enabling requires an installed scanner service.</p>
+          </div>
+          <div class="grp">
+            <h3>Home Assistant devices</h3>
+            <p class="hint">Assign the ESPHome scanner to this panel's actual HA area. Choose
+              active/passive scanning in ESPHome and calibrate signal strength in Bermuda.</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <a class="btn" id="bluetoothEspLink" target="_blank" rel="noopener">ESPHome scanners ↗</a>
+              <a class="btn" id="bluetoothBermudaLink" target="_blank" rel="noopener">Bermuda tracking ↗</a>
+              <a class="btn" id="bluetoothPanelLink" target="_blank" rel="noopener">Pi Panel controls ↗</a>
+            </div>
+            <p class="muted" style="font-size:12px;margin-top:14px">Screen brightness, wake/sleep,
+              dimming and diagnostics remain on the Pi Panel device. Bluetooth tracking does not
+              replace the local presence sensor or change room lights. Mobile Follow my room
+              remains a per-user dashboard preference.</p>
           </div>
         </div>
 
@@ -853,6 +898,10 @@ function opts(list, val, blank="— none —"){
    panel record. Split out because loading a template refills exactly this and
    must leave hostname, room and the template picker alone. */
 function fillConfigForm(){
+  const bluetooth=CFG.bluetooth||{};
+  $('#fBluetoothMode').value=bluetooth.mode||'existing';
+  bluetoothFields();
+  paintBluetooth(CUR);
   $("#fRoomLabel").value = CFG.room_label||"";
   $("#fHaUrl").value = (CFG.connection||{}).ha_url||"";
   renderLights(); renderSpeakers();
@@ -898,6 +947,41 @@ async function loadTemplateList(sel){
   $("#fTemplate").innerHTML = html`${tpls.map(t=>
     html`<option value="${t.name}" ${t.name===sel?"selected":""}>${t.name}</option>`)}`;
 }
+function bluetoothFields(){
+  const mode=$('#fBluetoothMode').value;
+  $('#bluetoothModeHint').textContent=({existing:'Observe the scanner without changing its current service or startup setting.',on:'Run the installed scanner now and after reboots. This preserves its ESPHome identity and calibration.',off:'Stop the scanner and disable startup. Other Bluetooth devices and the panel interface stay available.'})[mode];
+}
+$('#fBluetoothMode').onchange=bluetoothFields;
+function paintBluetooth(detail){
+  const m=detail.panel.metrics||{},fresh=Number.isFinite(m.bluetooth_sample_at)&&Date.now()/1000-m.bluetooth_sample_at<90;
+  const rows=[['Scanner',fresh?(m.bluetooth_status||'Unknown'):'No recent scanner report'],
+    ['Service',m.bluetooth_service||'—'],['Start at boot',m.bluetooth_boot||'—'],
+    ['Adapter',m.bluetooth_adapter||'—'],['Scanner RAM',Number.isFinite(m.bluetooth_memory_mb)?m.bluetooth_memory_mb+' MiB':'—'],
+    ['ESPHome address',detail.panel.ip?detail.panel.ip+':6053':'—']];
+  $('#bluetoothStatus').innerHTML=html`${rows.map(([label,value])=>html`<div><div class="lbl">${label}</div><span>${value}</span></div>`)}`;
+  $('#saveBluetoothBtn').disabled=detail.panel.kind!=='pi';
+  let root=location.pathname.includes('/api/hassio_ingress/')?location.origin:(CFG.connection||{}).ha_url||'';
+  if(root&&!/^https?:\/\//i.test(root))root='http://'+root;
+  for(const [id,domain] of [['bluetoothEspLink','esphome'],['bluetoothBermudaLink','bermuda'],['bluetoothPanelLink','pi_panel']]){
+    const link=$('#'+id);
+    try{const url=new URL(root);if(!['http:','https:'].includes(url.protocol))throw Error();link.href=url.origin+'/config/integrations/integration/'+domain;link.style.display='';}
+    catch{link.removeAttribute('href');link.style.display='none';}
+  }
+}
+$('#refreshBluetoothBtn').onclick=async()=>{
+  const id=CUR.panel.id,button=$('#refreshBluetoothBtn');button.disabled=true;
+  try{const detail=await api('/panels/'+encodeURIComponent(id));if(CUR.panel.id===id)paintBluetooth(detail);}
+  catch(error){toast(error.message);}finally{button.disabled=false;}
+};
+$('#saveBluetoothBtn').onclick=async()=>{
+  const id=CUR.panel.id,button=$('#saveBluetoothBtn');button.disabled=true;
+  const value={mode:$('#fBluetoothMode').value};
+  try{
+    const result=await api('/panels/'+encodeURIComponent(id)+'/bluetooth',{method:'PATCH',body:JSON.stringify(value)});
+    if(CUR.panel.id===id)CFG.bluetooth=value;
+    toast(result.pushed?'Scanner settings saved — waiting for panel status':'Scanner settings saved — panel will apply when connected');
+  }catch(error){toast(error.message);}finally{button.disabled=CUR.panel.kind!=='pi';}
+};
 function ramUsage(m){
   const used=m.ram_used_mb,total=m.ram_total_mb,pct=m.ram_used_pct;
   if(![used,total,pct].every(Number.isFinite)||total<=0||used<0||used>total||pct<0||pct>100)return '—';
@@ -1169,6 +1253,7 @@ $("#addSpeaker").onclick=()=>{
   renderSpeakers(); };
 
 function collect(){
+  CFG.bluetooth={mode:$('#fBluetoothMode').value};
   CFG.room_label = $("#fRoomLabel").value;
   CFG.connection = {...(CFG.connection||{}), ha_url:$("#fHaUrl").value};
   CFG.media = {...(CFG.media||{}), default_speaker:$("#fSpeaker").value,
