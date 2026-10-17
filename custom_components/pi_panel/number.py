@@ -29,6 +29,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import PiPanelEntry
 from .coordinator import PanelServerError
 from .entity import PanelEntity
+from .discovery import watch_panels
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -82,11 +83,8 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: PiPanelEntry, add: AddEntitiesCallback
 ) -> None:
     coordinator = entry.runtime_data
-    add(
-        PanelNumberEntity(coordinator, pid, desc)
-        for pid in coordinator.data
-        for desc in NUMBERS
-    )
+    watch_panels(entry, add, lambda pid: (
+        PanelNumberEntity(coordinator, pid, desc) for desc in NUMBERS))
 
 
 class PanelNumberEntity(PanelEntity, NumberEntity):

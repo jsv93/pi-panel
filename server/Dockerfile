@@ -19,6 +19,8 @@ COPY panel-ui/panel.html      /srv/bundle/panel.html
 COPY agent/panel-agent.py     /srv/bundle/panel-agent.py
 COPY panel-ui/backlight.py    /srv/bundle/backlight.py
 COPY pi-os/kiosk-launch.sh    /srv/bundle/kiosk-launch.sh
+COPY pi-os/install-bluetooth.py /srv/bundle/install-bluetooth.py
+COPY pi-os/vendor/bt-proxy-3929ecb.tar.gz /srv/bundle/bt-proxy-3929ecb.tar.gz
 COPY panel-ui/outfit-*.woff2  /srv/bundle/
 
 VOLUME ["/data"]

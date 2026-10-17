@@ -13,6 +13,7 @@ from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, Platform
 from homeassistant.core import HomeAssistant
 
 from .coordinator import PanelCoordinator, PanelServer
+from .discovery import ScannerEnrollment
 
 PLATFORMS = [
     Platform.BINARY_SENSOR,
@@ -41,6 +42,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: PiPanelEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    entry.async_create_background_task(
+        hass, ScannerEnrollment(hass, coordinator).run(), "Pi Panel scanner enrollment")
     return True
 
 

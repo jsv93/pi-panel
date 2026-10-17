@@ -16,6 +16,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import PiPanelEntry
 from .coordinator import PanelServerError
 from .entity import PanelEntity
+from .discovery import watch_panels
 
 BUTTONS: tuple[ButtonEntityDescription, ...] = (
     # Not diagnostic or config: "which of these is the study one" is a question
@@ -46,11 +47,8 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: PiPanelEntry, add: AddEntitiesCallback
 ) -> None:
     coordinator = entry.runtime_data
-    add(
-        PanelButton(coordinator, pid, desc)
-        for pid in coordinator.data
-        for desc in BUTTONS
-    )
+    watch_panels(entry, add, lambda pid: (
+        PanelButton(coordinator, pid, desc) for desc in BUTTONS))
 
 
 class PanelButton(PanelEntity, ButtonEntity):

@@ -473,12 +473,13 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
             </div>
             <div id="bluetoothStatus" class="diag" aria-live="polite"></div>
             <p class="muted" style="font-size:12px;margin-top:12px">Status is reported by the panel;
-              allow up to 45 seconds after applying. Enabling requires an installed scanner service.</p>
+              allow up to 45 seconds after applying. New Pi installations include the scanner automatically. Older panels need an installed scanner before enabling.</p>
           </div>
           <div class="grp">
             <h3>Home Assistant devices</h3>
-            <p class="hint">Assign the ESPHome scanner to this panel's actual HA area. Choose
-              active/passive scanning in ESPHome and calibrate signal strength in Bermuda.</p>
+            <p class="hint">New scanners are added automatically by Pi Panel 0.19.0 or later in Home Assistant.
+              A matching room is assigned automatically; otherwise select its HA area in ESPHome.
+              Calibrate signal strength in Bermuda after mounting the panel.</p>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <a class="btn" id="bluetoothEspLink" target="_blank" rel="noopener">ESPHome scanners ↗</a>
               <a class="btn" id="bluetoothBermudaLink" target="_blank" rel="noopener">Bermuda tracking ↗</a>
@@ -955,6 +956,7 @@ $('#fBluetoothMode').onchange=bluetoothFields;
 function paintBluetooth(detail){
   const m=detail.panel.metrics||{},fresh=Number.isFinite(m.bluetooth_sample_at)&&Date.now()/1000-m.bluetooth_sample_at<90;
   const rows=[['Scanner',fresh?(m.bluetooth_status||'Unknown'):'No recent scanner report'],
+    ['Provisioning',m.bluetooth_provision||'Existing installation'],
     ['Service',m.bluetooth_service||'—'],['Start at boot',m.bluetooth_boot||'—'],
     ['Adapter',m.bluetooth_adapter||'—'],['Scanner RAM',Number.isFinite(m.bluetooth_memory_mb)?m.bluetooth_memory_mb+' MiB':'—'],
     ['ESPHome address',detail.panel.ip?detail.panel.ip+':6053':'—']];

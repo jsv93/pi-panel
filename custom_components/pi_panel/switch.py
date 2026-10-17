@@ -10,6 +10,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import PiPanelEntry
 from .coordinator import PanelServerError
 from .entity import PanelEntity
+from .discovery import watch_panels
 
 DIAGNOSTICS = SwitchEntityDescription(
     key="diagnostics",
@@ -22,7 +23,7 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: PiPanelEntry, add: AddEntitiesCallback
 ) -> None:
     coordinator = entry.runtime_data
-    add(PanelDiagnostics(coordinator, pid, DIAGNOSTICS) for pid in coordinator.data)
+    watch_panels(entry, add, lambda pid: [PanelDiagnostics(coordinator, pid, DIAGNOSTICS)])
 
 
 class PanelDiagnostics(PanelEntity, SwitchEntity):
