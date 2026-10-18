@@ -9,6 +9,7 @@ import secrets
 import sqlite3
 import time
 from contextlib import contextmanager
+from .screen import DEFAULTS as SCREEN_DEFAULTS
 
 DB_PATH = os.environ.get("PANEL_DB", "/data/panels.db")
 
@@ -84,6 +85,7 @@ DEFAULT_TEMPLATE = {
     "media": {"default_speaker": "", "default_speaker_name": "", "speakers": []},
     "sensors": {"temperature": "", "humidity": "", "climate": ""},
     "display": {
+        **SCREEN_DEFAULTS,
         "idle_timeout_s": 45,
         "backlight_default": 100,
         "backlight_min": 5,
