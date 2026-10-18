@@ -1533,7 +1533,11 @@ async def provision(request: Request):
     room = (b.get("room") or "").strip()
     if not room:
         raise HTTPException(400, "room is required")
-    pid = db.create_provisional_panel(room, b.get("template"), b.get("room_label"))
+    try:
+        pid = db.create_provisional_panel(room, b.get("template"), b.get("room_label"),
+                                          b.get('brightness_sensor', ''))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     token = db.create_token(pid)
     return {
         "panel_id": pid,

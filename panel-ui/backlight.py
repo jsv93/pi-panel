@@ -20,7 +20,7 @@ Then /etc/systemd/system/panel-backlight.service:
 
   sudo systemctl enable --now panel-backlight
 """
-import glob, json, os
+import glob, json, os, threading, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -80,6 +80,79 @@ def unblank(dev):
         pass
 
 
+class BrightnessRamp:
+    """One interruptible hardware fade. New requests retarget from the actual
+    level; zero cancels the fade and blanks immediately under the same lock.
+    HTTP requests return immediately, so a pending fade cannot delay blanking.
+    """
+    def __init__(self, clock=time.monotonic):
+        self.clock = clock
+        self.lock = threading.Lock()
+        self.dev = None
+        self.target = self.current = 0
+        self.duration = 0
+        self.error = None
+
+    def request(self, dev, maximum, value, transition_ms=400):
+        with self.lock:
+            target = round(value / 255 * maximum)
+            if value == 0:
+                self.duration = 0
+                self.dev, self.target, self.current = dev, 0, 0
+                with open(dev, 'w') as f:
+                    f.write('0')
+                blank(dev, True)
+                self.error = None
+                return
+            current = int(open(dev).read().strip())
+            power = os.path.join(os.path.dirname(dev), 'bl_power')
+            is_blanked = os.path.exists(power) and open(power).read().strip() != '0'
+            if (dev == self.dev and target == self.target and not self.error
+                    and not is_blanked and current == self.current):
+                # Repeated targets must not restart an in-progress fade, but
+                # an externally blanked display still needs to wake.
+                return
+            if is_blanked:
+                current = 0
+                with open(dev, 'w') as f:
+                    f.write('0')
+            unblank(dev)
+            self.dev, self.target, self.current = dev, target, current
+            self.start, self.started = current, self.clock()
+            self.duration = transition_ms / 1000
+            self.error = None
+            if not self.duration:
+                with open(dev, 'w') as f:
+                    f.write(str(target))
+                self.current = target
+
+    def tick(self):
+        with self.lock:
+            if not self.duration:
+                return
+            progress = min(1, max(0, (self.clock() - self.started) / self.duration))
+            level = round(self.start + (self.target - self.start) * progress)
+            try:
+                if level != self.current:
+                    with open(self.dev, 'w') as f:
+                        f.write(str(level))
+                    self.current = level
+                if progress >= 1:
+                    self.duration = 0
+            except OSError:
+                # A disconnected screen can be retried by the next request.
+                self.duration = 0
+                self.error = 'Backlight write failed'
+
+    def run(self):
+        while True:
+            self.tick()
+            time.sleep(.02)  # 50 Hz; write only changed hardware steps.
+
+
+RAMP = BrightnessRamp()
+
+
 class H(BaseHTTPRequestHandler):
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -107,20 +180,9 @@ class H(BaseHTTPRequestHandler):
             try:
                 v = int(q.get("v", ["255"])[0])
                 v = max(0, min(255, v))
+                transition = max(0, min(60000, int(q.get('transition_ms', ['400'])[0])))
                 scaled = round(v / 255 * mx)
-                # Before the write, per unblank()'s own reasoning: a brightness
-                # write while bl_power is non-zero lands in sysfs and changes
-                # nothing. This call was missing entirely -- the function was
-                # written, documented and never invoked, leaving the order
-                # write-then-unblank, which relies on the driver re-applying
-                # brightness when it comes back.
-                if v:
-                    unblank(dev)
-                with open(dev, "w") as f:
-                    f.write(str(scaled))
-                # v=0 means off, not dim. Blank after writing so the panel does
-                # not flash at the new brightness on its way down.
-                blank(dev, v == 0)
+                RAMP.request(dev, mx, v, transition)
                 ok, msg = True, ("off" if v == 0 else f"{scaled}/{mx}")
             except Exception as e:
                 msg = str(e)
@@ -135,4 +197,5 @@ class H(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     _dev, _max = find_device()
     print(f"backlight device: {_dev or 'NONE (will re-check per request)'} (max {_max})")
+    threading.Thread(target=RAMP.run, daemon=True, name='backlight-fade').start()
     HTTPServer(("127.0.0.1", 8081), H).serve_forever()

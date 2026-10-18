@@ -2,7 +2,7 @@ const {chromium}=require('playwright'),assert=require('node:assert/strict'),fs=r
 const root=path.resolve(__dirname,'..'),source=fs.readFileSync(path.join(root,'panel-ui/panel.html'),'utf8').replace('panelReady=true;browserHeartbeat();','panelReady=true;browserHeartbeat();window.screenTestEval=code=>eval(code);');
 (async()=>{
  const browser=await chromium.launch({headless:true,channel:'msedge'});
- const context=await browser.newContext({viewport:{width:720,height:1280}}),page=await context.newPage(),errors=[],writes=[];
+ const context=await browser.newContext({viewport:{width:720,height:1280}}),page=await context.newPage(),errors=[],writes=[],transitions=[];
  page.on('pageerror',e=>errors.push(e.message));
  const evaluate=fn=>page.evaluate(code=>window.screenTestEval('('+code+')()'),fn.toString());
  const display={theme:'architectural',palette:'linen',idle_timeout_s:600,adaptive_brightness:true,adaptive_sensor:'sensor.lux',adaptive_min_pct:20,adaptive_max_pct:80,adaptive_dark_lux:0,adaptive_bright_lux:100,adaptive_transition_s:1};
@@ -23,7 +23,7 @@ const root=path.resolve(__dirname,'..'),source=fs.readFileSync(path.join(root,'p
   if(u.pathname==='/panel.html')return r.fulfill({contentType:'text/html',body:source});
   if(u.pathname==='/config.json')return r.fulfill({json:{room_label:'Study',display,lights:[],media:{},sensors:{},connection:{ha_url:'http://ha.test'}}});
   if(u.pathname==='/secrets.json')return r.fulfill({json:{ha_token:'test-only'}});
-  if(u.pathname==='/backlight'){writes.push(Number(u.searchParams.get('v')));return r.fulfill({body:'ok'});}
+  if(u.pathname==='/backlight'){writes.push(Number(u.searchParams.get('v')));transitions.push(Number(u.searchParams.get('transition_ms')));return r.fulfill({body:'ok'});}
   if(u.pathname.endsWith('.woff2'))return r.fulfill({path:path.join(root,'panel-ui',path.basename(u.pathname))});
   return r.fulfill({json:{}});
  });
@@ -36,6 +36,7 @@ const root=path.resolve(__dirname,'..'),source=fs.readFileSync(path.join(root,'p
  assert((await evaluate(()=>panelBrightness()))<30,'sensor must not cause an immediate jump');
  await page.waitForTimeout(2200);
  assert((await evaluate(()=>panelBrightness()))>=78);
+ assert(transitions.includes(1000),'adaptive updates must fade between one-second samples');
  await evaluate(()=>applyState({entity_id:'sensor.lux',state:'unavailable',attributes:{unit_of_measurement:'lx'}}));
  assert.match(await evaluate(()=>adaptiveStatus()),/holding/);
  await evaluate(()=>goIdle());await page.waitForTimeout(100);
@@ -49,6 +50,7 @@ const root=path.resolve(__dirname,'..'),source=fs.readFileSync(path.join(root,'p
  assert.equal(beat.screen_mode,'awake');assert.equal(beat.adaptive_lux,0);
  await evaluate(()=>{st.bl=65;adaptiveOverrideUntil=Date.now()+600000;setBacklight(st.bl);});
  await page.waitForTimeout(1100);assert.equal(writes.at(-1),166);assert.match(await evaluate(()=>adaptiveStatus()),/Manual override/);
+ assert.equal(transitions.at(-1),400,'manual controls retain responsive hardware fading');
  assert.deepEqual(errors,[]);
  console.log('PASS panel: smoothed lux response, unavailable sensor, idle/blank/wake, manual override, heartbeat, no JS errors');
 
@@ -76,5 +78,23 @@ const root=path.resolve(__dirname,'..'),source=fs.readFileSync(path.join(root,'p
  assert.equal(await q.locator('#screenCapture').isVisible(),false);
  assert.deepEqual(errors,[]);
  if(process.env.SCREENSHOTS_DIR){fs.mkdirSync(process.env.SCREENSHOTS_DIR,{recursive:true});await q.locator('#sectNav [data-s=display]').click();await q.screenshot({path:path.join(process.env.SCREENSHOTS_DIR,'screen-settings.png'),fullPage:true});}
+ await q.route('**/api/entities?domain=sensor',r=>r.fulfill({json:[
+  {entity_id:'sensor.living_lux',name:'Living ambient light',device_class:'illuminance',unit:'lx'},
+  {entity_id:'sensor.bedroom_lux',name:'Bedroom ambient light',unit:'lux'},
+  {entity_id:'sensor.temperature',name:'Temperature',unit:'°C'}
+ ]}));
+ await q.goto(base+'/');await q.waitForSelector('#addPanelBtn:visible');await q.locator('#addPanelBtn').click();
+ await q.waitForSelector('#provBrightness');
+ assert.equal(await q.locator('#provBrightness option').count(),3,'only brightness sensors plus fixed option');
+ await q.locator('#provRoom').fill('Living provision QA');await q.locator('#provBrightness').selectOption('sensor.living_lux');
+ const created=q.waitForResponse(r=>r.url().endsWith('/api/provision')&&r.request().method()==='POST');
+ await q.locator('#mOk').click();const record=await (await created).json();
+ await q.waitForSelector('#sectNav [data-s=display]');await q.locator('#sectNav [data-s=display]').click();
+ assert.equal(await q.locator('#fAdaptiveSensor').inputValue(),'sensor.living_lux');
+ assert.equal(await q.locator('#fAdaptive').inputValue(),'1');
+ const provisioned=(await(await api.get(base+'/api/panels/'+record.panel_id)).json()).config;
+ assert.equal(provisioned.display.adaptive_sensor,'sensor.living_lux');assert.equal(provisioned.display.browser_recovery,true);
+ assert.deepEqual(errors,[]);
  await browser.close();console.log('PASS ingress settings: sensor retention, narrow save, validation feedback, existing config preserved, offline capture');
+ console.log('PASS provisioning UI: filtered lux picker, saved per-room binding, adaptive enabled, recovery inherited');
 })().catch(e=>{console.error(e);process.exit(1)});

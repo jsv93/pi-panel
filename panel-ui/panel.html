@@ -2375,18 +2375,20 @@ setInterval(()=>{
   if(Date.now()<adaptiveOverrideUntil || $('#identify').classList.contains('on'))return;
   st.bl=panelBrightness();blS.paint(st.bl);$('#blV').textContent=st.bl+'%';
   // Never light a blanked panel when a new sensor value arrives.
-  if(!$('#idle').classList.contains('blanked'))setBacklight(screenBrightness());
+  if(!$('#idle').classList.contains('blanked'))setBacklight(screenBrightness(),1000);
 },1000);
 let backlightWanted=null, backlightApplied=null, backlightBusy=false;
-async function setBacklight(pct){
+let backlightTransition=400;
+async function setBacklight(pct,transitionMs=400){
   backlightWanted=Math.round(Math.max(0,Math.min(100,pct))*255/100);
+  backlightTransition=transitionMs;
   if(backlightBusy)return;
   backlightBusy=true;
   try{
     while(backlightWanted!==backlightApplied){
       const value=backlightWanted;
       try{
-        const r=await fetch(BL_URL+'/backlight?v='+value,{signal:AbortSignal.timeout(3000)});
+        const r=await fetch(BL_URL+'/backlight?v='+value+'&transition_ms='+backlightTransition,{signal:AbortSignal.timeout(3000)});
         setDot('#stBL',r.ok?'ok':'bad',r.ok?'running':'error');
         if(!r.ok)break;
         backlightApplied=value;

@@ -7,6 +7,21 @@ integration upgrade is required for these features.
 
 ## Settings and operation
 
+### Provisioning new panels (0.20.1)
+
+Add a panel includes a **Room brightness sensor** picker populated from HA's
+illuminance/lux entities. Selecting a sensor enables adaptive brightness in
+that panel's initial configuration. **Choose later — fixed brightness** leaves
+adaptive brightness off until configured under Display. Bindings are per
+panel: templates never silently copy another room's brightness sensor.
+
+New records merge all screen defaults even when an older template lacks them.
+Browser recovery and remote diagnostics are enabled by default; explicit
+template opt-outs, limits and brightness tuning are retained. Every installer
+path (command, SSH and SD-card first boot) uses this same saved configuration
+and installs the current backlight helper. Existing panels retain their sensor
+and settings when the software is updated.
+
 Open a panel in Panel Server → Display. Adaptive brightness and Browser
 recovery / remote diagnostics have a dedicated **Save screen behaviour**
 button. This patches only those settings, preserving appearance, lighting,
@@ -22,9 +37,14 @@ push, templates, export/import and config rollback also carry these settings.
 - Minimum/maximum: 10/100% by default. Dark/bright room: 5/300 lux. Brightness
   interpolates against log(lux + 1), clamped at the endpoints.
 - Transition: 5 seconds by default, reaching approximately 95% of a change in
-  that time. Writes are limited to once per second and unchanged levels are
-  skipped. Backlight requests are serialized so a late dim request cannot
-  overwrite a later screen-off request.
+  that time. Target requests are limited to once per second and unchanged
+  levels are skipped. From 0.20.1 the local helper interpolates each target at
+  50 Hz over one second, removing visible one-second jumps (physical settling
+  trails the calculated curve by up to roughly a second). Only changed native
+  hardware levels are written. Manual, wake and idle changes fade over 400 ms.
+  A new request retargets from the current hardware level; screen-off cancels
+  a pending fade and blanks immediately. Requests are serialized and the
+  helper uses one locked worker, so old dimming cannot relight a blanked panel.
 - Idle clock uses 25% of the adaptive level, with a 1% floor. Blanked stays
   blanked, even while readings change. Wake uses the current calculated level.
 - The existing on-panel brightness slider gives a 10-minute manual override.
@@ -94,9 +114,14 @@ restore is not needed for an ordinary settings reversal.
 
 ## Validation
 
+`tests/test_backlight_ramp.py`: native hardware steps, retargeting, duplicate
+requests, immediate blank, cancellation, externally blanked wake, hardware
+range conversion and instant-transition compatibility against fake sysfs.
+
 `tests/test_screen_health.py`: recovery decisions, durable limits, HA-outage
 and blank-screen behaviour, request authentication/correlation, bounds,
-disabled/offline cases and preserving existing config.
+disabled/offline cases and preserving existing config; provisioning from old
+and new templates, per-room binding, opt-outs and validation before creation.
 
 `tests/test_screen_ui.cjs`: real browser execution of the panel and ingress
 admin, lux smoothing, invalid readings, idle/blank/wake, manual override,

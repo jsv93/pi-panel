@@ -77,6 +77,25 @@ def run(folder):
     with TestClient(main.app) as client:
         assert client.post('/api/panels/test/screen-diagnostics', json={}).status_code==401
         client.post('/api/login',json={'password':'test-only'})
+        # Provision from an old template, then from one made in another room.
+        db.save_template('old-screen', {'display': {'theme':'architectural','palette':'linen'}})
+        made = client.post('/api/provision', json={'room':'Living','template':'old-screen','brightness_sensor':'sensor.living_lux'})
+        assert made.status_code == 200
+        new = db.merged_config(made.json()['panel_id'])
+        assert all(key in new['display'] for key in screen.DEFAULTS)
+        assert new['display']['adaptive_sensor'] == 'sensor.living_lux'
+        assert new['display']['adaptive_brightness'] and new['display']['browser_recovery'] and new['display']['remote_diagnostics']
+        assert new['display']['theme'] == 'architectural' and new['bluetooth']['mode'] == 'on'
+        db.save_template('other-room', {'display': {**screen.DEFAULTS,'adaptive_sensor':'sensor.other_room','adaptive_brightness':True,'browser_recovery':False,'adaptive_min_pct':15}})
+        made2 = client.post('/api/provision', json={'room':'Bedroom','template':'other-room'})
+        new2 = db.merged_config(made2.json()['panel_id'])['display']
+        assert new2['adaptive_sensor'] == '' and not new2['adaptive_brightness']
+        assert not new2['browser_recovery'] and new2['adaptive_min_pct'] == 15
+        count = len(db.list_panels())
+        for invalid in ['light.room', None, 5, {}, 'sensor.bad entity']:
+            assert client.post('/api/provision',json={'room':'Invalid','brightness_sensor':invalid}).status_code == 400
+        assert len(db.list_panels()) == count, 'invalid selection must not create orphan records'
+        print('PASS provisioning: old/new templates, default diagnostics/recovery, explicit per-room lux binding, opt-outs, Bluetooth preservation, validation before creation')
         client.post('/api/register',json={'panel_id':'test','hostname':'test'})
         original={'lights':[{'entity_id':'light.room'}],'display':{'theme':'architectural','palette':'linen','background':{'mode':'room'}}}
         assert client.put('/api/panels/test/config',json=original).status_code==200
