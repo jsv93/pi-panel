@@ -7,13 +7,14 @@ integration upgrade is required for these features.
 
 ## Settings and operation
 
-### Provisioning new panels (0.20.1)
+### Provisioning new panels (0.20.2)
 
-Add a panel includes a **Room brightness sensor** picker populated from HA's
-illuminance/lux entities. Selecting a sensor enables adaptive brightness in
-that panel's initial configuration. **Choose later — fixed brightness** leaves
-adaptive brightness off until configured under Display. Bindings are per
-panel: templates never silently copy another room's brightness sensor.
+Add a panel asks only for room, room label and template. After adding, open
+**Display → Adaptive brightness**, select the room's illuminance/lux sensor
+and enable adaptive brightness. Save before installing the panel or change it
+later. New panels use fixed brightness until configured. Bindings are per
+panel: templates never silently copy another room's brightness sensor. Version
+0.20.2 removes the extra sensor picker introduced in the 0.20.1 Add panel form.
 
 New records merge all screen defaults even when an older template lacks them.
 Browser recovery and remote diagnostics are enabled by default; explicit

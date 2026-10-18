@@ -1536,19 +1536,12 @@ $("#pushAllBtn").onclick = async ()=>{
    arrives already claimed rather than landing in the unclaimed list. */
 $("#addPanelBtn").onclick = async ()=>{
   const tpls = await api("/templates");
-  // Fresh list for every room; a sensor added since opening the server appears.
-  ENTITIES.sensor = await api('/entities?domain=sensor');
   confirmModal("Add a panel",
     html`<div class="lbl">ROOM</div><input id="provRoom" placeholder="e.g. Master Bedroom">
      <div class="lbl" style="margin-top:12px">ROOM LABEL (shown under the clock)</div>
      <input id="provLabel" placeholder="defaults to the room name">
      <div class="lbl" style="margin-top:12px">TEMPLATE</div>
      <select id="provTpl">${tpls.map(t=>html`<option value="${t.name}">${t.name}</option>`)}</select>
-     <div class="lbl" style="margin-top:12px">ROOM BRIGHTNESS SENSOR</div>
-     <select id="provBrightness">${opts(brightnessSensors(),'','Choose later — fixed brightness')}</select>
-     <p class="hint">Selecting a sensor enables adaptive brightness for this panel.
-       Browser recovery and screen diagnostics follow the template, enabled by default.
-       Adjust these settings under Display before installation or at any time later.</p>
      <p class="muted" style="margin-top:12px;font-size:13px">Next you will configure
        the room's lights, speakers and sensors. The command to run on the Pi is
        handed over after you save that — the panel then arrives fully configured
@@ -1557,8 +1550,7 @@ $("#addPanelBtn").onclick = async ()=>{
       const room = $("#provRoom").value.trim();
       if(!room){ toast("Room is required"); return; }
       const r = await api("/provision",{method:"POST",body:JSON.stringify({
-        room, room_label:$("#provLabel").value.trim(), template:$("#provTpl").value,
-        brightness_sensor:$('#provBrightness').value})});
+        room, room_label:$("#provLabel").value.trim(), template:$("#provTpl").value})});
       /* Straight into configuration. The command is deliberately not shown yet:
          it comes after Save & push, so it cannot be run against an unconfigured
          panel. Setup command re-shows it at any point before the Pi uses it. */
