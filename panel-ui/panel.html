@@ -1804,10 +1804,26 @@ function wsSend(msg, timeoutMs){
 }
 /* ---- local agent socket: reload commands in, HA status out ---- */
 let agentWS = null;
+let panelReady = false, lastBrowserError = 0;
+function browserHeartbeat(){
+  if(!panelReady || !agentWS || agentWS.readyState!==1)return;
+  const idle=$('#idle');
+  agentWS.send(JSON.stringify({type:'browser_heartbeat',
+    screen_mode:idle.classList.contains('blanked')?'blanked':idle.classList.contains('on')?'idle':'awake',
+    adaptive_status:adaptiveStatus(),adaptive_lux:adaptiveLux}));
+}
+setInterval(browserHeartbeat,10000);
+function reportBrowserError(kind){
+  if(Date.now()-lastBrowserError<5000)return;
+  lastBrowserError=Date.now();
+  if(agentWS?.readyState===1)agentWS.send(JSON.stringify({type:'browser_error',kind}));
+}
+window.addEventListener('error',e=>{if(e.error)panelReady=false;reportBrowserError(e.error?.name||'Resource error');},true);
+window.addEventListener('unhandledrejection',()=>{panelReady=false;reportBrowserError('Unhandled rejection');});
 function agentConnect(){
   try{
     agentWS = new WebSocket("ws://"+location.host+"/agent");
-    agentWS.onopen  = ()=>reportHA(wsReady);
+    agentWS.onopen  = ()=>{reportHA(wsReady);browserHeartbeat();};
     agentWS.onmessage = ev=>{
       let m; try{ m = JSON.parse(ev.data); }catch(e){ return; }
       if(m.type==="reload") location.reload();
@@ -1829,13 +1845,12 @@ function identify(){
   if(!el) return;
   $("#identifyName").textContent = ROOM || "This panel";
   el.classList.add("on");
-  const was = st.bl;
   setBacklight(100);
   clearTimeout(identifyTimer);
-  identifyTimer = setTimeout(()=>{ el.classList.remove("on"); setBacklight(was); }, 10000);
+  identifyTimer = setTimeout(()=>{ el.classList.remove("on"); setBacklight(screenBrightness()); }, 10000);
   // Touching it stops it early, so nobody has to stand and wait once they have
   // found the thing they were looking for.
-  el.onclick = ()=>{ clearTimeout(identifyTimer); el.classList.remove("on"); setBacklight(was); };
+  el.onclick = ()=>{ clearTimeout(identifyTimer); el.classList.remove("on"); setBacklight(screenBrightness()); };
   bump();
 }
 
@@ -1874,6 +1889,7 @@ function connect(){
     }
     if(m.type==="event" && m.event && m.event.event_type==="state_changed"){
       const data=m.event.data;
+      if(!data.new_state && data.entity_id===adaptiveEntity)adaptiveValid=false;
       if(!data.new_state)speakerStates.delete(data.entity_id);
       applyState(data.new_state); paintAll();
     }
@@ -1905,6 +1921,7 @@ async function sign(path){
    ============================================================ */
 function applyState(s){
   if(!s) return;
+  adaptiveReading(s);
   const id = s.entity_id;
   if(SPEAKERS.some(sp=>sp[0]===id))speakerStates.set(id,s);
   const li = LIGHTS.findIndex(l=>l.entity_id===id);
@@ -2273,7 +2290,7 @@ const lampSliders = [];
   });
   if(!LIGHTS.length) host.innerHTML = '<div class="hint2">No lights configured for this panel</div>';
 })();
-const blS = slider($("#bl"), ()=>st.bl, v=>{ st.bl=Math.max(BL_MIN,v); $("#blV").textContent=st.bl+"%"; setBacklight(st.bl); });
+const blS = slider($("#bl"), ()=>st.bl, v=>{ st.bl=Math.max(BL_MIN,v); adaptiveOverrideUntil=Date.now()+600000; $("#blV").textContent=st.bl+"%"; setBacklight(st.bl); });
 function paintVolume(v){
   $('#mpVolumeValue').textContent=Math.round(v)+'%';$('#mpVolumeReadout').textContent=Math.round(v)+'%';
   $('#mVol').setAttribute('aria-valuenow',Math.round(v));$('#mVol').setAttribute('aria-valuetext',Math.round(v)+' percent');
@@ -2308,11 +2325,74 @@ $('#mVol').addEventListener('keydown',e=>{
 });
 $("#blV").textContent = st.bl+"%";
 
+/* Behaviour only: no dashboard geometry, palette or controls change. */
+const adaptiveEnabled = _disp.adaptive_brightness===true;
+const adaptiveEntity = _disp.adaptive_sensor||'';
+const adaptiveMin = _disp.adaptive_min_pct??10, adaptiveMax = _disp.adaptive_max_pct??100;
+const adaptiveDark = _disp.adaptive_dark_lux??5, adaptiveBright = _disp.adaptive_bright_lux??300;
+const adaptiveCacheKey = 'panel-illuminance:'+adaptiveEntity;
+let adaptiveLux=null, adaptiveValid=false, adaptiveOverrideUntil=0, adaptiveSavedAt=0;
+let adaptiveCurrent=BL_DEF, adaptiveTickAt=performance.now();
+try{
+  const cached=JSON.parse(localStorage.getItem(adaptiveCacheKey)||'null');
+  if(cached && typeof cached.lux==='number' && Number.isFinite(cached.lux) && cached.lux>=0 && cached.lux<=200000){
+    adaptiveLux=cached.lux;
+    if(adaptiveEnabled)adaptiveCurrent=adaptiveTarget(adaptiveLux);
+  }
+}catch{}
+function adaptiveTarget(lux){
+  const fraction=Math.max(0,Math.min(1,(Math.log1p(lux)-Math.log1p(adaptiveDark))/(Math.log1p(adaptiveBright)-Math.log1p(adaptiveDark))));
+  return adaptiveMin+(adaptiveMax-adaptiveMin)*fraction;
+}
+function adaptiveStatus(){
+  if(!adaptiveEnabled)return 'Off';
+  if(Date.now()<adaptiveOverrideUntil)return 'Manual override · 10 minutes';
+  if(!adaptiveValid || !wsReady)return adaptiveLux===null?'Waiting for lux sensor · default brightness':'Sensor unavailable · holding last reading';
+  return 'Following illuminance sensor';
+}
+function adaptiveReading(s){
+  if(!adaptiveEnabled || s.entity_id!==adaptiveEntity)return;
+  const value=Number(s.state),unit=(s.attributes?.unit_of_measurement||'').toLowerCase();
+  adaptiveValid=String(s.state).trim()!=='' && Number.isFinite(value) && value>=0 && value<=200000 && ['lx','lux'].includes(unit);
+  if(!adaptiveValid)return;
+  adaptiveLux=value;
+  if(Date.now()-adaptiveSavedAt>=60000){
+    try{localStorage.setItem(adaptiveCacheKey,JSON.stringify({lux:value}));adaptiveSavedAt=Date.now();}catch{}
+  }
+}
+function panelBrightness(){return adaptiveEnabled && Date.now()>=adaptiveOverrideUntil ? Math.round(adaptiveCurrent) : st.bl;}
+function screenBrightness(){
+  const idle=$('#idle');
+  if(idle.classList.contains('blanked'))return 0;
+  const level=panelBrightness();
+  return idle.classList.contains('on') ? (adaptiveEnabled?Math.max(1,level*.25):Math.max(10,level*.25)) : level;
+}
+setInterval(()=>{
+  const now=performance.now(),dt=Math.min(2,(now-adaptiveTickAt)/1000);adaptiveTickAt=now;
+  if(!adaptiveEnabled)return;
+  const target=adaptiveLux===null?BL_DEF:adaptiveTarget(adaptiveLux);
+  adaptiveCurrent+=(target-adaptiveCurrent)*(1-Math.exp(-3*dt/(_disp.adaptive_transition_s??5)));
+  if(Date.now()<adaptiveOverrideUntil || $('#identify').classList.contains('on'))return;
+  st.bl=panelBrightness();blS.paint(st.bl);$('#blV').textContent=st.bl+'%';
+  // Never light a blanked panel when a new sensor value arrives.
+  if(!$('#idle').classList.contains('blanked'))setBacklight(screenBrightness());
+},1000);
+let backlightWanted=null, backlightApplied=null, backlightBusy=false;
 async function setBacklight(pct){
+  backlightWanted=Math.round(Math.max(0,Math.min(100,pct))*255/100);
+  if(backlightBusy)return;
+  backlightBusy=true;
   try{
-    const r = await fetch(BL_URL+"/backlight?v="+Math.round(pct*255/100));
-    setDot("#stBL", r.ok?"ok":"bad", r.ok?"running":"error");
-  }catch(e){ setDot("#stBL","bad","not running"); }
+    while(backlightWanted!==backlightApplied){
+      const value=backlightWanted;
+      try{
+        const r=await fetch(BL_URL+'/backlight?v='+value,{signal:AbortSignal.timeout(3000)});
+        setDot('#stBL',r.ok?'ok':'bad',r.ok?'running':'error');
+        if(!r.ok)break;
+        backlightApplied=value;
+      }catch{setDot('#stBL','bad','not running');break;}
+    }
+  }finally{backlightBusy=false;}
 }
 
 /* ---------- presets ---------- */
@@ -3504,7 +3584,7 @@ function goIdle(){
   $("#idle").classList.add("on");
   document.body.classList.add("panel-idle");
   idleDrift(true);
-  setBacklight(Math.max(10,st.bl*0.25));
+  setBacklight(screenBrightness());
 }
 function goBlank(){
   $("#idle").classList.add("blanked");
@@ -3541,7 +3621,7 @@ function bump(){
        on wake. Two frames, with a timeout in case nothing is compositing, so
        it can never get stuck dark. */
     let lit = false;
-    const light = () => { if(lit) return; lit = true; setBacklight(st.bl); };
+    const light = () => { if(lit) return; lit = true; setBacklight(panelBrightness()); };
     requestAnimationFrame(() => requestAnimationFrame(light));
     setTimeout(light, 150);
   }
@@ -3678,7 +3758,8 @@ applyDiag();
 
 document.addEventListener("visibilitychange",()=>document.body.classList.toggle("page-hidden",document.hidden));
 setupArchPages();
-connect(); paintAll(); bump(); setBacklight(st.bl);
+connect(); paintAll(); bump(); setBacklight(panelBrightness());
+panelReady=true;browserHeartbeat();
 </script>
 </body>
 </html>

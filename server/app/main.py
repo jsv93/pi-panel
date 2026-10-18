@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 
-from . import backgrounds, db, firstboot, ha, ssh
+from . import backgrounds, db, firstboot, ha, ssh, screen
 
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme")
 WEAK_DEFAULTS = {"changeme", "change-me", ""}
@@ -716,6 +716,11 @@ _HA_URL_RE = re.compile(
 def check_config(cfg):
     if not isinstance(cfg, dict):
         raise HTTPException(400, "config must be an object")
+    if 'display' in cfg:
+        try:
+            screen.validate(cfg['display'])
+        except ValueError as error:
+            raise HTTPException(400, str(error))
     if "bluetooth" in cfg:
         check_bluetooth(cfg["bluetooth"])
     if isinstance(cfg.get("display"), dict) and "background" in cfg["display"]:
@@ -944,6 +949,7 @@ async def set_background(panel_id: str, request: Request):
 # Narrow on purpose: a caller reaching for one of these cannot clobber the
 # lights list, the speakers, or anything else it did not mean to touch.
 DISPLAY_KEYS = {
+    **{key: type(value) for key, value in screen.DEFAULTS.items()},
     "backlight_default": int,
     "backlight_min": int,
     "backlight_off_s": int,
@@ -975,6 +981,9 @@ async def _patch_display(panel_id: str, values: dict) -> dict:
     for k, v in (values or {}).items():
         if k not in DISPLAY_KEYS:
             raise HTTPException(400, f"'{k}' is not a display setting")
+        if k in screen.DEFAULTS:
+            clean[k] = v
+            continue
         if k == "touch_gesture":
             if v not in ("off", "lights"):
                 raise HTTPException(400, "touch_gesture must be 'off' or 'lights'")
@@ -1010,6 +1019,7 @@ async def _patch_display(panel_id: str, values: dict) -> dict:
         raise HTTPException(400, "nothing to change")
     cfg = db.merged_config(panel_id)
     cfg["display"] = {**cfg.get("display", {}), **clean}
+    check_config(cfg)
     version = db.save_config(panel_id, cfg)
     pushed = await notify(panel_id, {"type": "config_updated", "version": version})
     return {"version": version, "pushed": pushed, "display": cfg["display"]}
@@ -1153,6 +1163,10 @@ async def panel_ws(ws: WebSocket, panel_id: str):
                 db.touch(panel_id, _clean_metrics(data.get("metrics")),
                          data.get("config_version"))
                 await ws.send_json({"type": "ack", "config_version": db.latest_version(panel_id)})
+            elif data.get('type') == 'screen_diagnostics':
+                pending = SCREEN_REQUESTS.get(panel_id)
+                if pending and pending[0] == data.get('request_id') and not pending[1].done():
+                    pending[1].set_result(data)
     except WebSocketDisconnect:
         pass
     except Exception:
@@ -1175,6 +1189,43 @@ async def notify(panel_id: str, payload: dict):
 
 
 # ---------------------------------------------------------------- admin API
+# One short-lived request per panel. Screen images are never saved in the DB,
+# included in heartbeats, or fetched by polling the fleet page.
+SCREEN_REQUESTS = {}
+SCREEN_LAST_REQUEST = {}
+
+
+@app.post('/api/panels/{panel_id}/screen-diagnostics', dependencies=[Depends(require_admin)])
+async def screen_diagnostics(panel_id: str, request: Request):
+    if not db.get_panel(panel_id):
+        raise HTTPException(404, 'unknown panel')
+    if not db.merged_config(panel_id).get('display', {}).get('remote_diagnostics', True):
+        raise HTTPException(403, 'Remote diagnostics are disabled for this panel')
+    body = await request.json()
+    if not isinstance(body, dict) or type(body.get('capture', False)) is not bool:
+        raise HTTPException(400, 'capture must be true or false')
+    if panel_id in SCREEN_REQUESTS or time.monotonic() - SCREEN_LAST_REQUEST.get(panel_id, -100) < 3:
+        raise HTTPException(429, 'Wait a few seconds before requesting diagnostics again')
+    request_id = secrets.token_hex(16)
+    future = asyncio.get_running_loop().create_future()
+    SCREEN_REQUESTS[panel_id] = (request_id, future)
+    SCREEN_LAST_REQUEST[panel_id] = time.monotonic()
+    try:
+        sent = await notify(panel_id, signed(panel_id, {'type': 'screen_diagnostics',
+            'request_id': request_id, 'capture': body.get('capture', False)}))
+        if not sent:
+            raise HTTPException(503, 'Panel is offline')
+        try:
+            result = await asyncio.wait_for(future, 20)
+        except asyncio.TimeoutError:
+            raise HTTPException(504, 'Panel did not respond. Check its agent version and connection.')
+        if len(json.dumps(result)) > 2_500_000:
+            raise HTTPException(502, 'Panel response exceeded the diagnostics limit')
+        return JSONResponse(result, headers={'Cache-Control': 'no-store'})
+    finally:
+        SCREEN_REQUESTS.pop(panel_id, None)
+
+
 @app.get("/api/panels", dependencies=[Depends(require_admin)])
 async def panels():
     out = db.list_panels()

@@ -550,6 +550,32 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
           </div>
 
           <div class="grp">
+            <h3>Adaptive brightness</h3>
+            <p class="hint">Follow a room illuminance sensor with smooth transitions. Idle dimming and screen-off still apply. If the sensor is unavailable, the panel holds its last valid reading; before the first reading it uses the default brightness. The panel brightness slider overrides this for 10 minutes.</p>
+            <div class="f2">
+              <div><label class="lbl" for="fAdaptive">ADAPTIVE BRIGHTNESS</label><select id="fAdaptive"><option value="0">Off — manual brightness</option><option value="1">On — follow illuminance</option></select></div>
+              <div><label class="lbl" for="fAdaptiveSensor">ILLUMINANCE SENSOR (LUX)</label><select id="fAdaptiveSensor"></select></div>
+              <div><label class="lbl" for="fAdaptiveMin">MINIMUM BRIGHTNESS %</label><input id="fAdaptiveMin" type="number" min="1" max="100"></div>
+              <div><label class="lbl" for="fAdaptiveMax">MAXIMUM BRIGHTNESS %</label><input id="fAdaptiveMax" type="number" min="1" max="100"></div>
+              <div><label class="lbl" for="fAdaptiveDark">DARK ROOM (LUX)</label><input id="fAdaptiveDark" type="number" min="0" max="100000"></div>
+              <div><label class="lbl" for="fAdaptiveBright">BRIGHT ROOM (LUX)</label><input id="fAdaptiveBright" type="number" min="1" max="200000"></div>
+              <div><label class="lbl" for="fAdaptiveTransition">TRANSITION (SECONDS)</label><input id="fAdaptiveTransition" type="number" min="1" max="60"></div>
+            </div>
+          </div>
+          <div class="grp">
+            <h3>Browser recovery and remote diagnostics</h3>
+            <p class="hint">Recover an unresponsive dashboard without rebooting the Pi. Home Assistant outages and screen-off do not trigger recovery. A 2-minute startup grace and 2-minute recovery cooldown prevent restart loops.</p>
+            <div class="f2">
+              <div><label class="lbl" for="fBrowserRecovery">AUTOMATIC RECOVERY</label><select id="fBrowserRecovery"><option value="1">On</option><option value="0">Off — monitor only</option></select></div>
+              <div><label class="lbl" for="fBrowserStale">UNRESPONSIVE FOR (SECONDS)</label><input id="fBrowserStale" type="number" min="60" max="600"></div>
+              <div><label class="lbl" for="fBrowserLimit">MAXIMUM ATTEMPTS PER HOUR</label><input id="fBrowserLimit" type="number" min="1" max="6"></div>
+              <div><label class="lbl" for="fRemoteDiagnostics">REMOTE SCREEN CAPTURE AND EVENT LOG</label><select id="fRemoteDiagnostics"><option value="1">Enabled — admin requests only</option><option value="0">Disabled</option></select></div>
+            </div>
+            <p class="hint">Screen capture is on demand in Diagnostics. Images are not saved by Panel Server. These settings keep the current dashboard appearance.</p>
+            <button class="btn" id="saveScreenBtn">Save screen behaviour</button>
+            <span id="screenSaveStatus" role="status" class="muted"></span>
+          </div>
+          <div class="grp">
             <h3>Presence wake</h3>
             <p class="hint">A sensor wired to a GPIO pin, read by the panel itself — no
               Home Assistant and no network, so it still works when the server does not.
@@ -633,6 +659,14 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
         <div class="sect" data-s="diag">
           <h2 style="margin-bottom:14px">Diagnostics</h2>
           <div id="diagBody" class="muted">–</div>
+          <div class="grp" style="margin-top:18px">
+            <h3>Live screen diagnostics</h3>
+            <p class="hint">Capture the running kiosk browser. This is separate from Preview, which renders configuration. A screenshot cannot confirm the physical backlight or a connected display; check the reported screen and backlight state below.</p>
+            <div style="display:flex;gap:8px"><button class="btn" id="screenCaptureBtn">Capture screen</button><button class="btn" id="screenRefreshBtn">Refresh status and events</button></div>
+            <p id="screenDiagnosticStatus" class="muted" role="status" style="margin-top:10px">On-demand only.</p>
+            <img id="screenCapture" alt="Latest capture of the running panel browser" hidden style="max-width:100%;max-height:620px;object-fit:contain;border-radius:8px">
+            <pre id="screenEvents" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px"></pre>
+          </div>
           <div class="lbl" style="margin-top:20px">CONFIG HISTORY</div>
           <div id="history"></div>
           <div style="margin-top:18px;display:flex;gap:8px">
@@ -913,6 +947,7 @@ function fillConfigForm(){
   $("#fSpeakerName").value = (CFG.media||{}).default_speaker_name || "";
   renderSpeakerCompatibility();
   const d = CFG.display||{};
+  fillScreenSettings(d);
   const background=d.background||{};
   backgroundImage=/^[0-9a-f]{64}$/.test(background.image||'')?background.image:'';
   $('#fBackground').value=background.mode||(d.theme==='architectural'?'room':'pattern');
@@ -1015,6 +1050,8 @@ async function openPanel(id){
     ["UI version", m.ui_version||"—"],
     ["Running config", "v"+(CUR.panel.config_version||0)],
     ["Socket", CUR.live?"live":"polling"],
+    ["Browser", m.browser_health||"Waiting for updated agent"],
+    ["Adaptive brightness", m.adaptive_status||"—"],
     /* Shown separately from the launcher on disk on purpose. Equal is the
        answer; "off, pending restart" means the update arrived and chromium has
        not been restarted into it yet, which is otherwise indistinguishable
@@ -1254,6 +1291,67 @@ $("#addSpeaker").onclick=()=>{
   CFG.media = CFG.media||{speakers:[]}; (CFG.media.speakers=CFG.media.speakers||[]).push({entity_id:"",name:""});
   renderSpeakers(); };
 
+const SCREEN_FIELDS={
+  remote_diagnostics:['fRemoteDiagnostics',true],browser_recovery:['fBrowserRecovery',true],
+  browser_stale_s:['fBrowserStale',90],browser_recovery_limit:['fBrowserLimit',3],
+  adaptive_brightness:['fAdaptive',false],adaptive_sensor:['fAdaptiveSensor',''],
+  adaptive_min_pct:['fAdaptiveMin',10],adaptive_max_pct:['fAdaptiveMax',100],
+  adaptive_dark_lux:['fAdaptiveDark',5],adaptive_bright_lux:['fAdaptiveBright',300],
+  adaptive_transition_s:['fAdaptiveTransition',5]
+};
+function fillScreenSettings(d){
+  const sensors=(ENTITIES.sensor||[]).filter(e=>e.device_class==='illuminance'||['lx','lux'].includes((e.unit||'').toLowerCase()));
+  $('#fAdaptiveSensor').innerHTML=opts(sensors,d.adaptive_sensor);
+  for(const [key,[id,defaultValue]] of Object.entries(SCREEN_FIELDS)){
+    const value=d[key]??defaultValue;
+    $('#'+id).value=typeof defaultValue==='boolean'?(value?'1':'0'):value;
+  }
+  $('#screenSaveStatus').textContent='';
+  clearScreenCapture();
+}
+function collectScreenSettings(){
+  return Object.fromEntries(Object.entries(SCREEN_FIELDS).map(([key,[id,defaultValue]])=>{
+    const value=$('#'+id).value;
+    return [key,typeof defaultValue==='boolean'?value==='1':typeof defaultValue==='number'?(value.trim()===''?null:Number(value)):value];
+  }));
+}
+function clearScreenCapture(){
+  $('#screenCapture').hidden=true;$('#screenCapture').removeAttribute('src');
+  $('#screenDiagnosticStatus').textContent='On-demand only.';$('#screenEvents').textContent='';
+}
+$('#saveScreenBtn').onclick=async()=>{
+  const button=$('#saveScreenBtn'),pid=CUR.panel.id;button.disabled=true;
+  try{
+    const r=await api(`/panels/${encodeURIComponent(pid)}/display`,{method:'PATCH',body:JSON.stringify(collectScreenSettings())});
+    if(CUR.panel.id!==pid)return;
+    CFG.display={...CFG.display,...r.display};
+    $('#screenSaveStatus').textContent=r.pushed?'Saved and sent to panel':'Saved — panel will collect when connected';
+  }catch(e){$('#screenSaveStatus').textContent=e.message;}finally{button.disabled=false;}
+};
+async function requestScreenDiagnostics(capture){
+  const pid=CUR.panel.id;
+  $('#screenCaptureBtn').disabled=true;$('#screenRefreshBtn').disabled=true;
+  if(capture){$('#screenCapture').hidden=true;$('#screenCapture').removeAttribute('src');}
+  $('#screenDiagnosticStatus').textContent=capture?'Capturing running browser…':'Requesting status…';
+  try{
+    const result=await api(`/panels/${encodeURIComponent(pid)}/screen-diagnostics`,{method:'POST',body:JSON.stringify({capture})});
+    if(CUR.panel.id!==pid)return;
+    if(result.error)throw Error(result.error);
+    const m=result.metrics||{};
+    $('#screenDiagnosticStatus').textContent=[new Date(result.captured_at*1000).toLocaleTimeString(),m.browser_health||'Unknown',
+      'Screen: '+(m.screen_mode||'unknown'),'Backlight: '+(m.backlight||'unknown'),
+      'Brightness: '+(m.adaptive_status||'unknown'),m.adaptive_lux==null?'':m.adaptive_lux+' lx',
+      'Recoveries this hour: '+(m.browser_recoveries_hour??0),result.capture_error||''].filter(Boolean).join(' · ');
+    if(typeof result.image==='string'&&result.image.length<=2000000&&/^[A-Za-z0-9+/]+=*$/.test(result.image)){
+      $('#screenCapture').src='data:image/jpeg;base64,'+result.image;$('#screenCapture').hidden=false;
+    }
+    $('#screenEvents').textContent=(result.events||[]).slice(-100).map(e=>new Date(e.at*1000).toLocaleTimeString()+'  '+e.message).join('\n')||'No browser events recorded yet.';
+  }catch(e){if(CUR.panel.id===pid)$('#screenDiagnosticStatus').textContent=e.message;}
+  finally{$('#screenCaptureBtn').disabled=false;$('#screenRefreshBtn').disabled=false;}
+}
+$('#screenCaptureBtn').onclick=()=>requestScreenDiagnostics(true);
+$('#screenRefreshBtn').onclick=()=>requestScreenDiagnostics(false);
+
 function collect(){
   CFG.bluetooth={mode:$('#fBluetoothMode').value};
   CFG.room_label = $("#fRoomLabel").value;
@@ -1263,7 +1361,7 @@ function collect(){
   CFG.sensors = {temperature:$("#fTemp").value, humidity:$("#fHum").value,
                  climate:$("#fClimate").value};
   CFG.dali = {gateway:$("#fDaliGw").value.trim(), poll_s:+$("#fDaliPoll").value||0};
-  CFG.display = {background:{mode:$('#fBackground').value,colour:$('#fBackgroundColour').value,image:backgroundImage},idle_timeout_s:+$("#fIdle").value, glass_tier:CFG.display.glass_tier ?? 3, theme:$("#fTheme").value, palette:$("#fPalette").value,
+  CFG.display = {...CFG.display,...collectScreenSettings(),background:{mode:$('#fBackground').value,colour:$('#fBackgroundColour').value,image:backgroundImage},idle_timeout_s:+$("#fIdle").value, glass_tier:CFG.display.glass_tier ?? 3, theme:$("#fTheme").value, palette:$("#fPalette").value,
                  backlight_default:+$("#fBlDef").value, backlight_min:+$("#fBlMin").value,
                  backlight_off_s:+$("#fBlOff").value,
                  dsi_overlay:$("#fDsiOverlay").value.trim(),

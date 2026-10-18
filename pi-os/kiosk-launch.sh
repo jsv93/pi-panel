@@ -60,6 +60,8 @@ exec cage -- "$CHROME" \
   --enable-features=UseOzonePlatform,NetworkServiceInProcess \
   --disable-features=TranslateUI \
   --user-data-dir="$HOME/chromium" \
+  --remote-debugging-address=127.0.0.1 \
+  --remote-debugging-port=9222 \
   --password-store=basic \
   --disable-background-networking \
   --disable-sync \

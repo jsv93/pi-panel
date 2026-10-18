@@ -170,6 +170,9 @@ async def entities(domains=None, search=""):
             capability, reason = transfer_compatibility(s, transfer)
             out[-1].update(queue_transfer=capability, queue_transfer_reason=reason,
                            music_assistant=bool((s.get("attributes") or {}).get("mass_player_type")))
+        if dom == 'sensor':
+            attrs = s.get('attributes') or {}
+            out[-1].update(unit=attrs.get('unit_of_measurement'), device_class=attrs.get('device_class'))
     out.sort(key=lambda x: x["name"].lower())
     return out
 

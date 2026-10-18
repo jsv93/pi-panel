@@ -26,6 +26,8 @@ import subprocess
 import sys
 import time
 import uuid
+from collections import deque
+from urllib.parse import urlsplit
 from pathlib import Path
 
 import aiohttp
@@ -488,6 +490,12 @@ def metrics():
         pass
     m["ha_connected"] = UI_STATE["ha_connected"]
     m["pages_open"] = len(PAGES)
+    m['browser_health'] = BROWSER_STATUS
+    m['browser_heartbeat_age_s'] = round(time.monotonic() - BROWSER_SEEN) if BROWSER_SEEN else None
+    m['browser_recoveries_hour'] = len(recovery_history())
+    m['adaptive_status'] = UI_STATE.get('adaptive_status', 'Waiting for browser')
+    m['adaptive_lux'] = UI_STATE.get('adaptive_lux')
+    m['screen_mode'] = UI_STATE.get('screen_mode', 'unknown')
     return m
 
 
@@ -738,6 +746,164 @@ async def sync(client, force=False):
 PAGES: set = set()
 # Reported by the UI over that socket; surfaced in the heartbeat.
 UI_STATE = {"ha_connected": False}
+BROWSER_STARTED = time.monotonic()
+BROWSER_SEEN = 0
+BROWSER_STATUS = 'Starting'
+BROWSER_EVENTS = deque(maxlen=100)
+RECOVERY_ATTEMPTS = []
+RECOVERY_LAST = 0
+RECOVERY_STAGE = 0
+RECOVERY_FILE = PANEL_DIR / 'browser-recovery.json'
+DIAGNOSTICS_BUSY = False
+
+
+def screen_settings():
+    try:
+        value = json.loads(CONFIG_PATH.read_text()).get('display', {})
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def browser_event(message):
+    # Deliberately structured events only: no config, tokens, URLs, arbitrary
+    # browser console messages or journal dumps reach the admin browser.
+    BROWSER_EVENTS.append({'at': time.time(), 'message': message[:240]})
+
+
+def recovery_history():
+    now = time.time()
+    RECOVERY_ATTEMPTS[:] = [v for v in RECOVERY_ATTEMPTS if 0 <= now - v < 3600]
+    return RECOVERY_ATTEMPTS
+
+
+def record_recovery():
+    recovery_history().append(time.time())
+    try:
+        tmp = RECOVERY_FILE.with_suffix('.tmp')
+        tmp.write_text(json.dumps(RECOVERY_ATTEMPTS))
+        os.replace(tmp, RECOVERY_FILE)
+    except OSError:
+        browser_event('Could not persist recovery budget; automatic recovery paused')
+        return False
+    return True
+
+
+async def browser_cdp(method, params=None):
+    """Only our localhost kiosk page; never a URL supplied by the server/UI."""
+    if method not in ('Page.captureScreenshot', 'Page.reload'):
+        raise ValueError('Unsupported browser operation')
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as session:
+        async with session.get('http://127.0.0.1:9222/json/list', allow_redirects=False) as r:
+            if r.status != 200:
+                raise RuntimeError('Browser diagnostics unavailable')
+            targets = await r.json()
+        expected = f'http://127.0.0.1:{UI_PORT}/panel.html'
+        target = next((v for v in targets if v.get('type') == 'page'
+                       and v.get('url', '').split('?', 1)[0].split('#', 1)[0] == expected), None)
+        if not target:
+            raise RuntimeError('Kiosk page not found')
+        address = target.get('webSocketDebuggerUrl', '')
+        u = urlsplit(address)
+        if u.scheme != 'ws' or u.hostname != '127.0.0.1' or u.port != 9222 or u.username:
+            raise RuntimeError('Invalid local browser endpoint')
+        async with session.ws_connect(address, max_msg_size=2_500_000) as ws:
+            await ws.send_json({'id': 1, 'method': method, 'params': params or {}})
+            while True:
+                reply = await ws.receive_json(timeout=8)
+                if reply.get('id') != 1:
+                    continue
+                if 'error' in reply:
+                    raise RuntimeError('Browser operation failed')
+                return reply.get('result', {})
+
+
+async def send_screen_diagnostics(ws, data):
+    global DIAGNOSTICS_BUSY
+    if DIAGNOSTICS_BUSY:
+        return
+    DIAGNOSTICS_BUSY = True
+    try:
+        result = {'type': 'screen_diagnostics', 'request_id': data.get('request_id'),
+                  'captured_at': time.time()}
+        if not screen_settings().get('remote_diagnostics', True):
+            result['error'] = 'Remote diagnostics are disabled'
+        else:
+            result.update(metrics=metrics(), events=list(BROWSER_EVENTS))
+            if data.get('capture') is True:
+                try:
+                    shot = await browser_cdp('Page.captureScreenshot', {
+                        'format': 'jpeg', 'quality': 70, 'captureBeyondViewport': False})
+                    image = shot.get('data', '')
+                    if not isinstance(image, str) or len(image) > 2_000_000:
+                        raise RuntimeError('Screen image too large')
+                    result['image'] = image
+                except Exception:
+                    result['capture_error'] = 'Screen capture unavailable. Check Chromium is running with the current kiosk launcher.'
+        await ws.send_json(result)
+    except Exception:
+        browser_event('Diagnostics request could not be delivered')
+    finally:
+        DIAGNOSTICS_BUSY = False
+
+
+def recovery_decision(now, settings):
+    """HA/server connectivity never enters this decision."""
+    stale = max(60, min(600, float(settings.get('browser_stale_s', 90))))
+    limit = max(1, min(6, int(settings.get('browser_recovery_limit', 3))))
+    if now - BROWSER_STARTED < 120:
+        return 'Starting', None
+    if BROWSER_SEEN and now - BROWSER_SEEN < stale:
+        return 'Healthy', None
+    if not settings.get('browser_recovery', True):
+        return 'Not responding · recovery disabled', None
+    if len(recovery_history()) >= limit:
+        return 'Not responding · hourly recovery limit reached', None
+    if now - RECOVERY_LAST < 120:
+        return 'Waiting after recovery', None
+    return 'Not responding', 'reload' if RECOVERY_STAGE == 0 and PAGES else 'restart'
+
+
+async def browser_watchdog():
+    global BROWSER_STATUS, RECOVERY_LAST, RECOVERY_STAGE
+    try:
+        saved = json.loads(RECOVERY_FILE.read_text())
+        RECOVERY_ATTEMPTS[:] = [v for v in saved if type(v) in (int, float)]
+    except (OSError, ValueError, TypeError):
+        pass
+    browser_event('Browser monitoring started')
+    while True:
+        try:
+            status, action = recovery_decision(time.monotonic(), screen_settings())
+            if status != BROWSER_STATUS:
+                browser_event(status)
+            BROWSER_STATUS = status
+            if status == 'Healthy':
+                RECOVERY_STAGE = 0
+            if action:
+                RECOVERY_LAST = time.monotonic()
+                if record_recovery():
+                    RECOVERY_STAGE += 1
+                    if action == 'reload':
+                        browser_event('Recovery: reloading kiosk page')
+                        try:
+                            await browser_cdp('Page.reload', {'ignoreCache': True})
+                        except Exception:
+                            await reload_ui()
+                    else:
+                        browser_event('Recovery: restarting kiosk browser')
+                        proc = await asyncio.create_subprocess_exec('systemctl', 'restart', 'cage-kiosk',
+                            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                        try:
+                            await asyncio.wait_for(proc.wait(), 15)
+                        except asyncio.TimeoutError:
+                            proc.kill()
+                            await proc.wait()
+                        if proc.returncode:
+                            browser_event('Kiosk restart failed; check service status')
+        except Exception:
+            BROWSER_STATUS = 'Monitor error'
+        await asyncio.sleep(5)
 
 
 async def tell_pages(payload: dict):
@@ -760,6 +926,7 @@ async def reload_ui():
 
 
 async def page_ws(request):
+    global BROWSER_SEEN
     ws = web.WebSocketResponse(heartbeat=25)
     await ws.prepare(request)
     PAGES.add(ws)
@@ -772,7 +939,17 @@ async def page_ws(request):
                 data = json.loads(msg.data)
             except Exception:
                 continue
-            if data.get("type") == "ha":
+            if data.get('type') == 'browser_heartbeat':
+                BROWSER_SEEN = time.monotonic()
+                UI_STATE['screen_mode'] = data.get('screen_mode') if data.get('screen_mode') in ('awake', 'idle', 'blanked') else 'unknown'
+                UI_STATE['adaptive_status'] = str(data.get('adaptive_status', ''))[:120]
+                lux = data.get('adaptive_lux')
+                UI_STATE['adaptive_lux'] = lux if type(lux) in (int, float) and 0 <= lux <= 200000 else None
+            elif data.get('type') == 'browser_error':
+                kind = data.get('kind')
+                if kind in ('Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError', 'Unhandled rejection', 'Resource error'):
+                    browser_event('Browser: ' + kind)
+            elif data.get("type") == "ha":
                 UI_STATE["ha_connected"] = bool(data.get("connected"))
             elif data.get("type") == "viewport":
                 # A panel has no console, so what the page measured is only
@@ -1017,6 +1194,10 @@ async def ws_loop(session):
                             await check_bundle(session)
                     elif t == "reload":
                         await reload_ui()
+                    elif t == 'screen_diagnostics':
+                        checked = verified(data, 'screen diagnostics request')
+                        if checked:
+                            await send_screen_diagnostics(ws, checked)
                     elif t == "wake":
                         # Presence, a doorbell, anything Home Assistant knows
                         # about that means someone is in front of this panel.
@@ -1522,7 +1703,7 @@ async def main():
         # used to sit in the same gather as everything else, behind the
         # register loop below -- so with the server down at boot, neither ever
         # started. Now they start here, whatever the server is doing.
-        await asyncio.gather(server_side(session), presence_loop(), dali_loop(), bluetooth_loop())
+        await asyncio.gather(server_side(session), presence_loop(), dali_loop(), bluetooth_loop(), browser_watchdog())
 
 
 async def server_side(session):
