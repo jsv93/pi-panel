@@ -9,7 +9,7 @@ import secrets
 import sqlite3
 import time
 from contextlib import contextmanager
-from .screen import DEFAULTS as SCREEN_DEFAULTS
+from .screen import DEFAULTS as SCREEN_DEFAULTS, validate as validate_screen
 
 DB_PATH = os.environ.get("PANEL_DB", "/data/panels.db")
 
@@ -459,7 +459,7 @@ def slug(s):
     return out.strip("-") or "panel"
 
 
-def create_provisional_panel(room, template, room_label=None):
+def create_provisional_panel(room, template, room_label=None, brightness_sensor=''):
     """Create the panel record before the hardware exists.
 
     The id is issued here rather than taken from the Pi's hostname: hostname
@@ -468,13 +468,19 @@ def create_provisional_panel(room, template, room_label=None):
     """
     panel_id = f"{slug(room)}-{secrets.token_hex(2)}"
     now = time.time()
+    cfg = deep_merge(DEFAULT_TEMPLATE, get_template(template or 'default') or {})
+    # Room-specific bindings must be selected for this panel, not copied from
+    # a template made in another room. Old templates gain all screen defaults.
+    cfg['display'] = {**SCREEN_DEFAULTS, **cfg.get('display', {}),
+                      'adaptive_sensor': brightness_sensor,
+                      'adaptive_brightness': bool(brightness_sensor)}
+    validate_screen(cfg['display'])  # validate before creating any record/token
     with conn() as c:
         c.execute(
             """INSERT INTO panels(id,hostname,kind,claimed,room,template,
                first_seen,last_seen) VALUES(?,?,?,1,?,?,?,NULL)""",
             (panel_id, panel_id, "pi", room, template or "default", now),
         )
-    cfg = merged_config(panel_id)
     cfg["room_label"] = room_label or room or cfg.get("room_label", "Room")
     # Fresh hardware opts in; legacy/default templates remain observe-only.
     # A template explicitly set to Disabled remains disabled.
