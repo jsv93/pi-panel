@@ -84,17 +84,22 @@ const root=path.resolve(__dirname,'..'),source=fs.readFileSync(path.join(root,'p
   {entity_id:'sensor.temperature',name:'Temperature',unit:'°C'}
  ]}));
  await q.goto(base+'/');await q.waitForSelector('#addPanelBtn:visible');await q.locator('#addPanelBtn').click();
- await q.waitForSelector('#provBrightness');
- assert.equal(await q.locator('#provBrightness option').count(),3,'only brightness sensors plus fixed option');
- await q.locator('#provRoom').fill('Living provision QA');await q.locator('#provBrightness').selectOption('sensor.living_lux');
+ await q.waitForSelector('#provRoom');
+ assert.equal(await q.locator('#provBrightness').count(),0,'brightness belongs in panel configuration');
+ await q.locator('#provRoom').fill('Living provision QA');
  const created=q.waitForResponse(r=>r.url().endsWith('/api/provision')&&r.request().method()==='POST');
  await q.locator('#mOk').click();const record=await (await created).json();
  await q.waitForSelector('#sectNav [data-s=display]');await q.locator('#sectNav [data-s=display]').click();
- assert.equal(await q.locator('#fAdaptiveSensor').inputValue(),'sensor.living_lux');
- assert.equal(await q.locator('#fAdaptive').inputValue(),'1');
+ assert.equal(await q.locator('#fAdaptiveSensor').inputValue(),'');
+ assert.equal(await q.locator('#fAdaptive').inputValue(),'0');
+ assert.equal(await q.locator('#fAdaptiveSensor option').count(),3,'configuration offers only lux sensors plus none');
+ await q.locator('#fAdaptiveSensor').selectOption('sensor.living_lux');
+ await q.locator('#fAdaptive').selectOption('1');
+ await q.locator('#saveScreenBtn').click();
+ await q.waitForFunction(()=>!document.querySelector('#saveScreenBtn').disabled);
  const provisioned=(await(await api.get(base+'/api/panels/'+record.panel_id)).json()).config;
  assert.equal(provisioned.display.adaptive_sensor,'sensor.living_lux');assert.equal(provisioned.display.browser_recovery,true);
  assert.deepEqual(errors,[]);
  await browser.close();console.log('PASS ingress settings: sensor retention, narrow save, validation feedback, existing config preserved, offline capture');
- console.log('PASS provisioning UI: filtered lux picker, saved per-room binding, adaptive enabled, recovery inherited');
+ console.log('PASS provisioning UI: simple add form, sensor selected and saved under Display, recovery inherited');
 })().catch(e=>{console.error(e);process.exit(1)});
