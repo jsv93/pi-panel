@@ -3,6 +3,7 @@ import math
 import re
 
 DEFAULTS = {
+    'idle_power_saving': False,
     'remote_diagnostics': True,
     'browser_recovery': True,
     'browser_stale_s': 90,

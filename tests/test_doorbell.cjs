@@ -34,6 +34,7 @@ const root=path.resolve(__dirname,'..'),source=fs.readFileSync(path.join(root,'p
   await run(`ringEvent({event_type:'pi_panel_doorbell',data:{panel_id:'p1',test:true}})`);
   await page.waitForFunction(()=>window.sent.some(m=>m.type==='camera/webrtc/offer'));
   assert(await page.locator('#doorbellPopup').isVisible());assert.equal(await run(`$('#idle').classList.contains('on')`),false);
+  assert.equal(await page.evaluate(()=>window.sent.filter(m=>m.type==='browser_heartbeat').at(-1).screen_mode),'awake','doorbell wake reports immediately for CPU restoration');
   await run(`cameraSubscriptions.get(bellSession.subscription)({type:'candidate',candidate:{candidate:'fixture'}});cameraSubscriptions.get(bellSession.subscription)({type:'answer',answer:'fixture'});`);
   await page.clock.runFor(2000);assert.equal(await run('!!bellSession'),true,'idle timer does not blank active doorbell');
   await run(`$('#doorbellVideo').onplaying();openDoorbell()`);assert.equal(await page.evaluate(()=>window.peers.length),1,'repeat reuses decoder');

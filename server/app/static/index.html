@@ -577,6 +577,14 @@ body{line-height:1.5}h1{font-size:22px;letter-spacing:-.5px}h2{font-size:17px}h3
           </div>
 
           <div class="grp">
+            <h3>Save power while asleep</h3>
+            <label class="lbl" for="fIdlePower">IDLE POWER SAVING</label>
+            <select id="fIdlePower"><option value="0">Off</option><option value="1">On — while the screen is blanked</option></select>
+            <p class="hint">Limit CPU speed while the screen is fully off. Normal performance returns on touch, presence detection or a doorbell ring. The dimmed clock keeps normal performance. Home Assistant, room detection and five-second diagnostics stay connected. Set a Blank after time above to use this.</p>
+            <p class="hint" id="idlePowerStatus" role="status"></p>
+          </div>
+
+          <div class="grp">
             <h3>Adaptive brightness</h3>
             <p class="hint">Follow a room illuminance sensor with smooth transitions. Idle dimming and screen-off still apply. If the sensor is unavailable, the panel holds its last valid reading; before the first reading it uses the default brightness. The panel brightness slider overrides this for 10 minutes.</p>
             <div class="f2">
@@ -1273,6 +1281,7 @@ $("#addSpeaker").onclick=()=>{
   renderSpeakers(); };
 
 const SCREEN_FIELDS={
+  idle_power_saving:['fIdlePower',false],
   remote_diagnostics:['fRemoteDiagnostics',true],browser_recovery:['fBrowserRecovery',true],
   browser_stale_s:['fBrowserStale',90],browser_recovery_limit:['fBrowserLimit',3],
   adaptive_brightness:['fAdaptive',false],adaptive_sensor:['fAdaptiveSensor',''],
@@ -1284,6 +1293,7 @@ function brightnessSensors(){
   return (ENTITIES.sensor||[]).filter(e=>e.device_class==='illuminance'||['lx','lux'].includes((e.unit||'').toLowerCase()));
 }
 function fillScreenSettings(d){
+  $('#idlePowerStatus').textContent='Panel status: '+(CUR?.panel.metrics?.idle_power_status||'Not reported yet — update the panel agent to use this feature.');
   const sensors=brightnessSensors();
   $('#fAdaptiveSensor').innerHTML=opts(sensors,d.adaptive_sensor);
   for(const [key,[id,defaultValue]] of Object.entries(SCREEN_FIELDS)){
@@ -1324,6 +1334,7 @@ async function requestScreenDiagnostics(capture){
     const m=result.metrics||{};
     $('#screenDiagnosticStatus').textContent=[new Date(result.captured_at*1000).toLocaleTimeString(),m.browser_health||'Unknown',
       'Screen: '+(m.screen_mode||'unknown'),'Backlight: '+(m.backlight||'unknown'),
+      'Idle power saving: '+(m.idle_power_status||'Not reported'),
       'Brightness: '+(m.adaptive_status||'unknown'),m.adaptive_lux==null?'':m.adaptive_lux+' lx',
       'Recoveries this hour: '+(m.browser_recoveries_hour??0),result.capture_error||''].filter(Boolean).join(' · ');
     if(typeof result.image==='string'&&result.image.length<=2000000&&/^[A-Za-z0-9+/]+=*$/.test(result.image)){

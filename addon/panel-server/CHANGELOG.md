@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.25.0
+
+- Add an optional Save power while asleep setting under Display. While fully blanked, limit CPU speed to its existing minimum and restore the original ceiling on wake or doorbell playback.
+- Keep the normal governor, voltage, firmware, Bluetooth, Home Assistant connection and five-second performance sampling unchanged.
+- Restore normal performance on missing/stale browser state, disable, shutdown and agent restart. Record power-saving status in display diagnostics.
+
 ## 0.24.0
 
 - Add per-panel Doorbell settings with a Home Assistant camera selector, ring trigger, popup duration and Test doorbell button.
