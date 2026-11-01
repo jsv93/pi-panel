@@ -1947,7 +1947,7 @@ function applyState(s){
       maxK: a.max_color_temp_kelvin ?? 6500,
       hs: a.hs_color || null,
     };
-    if(openLightIdx === li) paintLightSheet();
+    if(openLightIdx === li&&visualsAwake()) paintLightSheet();
   } else if(id===TEMP_ENT){ st.temp = parseFloat(s.state);
   } else if(id===CLIMATE){
     const a = s.attributes || {};
@@ -1959,7 +1959,7 @@ function applyState(s){
     /* current_temperature is the room, not the target. It belongs on the
        climate page; the home tile is what the room is set to. */
     if(a.current_temperature != null && !TEMP_ENT) st.temp = a.current_temperature;
-    paintSetpoint();
+    if(visualsAwake())paintSetpoint();
   } else if(id===HUM_ENT){  st.hum  = parseFloat(s.state);
   } else if(SPEAKERS[target] && id===SPEAKERS[target][0]){
     st.playing = s.state==="playing";
@@ -2056,6 +2056,7 @@ function showSheet(name,nav={}){
   });
   if(name==="browse" && !browseStack.length) browse(null,null,"Library");
   bump();
+  syncVisualUpdates();
 }
 function closeSheet(silent){
   closeVolume();
@@ -2068,6 +2069,7 @@ function closeSheet(silent){
      backlight and cancels the idle timers, so closing a sheet on the way down
      would wake the screen it had just blanked. */
   if(!silent) bump();
+  syncVisualUpdates();
 }
 document.querySelectorAll("[data-sheet]").forEach(b=>b.addEventListener("click",()=>{
   const fromHome=!!b.closest(".nav,#room");
@@ -2090,6 +2092,7 @@ function ovOpen(id){
   $(id).classList.add("on");
   if(theme==='architectural')$(id).querySelectorAll('.slider').forEach(sl=>sl.dispatchEvent(new Event('slider-layout')));
   bump();
+  syncVisualUpdates();
 }
 function ovClose(silent){
   document.querySelectorAll(".ov").forEach(o=>o.classList.remove("on"));
@@ -2097,6 +2100,7 @@ function ovClose(silent){
   else archOverlays=[];
   document.body.classList.toggle('arch-overlay-open',theme==='architectural'&&archOverlays.length>0);
   if(!silent) bump();
+  syncVisualUpdates();
 }
 document.querySelectorAll("[data-ovclose]").forEach(e=>e.addEventListener("click",()=>ovClose()));
 $("#icoSearch").addEventListener("click",()=>{ browseStack.length=0; showSheet("browse"); });
@@ -2162,15 +2166,46 @@ function buildQueue(){
 }
 
 /* ---------- clock ---------- */
+let visualUpdatesReady=false,clockTimer=null,progressTimer=null;
+function visualsAwake(){return !document.hidden&&!$('#idle').classList.contains('on')&&!$('#idle').classList.contains('blanked');}
+function textChanged(selector,value){const el=$(selector);if(el&&el.textContent!==value)el.textContent=value;}
 function tick(){
+  if(document.hidden||$('#idle').classList.contains('blanked'))return;
   const d = new Date();
   const hm = String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");
-  $("#clock").textContent = hm; $("#idleClock").textContent = hm;
-  $("#datestr").textContent = d.toLocaleDateString(undefined,{weekday:"short",day:"numeric",month:"short"}) + "  ·  " + ROOM;
-  $("#archClock").textContent = hm;
-  $("#archDate").textContent = d.toLocaleDateString(undefined,{weekday:"long",day:"numeric",month:"long"});
+  textChanged('#idleClock',hm);
+  if(!visualsAwake())return;
+  textChanged('#clock',hm);
+  textChanged('#datestr',d.toLocaleDateString(undefined,{weekday:"short",day:"numeric",month:"short"}) + "  ·  " + ROOM);
+  textChanged('#archClock',hm);
+  textChanged('#archDate',d.toLocaleDateString(undefined,{weekday:"long",day:"numeric",month:"long"}));
 }
-setInterval(tick,1000); tick();
+function scheduleClock(){
+  clearTimeout(clockTimer);clockTimer=null;
+  if(document.hidden||$('#idle').classList.contains('blanked'))return;
+  tick();paintUptime();
+  clockTimer=setTimeout(scheduleClock,60000-Date.now()%60000+20);
+}
+function syncProgressTimer(){
+  if(!visualUpdatesReady)return;
+  const active=visualsAwake()&&!document.querySelector('.ov.on')&&(openSheet==='media'||!openSheet)&&st.playing&&st.dur>0;
+  if(active&&progressTimer===null)progressTimer=setInterval(paintProgress,500);
+  else if(!active){clearInterval(progressTimer);progressTimer=null;}
+}
+function syncVisualUpdates(){
+  if(!visualUpdatesReady)return;
+  scheduleClock();paintProgress();syncProgressTimer();
+  if(openSheet==='media')drawPlayerWave();
+  if(visualsAwake()){
+    blS.paint(st.bl);textChanged('#blV',st.bl+'%');
+  }
+  if(diag&&visualsAwake())startFps();else stopFps();
+}
+function resumeVisualState(){
+  paintAll();
+  if(visualsAwake()&&openLightIdx>=0)paintLightSheet();
+  syncVisualUpdates();
+}
 
 /* ---------- sliders ---------- */
 function slider(el,get,set,onPaint){
@@ -2373,7 +2408,8 @@ setInterval(()=>{
   const target=adaptiveLux===null?BL_DEF:adaptiveTarget(adaptiveLux);
   adaptiveCurrent+=(target-adaptiveCurrent)*(1-Math.exp(-3*dt/(_disp.adaptive_transition_s??5)));
   if(Date.now()<adaptiveOverrideUntil || $('#identify').classList.contains('on'))return;
-  st.bl=panelBrightness();blS.paint(st.bl);$('#blV').textContent=st.bl+'%';
+  st.bl=panelBrightness();
+  if(visualsAwake()){blS.paint(st.bl);textChanged('#blV',st.bl+'%');}
   // Never light a blanked panel when a new sensor value arrives.
   if(!$('#idle').classList.contains('blanked'))setBacklight(screenBrightness(),1000);
 },1000);
@@ -2682,6 +2718,7 @@ $("#mBar").addEventListener("click",e=>{
 });
 
 function drawPlayerWave(){
+  if(!visualsAwake()||openSheet!=='media'||document.querySelector('.ov.on'))return;
   const width=$('#mBar').clientWidth+44,svg=$('.mp-wave svg');
   svg.setAttribute('width',width);svg.setAttribute('viewBox','0 0 '+width+' 32');
   let d='';for(let x=0;x<=width;x+=2)d+=(x?'L':'M')+x+' '+(16+2.7*Math.sin(x*Math.PI/22)).toFixed(2);
@@ -2709,13 +2746,14 @@ function curPos(){
   return Math.max(0, Math.min(st.dur, (st.pos||0) + extra));
 }
 function paintProgress(){
+  if(!visualsAwake()||document.querySelector('.ov.on')||(openSheet&&openSheet!=='media'))return;
   const p = curPos();
   const pct = st.dur ? (p/st.dur*100) : 0;
-  const f = $("#mFill"), sp = $("#stripProg");
+  if(!openSheet){$('#stripProg').style.width=pct+'%';return;}
+  const f = $("#mFill");
   if(f){
     f.style.width="100%";f.style.transform="scaleX("+(pct/100)+")";
   }
-  if(sp) sp.style.width = pct+"%";
   $('.mp-wave').style.width=pct+'%';$('#s-media').classList.toggle('mp-playing',st.playing&&st.dur>0);
   $('#mBar').setAttribute('aria-valuemax',st.dur||0);$('#mBar').setAttribute('aria-valuenow',Math.round(p));
   $('#mBar').setAttribute('aria-valuetext',fmt(p)+' of '+fmt(st.dur||0));
@@ -2746,7 +2784,6 @@ function paintTransport(){
   const wave=$("#icoWave");
   if(wave) wave.classList.toggle("dim", !st.playing);
 }
-setInterval(paintProgress, 500);
 
 /* ============================================================
    Browsing
@@ -3012,6 +3049,7 @@ $("#bBack").addEventListener("click",()=>{
 const PLAY ='<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
 const PAUSE='<svg viewBox="0 0 24 24"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>';
 function paintArt(){
+  if(!visualsAwake())return;
   const h = st.art ? '<img src="'+st.art+'" alt="">' : NOTE;
   document.querySelector("#roomMedia .art").innerHTML = theme === "architectural" && document.body.classList.contains("no-mini-art") ? NOTE : h;
   /* big art keeps its badge child, so replace only the art layer */
@@ -3122,6 +3160,8 @@ function paintPresets(){
     "\nconfig v" + (CFG._version ?? "?") + " · " + detail.join(" · ");
 }
 function paintAll(){
+  // State keeps arriving while asleep; draw its latest snapshot before wake.
+  if(!visualsAwake()){syncProgressTimer();return;}
   if($("#ovSpk").classList.contains("on"))paintSpeakers();
   paintPresetsSoon();
   LIGHTS.forEach((l,i)=>{
@@ -3152,6 +3192,7 @@ function paintAll(){
      exists. */
   archPaintLights(); paintSetpoint();
   paintTransport(); paintProgress(); paintArt();
+  syncProgressTimer();
 }
 
 /* ---------- display choices ---------- */
@@ -3587,6 +3628,7 @@ function goIdle(){
   document.body.classList.add("panel-idle");
   idleDrift(true);
   setBacklight(screenBrightness());
+  syncVisualUpdates();
 }
 function goBlank(){
   $("#idle").classList.add("blanked");
@@ -3598,6 +3640,7 @@ function goBlank(){
      the one who left it there. Done at blank rather than at dim: the
      screen is off, so nothing is seen to move. */
   goHome();
+  syncVisualUpdates();
 }
 /* Stand down now, on command -- "everyone has gone to bed", not a timeout.
    Follows this panel's own configuration rather than forcing black: a panel
@@ -3617,6 +3660,7 @@ function bump(){
     document.body.classList.remove("panel-idle");
     $("#idle").classList.remove("blanked");
     idleDrift(false);
+    resumeVisualState();
     /* Not immediately. The backlight is separate hardware and the panel is
        still showing the last frame it drew -- the standby clock -- so lighting
        it before the home screen is composited is what makes that clock flash
@@ -3667,28 +3711,32 @@ $("#idle").addEventListener("click",bump);
 
 /* ---------- uptime + fps ---------- */
 const t0=Date.now();
-setInterval(()=>{ const s=(Date.now()-t0)/1000;
-  $("#sUp").textContent = s<3600 ? Math.floor(s/60)+"m" : Math.floor(s/3600)+"h "+Math.floor(s%3600/60)+"m"; },1000);
+function paintUptime(){
+  if(!visualsAwake()||openSheet!=='settings')return;
+  const s=(Date.now()-t0)/1000;
+  textChanged('#sUp',s<3600 ? Math.floor(s/60)+"m" : Math.floor(s/3600)+"h "+Math.floor(s%3600/60)+"m");
+}
 /* Only while diagnostics are on. Counting frames means a requestAnimationFrame
    callback every frame forever, which on a panel that spends most of its life
    idle is work for a number nobody is reading -- so the loop starts and stops
    with the toggle rather than being decided once at load. */
-let fpsOn=false;
+let fpsOn=false,fpsFrame=null;
+function stopFps(){fpsOn=false;cancelAnimationFrame(fpsFrame);fpsFrame=null;}
 function startFps(){
-  if(fpsOn) return;
+  if(fpsOn||!visualsAwake()) return;
   fpsOn=true;
   let frames=0,last=performance.now();
-  requestAnimationFrame(function loop(now){
+  fpsFrame=requestAnimationFrame(function loop(now){
     if(!fpsOn) return;
     frames++;
     if(now-last>=1000){ $("#fps").textContent=frames+" fps"; frames=0; last=now; }
-    requestAnimationFrame(loop);
+    fpsFrame=requestAnimationFrame(loop);
   });
 }
 function applyDiag(){
   document.body.classList.toggle("diag", diag);
   const el=$("#diagV"); if(el) el.textContent = diag ? "On" : "Off";
-  if(diag) startFps(); else fpsOn=false;
+  if(diag&&visualsAwake()) startFps(); else stopFps();
   try{
     localStorage.setItem("diag", diag?"1":"0");
     localStorage.setItem("diagBase", DIAG_DEFAULT?"1":"0");
@@ -3758,9 +3806,15 @@ if(dgr) dgr.addEventListener("click",()=>{
 });
 applyDiag();
 
-document.addEventListener("visibilitychange",()=>document.body.classList.toggle("page-hidden",document.hidden));
+document.addEventListener("visibilitychange",()=>{
+  document.body.classList.toggle("page-hidden",document.hidden);
+  idleDrift(!document.hidden&&$('#idle').classList.contains('on')&&!$('#idle').classList.contains('blanked'));
+  if(!document.hidden)resumeVisualState();else syncVisualUpdates();
+});
 setupArchPages();
+visualUpdatesReady=true;
 connect(); paintAll(); bump(); setBacklight(panelBrightness());
+syncVisualUpdates();
 panelReady=true;browserHeartbeat();
 </script>
 </body>

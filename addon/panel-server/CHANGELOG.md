@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.23.3
+
+- Stop unnecessary clock, uptime, media-progress and diagnostic frame updates while the panel is blanked or hidden; only animate playback progress where it is visible.
+- Update displayed clocks on minute boundaries and defer asleep screen repaints until wake, using the latest state and elapsed playback time.
+- Keep Home Assistant state, agent heartbeats, wake controls and adaptive backlight behavior active. CPU clock and power settings are unchanged.
+
 ## 0.23.2
 
 - Keep historical readouts at their natural width near graph edges, while fitting narrow mobile screens.
