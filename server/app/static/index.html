@@ -658,7 +658,6 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
 
         <div class="sect" data-s="diag">
           <h2 style="margin-bottom:14px">Diagnostics</h2>
-          <p><a id="secureDiagnostics" href="management/open" target="_blank" rel="noopener">Open secure diagnostics</a> — named access with device permissions.</p>
           <div id="diagBody" class="muted">–</div>
           <div class="grp" style="margin-top:18px">
             <h3>Live screen diagnostics</h3>
@@ -1027,7 +1026,6 @@ function ramUsage(m){
 }
 async function openPanel(id){
   CUR = await api("/panels/"+id);
-  $('#secureDiagnostics').href=BASE+'management/open?panel='+encodeURIComponent(CUR.panel.id);
   CFG = JSON.parse(JSON.stringify(CUR.config));
   await loadEntities();
   $("#fleetView").style.display="none"; $("#detailView").style.display="block";

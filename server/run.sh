@@ -7,6 +7,25 @@
 # be the only reason either exists.
 set -e
 
+# Remove only the files created by the retired optional diagnostics feature.
+# Panel data, enrollment credentials and provisioning SSH keys are untouched.
+python3 - <<'PY'
+from pathlib import Path
+removed = 0
+for name in ('management-policy.json', 'management-cert.pem', 'management-key.pem',
+             'management-audit.db', 'management-audit.db-wal', 'management-audit.db-shm'):
+    path = Path('/data') / name
+    try:
+        path.unlink()
+        removed += 1
+    except FileNotFoundError:
+        pass
+    except OSError:
+        print('[server] Retired diagnostics file cleanup failed: ' + name, flush=True)
+if removed:
+    print('[server] Removed retired diagnostics data: ' + str(removed) + ' files', flush=True)
+PY
+
 OPTS=/data/options.json
 if [ -f "$OPTS" ]; then
   eval "$(python3 - "$OPTS" <<'PY'
@@ -27,4 +46,4 @@ fi
 # Supervisor provides SUPERVISOR_TOKEN and proxies the core API, and ha.py
 # falls back to that when neither is configured.
 
-exec python3 /srv/launch.py
+exec uvicorn app.main:app --host 0.0.0.0 --port 8099
