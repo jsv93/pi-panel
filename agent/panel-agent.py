@@ -463,12 +463,262 @@ def memory_usage():
         return {}  # Missing metrics must never prevent a heartbeat.
 
 
+# Only cheap kernel counters run at five-second cadence. Wi-Fi subprocesses,
+# Bluetooth inspection and configuration sync retain their existing cadence.
+PERFORMANCE_LAST = {}
+
+
+class PerformanceSampler:
+    def __init__(self, proc=Path('/proc')):
+        self.proc = proc
+        self.previous = None
+
+    def sample(self, now=None):
+        now = time.monotonic() if now is None else now
+        out, counters = memory_usage(), {}
+        try:
+            fields = (self.proc / 'stat').read_text().splitlines()[0].split()
+            if fields[0] != 'cpu':
+                raise ValueError('missing cpu counters')
+            values = [int(x) for x in fields[1:9]]  # guest time is already in user/nice
+            if len(values) < 5 or min(values) < 0:
+                raise ValueError('invalid cpu counters')
+            counters['cpu'] = (sum(values), values[3] + values[4])
+            out['cpu_cores'] = os.cpu_count() or 1
+        except (OSError, ValueError, IndexError):
+            pass
+        try:
+            # Use the default-route interface, avoiding bridge/container double counting.
+            interface = next(line.split()[0] for line in (self.proc/'net/route').read_text().splitlines()[1:]
+                             if line.split()[1] == '00000000' and int(line.split()[3], 16) & 1)
+            for line in (self.proc/'net/dev').read_text().splitlines()[2:]:
+                name, fields = line.split(':', 1)
+                if name.strip() == interface:
+                    fields = fields.split()
+                    counters['net'] = (interface, int(fields[0]), int(fields[8]))
+        except (OSError, ValueError, IndexError, StopIteration):
+            pass
+        dev = _root_device()
+        sectors = _sectors_written(dev) if dev else None
+        if sectors is not None:
+            counters['disk'] = (dev, sectors)
+        try:
+            out['load_1m'] = float((self.proc/'loadavg').read_text().split()[0])
+        except (OSError, ValueError, IndexError):
+            pass
+        try:
+            out['cpu_temp'] = round(int(Path('/sys/class/thermal/thermal_zone0/temp').read_text())/1000, 1)
+        except (OSError, ValueError):
+            pass
+        if self.previous:
+            before, old = self.previous
+            dt = now - before
+            if 0 < dt <= 30:
+                if 'cpu' in old and 'cpu' in counters:
+                    total, idle = (counters['cpu'][i]-old['cpu'][i] for i in (0, 1))
+                    if total > 0 and 0 <= idle <= total:
+                        out['cpu_usage_pct'] = round(100*(total-idle)/total, 1)
+                if 'net' in old and 'net' in counters and old['net'][0] == counters['net'][0]:
+                    for i, key in [(1, 'net_rx_kbps'), (2, 'net_tx_kbps')]:
+                        delta = counters['net'][i] - old['net'][i]
+                        if delta >= 0:
+                            out[key] = round(delta / dt / 1000, 2)
+                if 'disk' in old and 'disk' in counters and old['disk'][0] == counters['disk'][0]:
+                    delta = counters['disk'][1] - old['disk'][1]
+                    if delta >= 0:
+                        out['disk_write_kbps'] = round(delta*512 / dt / 1000, 2)
+        self.previous = (now, counters)
+        return out
+
+
+async def performance_loop(session):
+    global PERFORMANCE_LAST
+    sampler = PerformanceSampler()
+    while True:
+        started = time.monotonic()
+        try:
+            PERFORMANCE_LAST = sampler.sample()
+            async with session.post(f'{SERVER}/api/performance/{PANEL_ID}',
+                                    json=PERFORMANCE_LAST, timeout=3) as response:
+                await response.read()
+        except Exception:
+            pass  # Telemetry must never interrupt the local panel.
+        await asyncio.sleep(max(0.1, 5 - (time.monotonic() - started)))
+
+
+# Public-key changes run as the selected OS user, not the root agent. The
+# helper accepts only a fixed schema; no request value becomes executable code.
+SSH_KEY_HELPER = r'''
+import base64, fcntl, hashlib, json, os, re, shlex, stat, subprocess, sys, time
+from pathlib import Path
+
+def key_info(line):
+    try:
+        fields = shlex.split(line)
+        for i, kind in enumerate(fields[:-1]):
+            if kind in ('ssh-ed25519', 'ssh-rsa', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521'):
+                blob = base64.b64decode(fields[i+1], validate=True)
+                n = int.from_bytes(blob[:4], 'big')
+                if blob[4:4+n].decode() != kind:
+                    return None
+                label = ' '.join(fields[i+2:])
+                return {'fingerprint':'SHA256:'+base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip('='),
+                        'kind':kind, 'name':label.removeprefix('pi-panel:')[:100] or 'Unnamed computer',
+                        'protected': 'panel-config-server' in label or 'pi-panel-server' in label}
+    except Exception:
+        pass
+    return None
+
+def run(b):
+    action=b['action']
+    if action not in ('list','add','remove'):
+        raise ValueError('Unsupported action')
+    home=Path(b['home'])
+    if home.is_symlink() or home.stat().st_uid != os.getuid():
+        raise ValueError('User home ownership is not valid')
+    os.chdir(home)
+    if not Path('.ssh').exists():
+        if action == 'list':
+            return {'keys':[]}
+        os.mkdir('.ssh', 0o700)
+    directory=os.open('.ssh', os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+    try:
+        if os.fstat(directory).st_uid != os.getuid():
+            raise ValueError('SSH directory has a different owner')
+        # A directory descriptor pins the destination even if it is renamed.
+        lock=os.open('.pi-panel.lock', os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600,dir_fd=directory)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                fd=os.open('authorized_keys',os.O_RDONLY|os.O_NOFOLLOW,dir_fd=directory)
+            except FileNotFoundError:
+                old=''
+            else:
+                with os.fdopen(fd) as f:
+                    st=os.fstat(f.fileno())
+                    if not stat.S_ISREG(st.st_mode) or st.st_nlink!=1 or st.st_uid!=os.getuid() or st.st_size>131072:
+                        raise ValueError('Unsupported authorized_keys file')
+                    old=f.read()
+            lines=old.splitlines(keepends=True)
+            info=[key_info(line) for line in lines]
+            changed=False
+            if action=='add':
+                key=b['key'];name=b['name']
+                if len(key)>8192 or not re.fullmatch(r'(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(?:256|384|521)) [A-Za-z0-9+/]+=*',key):
+                    raise ValueError('Invalid public key')
+                if not 1<=len(name)<=60 or any(ord(c)<32 for c in name):
+                    raise ValueError('Invalid computer name')
+                check=subprocess.run(['ssh-keygen','-lf','/dev/stdin'],input=key+'\n',text=True,capture_output=True,timeout=3)
+                if check.returncode or (key.startswith('ssh-rsa ') and int(check.stdout.split()[0])<2048):
+                    raise ValueError('Invalid or weak public key')
+                item=key_info(key)
+                if not item:
+                    raise ValueError('Invalid public key')
+                if not any(x and x['fingerprint']==item['fingerprint'] for x in info):
+                    if sum(bool(x) for x in info)>=100:
+                        raise ValueError('At most 100 keys are supported')
+                    lines.append(('' if not old or old.endswith('\n') else '\n')+key+' pi-panel:'+name+'\n')
+                    changed=True
+            elif action=='remove':
+                found=[x for x in info if x and x['fingerprint']==b['fingerprint']]
+                if not found:
+                    raise ValueError('Key no longer exists; refresh the list')
+                if any(x['protected'] for x in found):
+                    raise ValueError('The Panel Server key is protected')
+                lines=[line for line,x in zip(lines,info) if not x or x['fingerprint']!=b['fingerprint']]
+                changed=True
+            if changed:
+                stamp=str(time.time_ns())
+                backup='authorized_keys.before-panel-'+stamp
+                fd=os.open(backup,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=directory)
+                with os.fdopen(fd,'w') as f:
+                    f.write(old);f.flush();os.fsync(f.fileno())
+                temp='.authorized_keys.'+stamp
+                try:
+                    fd=os.open(temp,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=directory)
+                    with os.fdopen(fd,'w') as f:
+                        f.write(''.join(lines));f.flush();os.fsync(f.fileno())
+                    os.replace(temp,'authorized_keys',src_dir_fd=directory,dst_dir_fd=directory)
+                    os.fchmod(directory,0o700)
+                finally:
+                    try: os.unlink(temp,dir_fd=directory)
+                    except FileNotFoundError: pass
+                # Keep only the five most recent backups made by this helper.
+                backups=sorted(n for n in os.listdir(directory) if re.fullmatch(r'authorized_keys\.before-panel-\d+',n))
+                for n in backups[:-5]: os.unlink(n,dir_fd=directory)
+            return {'keys':[x for line in lines if (x:=key_info(line))], 'changed':changed}
+        finally: os.close(lock)
+    finally: os.close(directory)
+
+try:
+    print(json.dumps(run(json.load(sys.stdin))))
+except Exception as e:
+    print(json.dumps({'error':str(e)[:180]}))
+'''
+
+ACCESS_SEEN = deque(maxlen=128)
+
+
+def ssh_access(request):
+    import pwd
+    # Require enrollment even where legacy config remains unsigned. Requests
+    # expire and are bound to this device to prevent delayed/cross-device replay.
+    if not SIGN_KEY or request.get('panel_id') != PANEL_ID:
+        return {'error': 'A secured panel is required'}
+    now = time.time()
+    expiry = request.get('expires', 0)
+    rid = request.get('request_id')
+    if type(expiry) not in (int,float) or not now <= expiry <= now+60 or not isinstance(rid,str) or rid in ACCESS_SEEN:
+        return {'error': 'Request expired or was already used; refresh and retry'}
+    ACCESS_SEEN.append(rid)
+    try:
+        accounts = [p for p in pwd.getpwall() if 1000 <= p.pw_uid < 60000
+                    and p.pw_shell.rsplit('/',1)[-1] not in ('nologin','false','')
+                    and p.pw_dir.startswith('/home/')]
+        accounts.sort(key=lambda p:p.pw_uid)
+        user = request.get('user') or (accounts[0].pw_name if accounts else '')
+        account = next((p for p in accounts if p.pw_name == user), None)
+        if not account:
+            raise ValueError('No matching non-root login user. Create one during panel setup.')
+        body = {k:request[k] for k in ('action','key','name','fingerprint') if k in request}
+        body['home'] = account.pw_dir
+        result = subprocess.run([sys.executable, '-c', SSH_KEY_HELPER], input=json.dumps(body),
+                                text=True, capture_output=True, timeout=8,
+                                user=account.pw_uid, group=account.pw_gid, extra_groups=[])
+        if result.returncode or len(result.stdout)>65536:
+            raise ValueError('Could not read the user SSH keys')
+        data = json.loads(result.stdout)
+        port = 22
+        try:
+            policy = subprocess.run(['/usr/sbin/sshd', '-T'], capture_output=True, text=True, timeout=2)
+            ports = [int(line.split()[1]) for line in policy.stdout.splitlines() if line.startswith('port ')]
+            if ports:
+                port = 22 if 22 in ports else ports[0]
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
+        data.update(user=user, users=[p.pw_name for p in accounts], port=port)
+        return data
+    except Exception as e:
+        return {'error': str(e)[:180]}
+
+
+async def send_ssh_access(ws, data):
+    checked = verified(data, 'SSH access request') if SIGN_KEY else None
+    if not checked:
+        return
+    result = await asyncio.to_thread(ssh_access, checked)
+    reply = {'type':'ssh_access_result', 'request_id':checked.get('request_id'), **result}
+    reply['_sig'] = hmac.new(SIGN_KEY.encode(), _canonical(reply), hashlib.sha256).hexdigest()
+    await ws.send_json(reply)
+
+
 def metrics():
     m = {"ui_version": AGENT_VER}
     m.update(kiosk_gpu())
     m.update(backlight_state())
     m.update(disk_writes())
     m.update(memory_usage())
+    m.update(PERFORMANCE_LAST)
     m.update(BLUETOOTH_METRICS)
     m["presence"] = PRESENCE_STATE
     # Same reasoning as presence: a gateway that is not answering should say
@@ -1192,6 +1442,8 @@ async def ws_loop(session):
                         # nothing whenever the bundle was what had changed.
                         if t == "sync":
                             await check_bundle(session)
+                    elif t == "ssh_access":
+                        await send_ssh_access(ws, data)
                     elif t == "reload":
                         await reload_ui()
                     elif t == 'screen_diagnostics':
@@ -1719,7 +1971,7 @@ async def server_side(session):
     await sync(session)
     await check_bundle(session)
     await asyncio.gather(ws_loop(session), heartbeat_loop(session),
-                         poll_loop(session))
+                         poll_loop(session), performance_loop(session))
 
 
 if __name__ == "__main__":

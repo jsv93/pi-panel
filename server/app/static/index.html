@@ -119,6 +119,13 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1C1C26;
   border:1px solid var(--line);padding:11px 18px;border-radius:9px;font-size:13px;z-index:80;display:none}
 .toast.on{display:block}
+/* Shared shell and diagnostics use the approved Pi Panel preview layout. */
+:root{--quiet:#a0a0ad;--faint:#9a9aa6;--line:#292933}
+body{line-height:1.5}h1{font-size:22px;letter-spacing:-.5px}h2{font-size:17px}h3{font-size:14px}button,input,select,summary{touch-action:manipulation}button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible,a:focus-visible{outline:2px solid var(--ok);outline-offset:3px}.btn{min-height:44px;padding:9px 14px;color:var(--dim)}.btn:disabled{opacity:.45;cursor:default}.wrap{max-width:1320px;padding:24px}.app-header{display:flex;align-items:center;justify-content:space-between;padding-bottom:22px;margin-bottom:22px;border-bottom:1px solid var(--line)}.app-header>.muted{font-size:12px}.brand{display:flex;align-items:center;gap:11px;font-size:17px;font-weight:600}.brand svg{width:26px;height:26px;color:var(--ok)}.app-shell{display:grid;grid-template-columns:174px minmax(0,1fr);gap:26px}.app-main{min-width:0}.app-nav{align-self:start;position:sticky;top:22px}.app-nav button{display:block;text-align:left;width:100%;min-height:44px;border-radius:7px;padding:11px 12px;color:var(--dim);font-size:13px}.app-nav button:hover{background:var(--line2);color:var(--ink)}.app-nav button.on{background:var(--ok-soft);color:var(--ok);font-weight:500}.app-nav hr{border:0;border-top:1px solid var(--line);margin:16px 0 8px}.nav-label{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--quiet);padding:20px 12px 8px}.app-nav [hidden],[hidden]{display:none!important}#settingsNavigation{margin-top:8px}#settingsNavigation button{font-size:12px;padding-left:22px}#settingsBtn,#backBtn,#setBackBtn{display:none}.cols{display:block;margin-top:20px}#detailView>div:first-child{flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:18px;gap:12px!important}#detailView>div:first-child>div:last-child{flex-basis:100%;flex-wrap:wrap;margin-left:0!important;gap:7px!important}#detailView>div:first-child>div:last-child .btn{font-size:12px}#deviceMeta{font-size:12px;margin-top:4px}#deviceStatus{margin-left:auto}#detailBody>.sect:not([data-s=diag]):not([data-s=access]){background:var(--card);border:1px solid var(--line);border-radius:9px;padding:20px}#detailBody .grp{margin-top:24px;padding-top:20px}#detailBody .grp:first-of-type{margin-top:4px;padding-top:0}#fleetView>.card{overflow:auto}#fleetView .head{flex-wrap:wrap;padding:18px}#fleetView .head>div{flex-wrap:wrap}#fleetView .grid{min-width:850px;grid-template-columns:1.15fr .75fr .45fr .85fr .7fr .6fr 170px}#fleetView .grid .btn{font-size:12px;padding:7px 10px}.lbl{font-size:11px;margin-bottom:7px;color:var(--quiet)}input,select,textarea{min-height:44px}input[type=checkbox]{min-height:0}.page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:15px;margin-bottom:22px}.page-head p{font-size:12px;margin-top:4px}.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.perf-ranges{display:flex;gap:3px;background:var(--sunk);border:1px solid var(--line);border-radius:8px;padding:3px}.perf-ranges button{min-height:38px;padding:7px 11px;border-radius:6px;font-size:12px;color:var(--dim)}.perf-ranges button[aria-pressed=true]{background:var(--line);color:var(--ink)}.perf-status{font-size:12px;margin-bottom:13px;min-height:18px}.perf-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.perf-card{min-width:0;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:16px 17px 12px}.perf-top{display:flex;justify-content:space-between;gap:8px;align-items:baseline}.perf-top h3{font-size:12px;font-weight:500;color:var(--dim)}.perf-top span{font-size:11px;color:var(--quiet)}.perf-value{display:flex;align-items:baseline;gap:6px;margin-top:7px}.perf-value strong{font-size:28px;letter-spacing:-1px;font-weight:550;font-variant-numeric:tabular-nums}.perf-value .unit{font-size:13px;color:var(--dim)}.perf-value .extra{font-size:11px;margin-left:auto;text-align:right;color:var(--quiet)}.perf-chart{display:block;width:100%;height:auto;overflow:visible}.perf-chart text{font:10px system-ui,sans-serif;fill:var(--quiet)}.perf-legend{font-size:11px;color:var(--quiet);min-height:17px}.swatch{display:inline-block;width:16px;border-top:2px solid var(--ok);vertical-align:3px;margin-right:5px}.more-performance{padding:12px 0 16px;margin:9px 0 18px;border-bottom:1px solid var(--line)}.more-performance summary{min-height:44px;padding:11px 0;font-size:12px;color:var(--dim);cursor:pointer}.panel-box{border:1px solid var(--line);background:var(--card);border-radius:9px;overflow:hidden;margin-top:18px}.box-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 17px;border-bottom:1px solid var(--line)}.box-head .muted{font-size:12px}.box-body{padding:16px 17px}.box-body>label{display:block;color:var(--dim);font-size:12px;margin-bottom:7px}.box-body p{font-size:12px;margin:8px 0}.box-body select{width:100%}.device-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:26px;padding:4px 17px}.device-list>div{display:flex;justify-content:space-between;gap:15px;border-bottom:1px solid var(--line2);padding:11px 0;font-size:12px}.device-list dt{color:var(--quiet)}.device-list dd{margin:0;text-align:right;overflow-wrap:anywhere}.diag{padding:16px 17px;margin:0;border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;font-size:12px}.diag span{overflow-wrap:anywhere}.button-row{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}.button-row .btn{font-size:12px}.sample-scroll{overflow:auto;max-height:320px;will-change:transform}.sample-table{width:100%;font-size:12px;border-collapse:collapse;text-align:right}.sample-table th,.sample-table td{padding:9px;border-bottom:1px solid var(--line);white-space:nowrap}.sample-table th{background:var(--card);position:sticky;top:0;font-weight:500}.sample-table th:first-child,.sample-table td:first-child{text-align:left}.history-detail{background:var(--sunk);border:1px solid var(--line);border-radius:7px;margin-top:14px;padding:14px;font-size:12px}.history-detail p{margin-bottom:12px}.access-info{border:1px solid var(--ok-line);background:var(--ok-soft);border-radius:8px;padding:15px 17px;font-size:13px}.access-info p{margin-top:4px;color:var(--dim)}#accessStatus{margin:16px 0;font-size:12px}.ssh-command{display:flex;gap:14px;margin:14px 0}.ssh-command code{flex:1;min-width:0;overflow-wrap:anywhere;border:1px solid var(--line);padding:12px;background:var(--sunk);border-radius:7px}.access-key{display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--line);padding:14px 0}.access-key:first-child{padding-top:0}.access-key:last-child{border:0}.access-key>div{flex:1;min-width:0}.access-key code{display:block;font-size:11px;color:var(--quiet);overflow-wrap:anywhere;margin-top:5px}.access-key .muted{font-size:11px}.audit-entry{padding:10px 0;border-bottom:1px solid var(--line);font-size:12px}.audit-entry:last-child{border:0}.audit-entry time{display:block;color:var(--quiet);font-size:11px;margin-top:5px}#accessKey{width:100%;min-height:110px;padding:12px;font:12px/1.5 ui-monospace,monospace;background:var(--sunk);border:1px solid var(--line);border-radius:7px;color:var(--ink);resize:vertical}.modal .card{width:min(560px,calc(100vw - 28px));will-change:transform}.modal label{display:block;color:var(--dim);margin:14px 0 6px;font-size:12px}.modal .card>h2{font-size:20px}
+@media(max-width:900px){.wrap{padding:16px}.app-shell{grid-template-columns:145px minmax(0,1fr);gap:18px}.app-nav button{font-size:12px}.perf-ranges button{padding:7px 8px}.section-head{flex-wrap:wrap}.f2{grid-template-columns:1fr}.app-header{margin-bottom:16px}.device-list,.diag{grid-template-columns:1fr}.perf-value .extra{max-width:45%}}
+@media(max-width:650px){.wrap{padding:14px}.app-shell{display:block}.app-nav{position:static;padding-bottom:16px;margin-bottom:20px;border-bottom:1px solid var(--line)}.app-nav>button{display:inline-block;width:auto}.app-nav>hr{display:none}#panelNavigation{margin-top:10px}#sectNav,#settingsNavigation{display:flex;flex-wrap:wrap;gap:4px}#sectNav button,#settingsNavigation button{width:auto;padding:10px 12px}#sectNav hr{display:none}.nav-label{padding:8px 12px}.perf-cards{grid-template-columns:1fr}.app-header>.muted{font-size:11px}.page-head{gap:9px}.page-head p{max-width:25ch}.box-head{align-items:flex-start}.ssh-command{flex-wrap:wrap}.ssh-command code{flex-basis:100%}.access-key{flex-wrap:wrap}.section-head{gap:8px}.perf-ranges{width:100%}.perf-ranges button{flex:1}.page-head h2{font-size:19px}#deviceMeta{font-size:11px}.button-row .btn{flex:1}.sample-scroll{max-width:100%}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+
 </style>
 </head>
 <body>
@@ -134,6 +141,20 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
 </div>
 
 <div class="wrap" id="app" style="display:none">
+  <header class="app-header"><div class="brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8 8h8v8H8zM12 3v5M12 16v5M3 12h5M16 12h5"/></svg>Pi Panel</div><span class="muted">Panel management</span></header>
+  <div class="app-shell"><aside class="app-nav" aria-label="Navigation">
+  <button class="nav-item on" id="navFleet">Panels</button>
+  <div id="panelNavigation" hidden><div class="nav-label" id="panelNavTitle">Panel settings</div>
+    <nav id="sectNav" aria-label="Panel settings">
+      <button data-s="identity" class="on" aria-current="page">General</button>
+      <button data-s="display">Display</button><button data-s="lights">Lights &amp; presets</button>
+      <button data-s="media">Media</button><button data-s="sensors">Sensors</button>
+      <button data-s="tracking">Room detection</button><hr>
+      <button data-s="diag">Diagnostics</button><button data-s="access">Access &amp; SSH</button>
+    </nav>
+  </div><hr><button class="nav-item" id="navSettings">Server settings</button>
+  <nav id="settingsNavigation" aria-label="Server settings" hidden></nav>
+</aside><main class="app-main">
 
   <!-- ============ FLEET ============ -->
   <div id="fleetView">
@@ -297,8 +318,8 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
   <div id="detailView" style="display:none">
     <div style="display:flex;align-items:center;gap:12px">
       <button class="btn" id="backBtn">← Fleet</button>
-      <h1 id="dTitle">panel</h1>
-      <span class="pill" id="dTemplate" style="color:var(--violet);background:var(--violet-soft)"></span>
+      <div><h1 id="dTitle">panel</h1><p id="deviceMeta" class="muted"></p></div><span id="deviceStatus" class="pill"></span>
+      <span hidden class="pill" id="dTemplate" style="color:var(--violet);background:var(--violet-soft)"></span>
       <div style="margin-left:auto;display:flex;gap:8px">
         <button class="btn" id="setupCmdBtn" style="display:none">Setup command</button>
         <button class="btn" id="reinstallBtn" style="display:none">Reinstall</button>
@@ -313,22 +334,11 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
     </div>
 
     <div class="cols">
-      <div class="card nav" style="padding:10px" id="sectNav">
-        <div class="lbl" style="padding:6px 10px">SECTIONS</div>
-        <div data-s="identity" class="on">Identity</div>
-        <div data-s="lights">Lights &amp; presets</div>
-        <div data-s="media">Media</div>
-        <div data-s="sensors">Sensors</div>
-        <div data-s="tracking">Room detection</div>
-        <div data-s="display">Display</div>
-        <div data-s="diag">Diagnostics</div>
-      </div>
-
-      <div class="card" style="padding:18px">
+      <div id="detailBody">
         <div id="problems"></div>
 
         <div class="sect on" data-s="identity">
-          <h2 style="margin-bottom:14px">Identity</h2>
+          <h2 style="margin-bottom:14px">General</h2>
 
           <div class="grp">
             <h3>This panel</h3>
@@ -656,36 +666,33 @@ table.lights td input,table.lights td select{padding:7px 9px;font-size:13px}
           </div>
         </div>
 
-        <div class="sect" data-s="diag">
-          <h2 style="margin-bottom:14px">Diagnostics</h2>
-          <div id="diagBody" class="muted">–</div>
-          <div class="grp" style="margin-top:18px">
-            <h3>Live screen diagnostics</h3>
-            <p class="hint">Capture the running kiosk browser. This is separate from Preview, which renders configuration. A screenshot cannot confirm the physical backlight or a connected display; check the reported screen and backlight state below.</p>
-            <div style="display:flex;gap:8px"><button class="btn" id="screenCaptureBtn">Capture screen</button><button class="btn" id="screenRefreshBtn">Refresh status and events</button></div>
-            <p id="screenDiagnosticStatus" class="muted" role="status" style="margin-top:10px">On-demand only.</p>
-            <img id="screenCapture" alt="Latest capture of the running panel browser" hidden style="max-width:100%;max-height:620px;object-fit:contain;border-radius:8px">
-            <pre id="screenEvents" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px"></pre>
-          </div>
-          <div class="lbl" style="margin-top:20px">CONFIG HISTORY</div>
-          <div id="history"></div>
-          <div style="margin-top:18px;display:flex;gap:8px">
-            <button class="btn" data-act="identify">Identify</button>
-            <button class="btn" data-act="reload">Reload UI</button>
-            <button class="btn" data-act="sync">Force sync</button>
-            <button class="btn" data-act="restart">Restart panel</button>
-            <button class="btn danger" id="removeBtn" style="margin-left:auto">Remove panel</button>
-          </div>
-        </div>
-
-        <div class="diag" id="diagStrip"></div>
+        <section class="sect" data-s="diag">
+          <div class="page-head"><div><h2>Diagnostics</h2><p class="muted">Performance, connections and configuration history.</p></div><button class="btn" id="performanceRefresh">Refresh</button></div>
+          <div class="section-head"><h3>Performance</h3><div class="perf-ranges" role="group" aria-label="Graph time range"><button data-period="live" aria-pressed="true">Live</button><button data-period="15m" aria-pressed="false">15 min</button><button data-period="1h" aria-pressed="false">1 hour</button><button data-period="24h" aria-pressed="false">24 hours</button></div></div>
+          <p class="muted perf-status" id="performanceStatus" role="status">Waiting for measurements…</p>
+          <div class="perf-cards" id="performanceCards"></div>
+          <details class="more-performance"><summary>More performance metrics · disk activity and system load</summary><div class="perf-cards" id="performanceExtra"></div></details>
+          <section class="panel-box"><div class="box-head"><h3>Connections &amp; device</h3><span id="connectionSummary" class="muted"></span></div><div id="deviceDiagnostics"></div><div class="box-body" id="diagBody">–</div><div class="diag" id="diagStrip"></div></section>
+          <section class="panel-box"><div class="box-head"><h3>Configuration history</h3><span id="currentConfig" class="muted"></span></div><div class="box-body"><label for="historySelect">Saved version</label><select id="historySelect"><option value="">Choose a saved version…</option></select><div id="history"></div></div></section>
+          <section class="panel-box"><div class="box-head"><h3>Screen &amp; recent events</h3></div><div class="box-body"><p class="muted">Capture what the panel browser is displaying. A capture cannot confirm the physical screen or backlight.</p><div class="button-row"><button class="btn" id="screenCaptureBtn">Capture screen</button><button class="btn" id="screenRefreshBtn">Refresh status and events</button></div><p id="screenDiagnosticStatus" class="muted" role="status">On-demand only.</p><img id="screenCapture" alt="Latest capture of the running panel browser" hidden style="max-width:100%;max-height:620px;object-fit:contain;border-radius:8px"><pre id="screenEvents" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px"></pre></div></section>
+          <details class="more-performance"><summary>View graph samples as a table</summary><div class="sample-scroll"><table class="sample-table"><thead><tr><th>Time</th><th>CPU %</th><th>Temp °C</th><th>RAM %</th><th>Receive KB/s</th><th>Send KB/s</th><th>Writes KB/s</th><th>Load</th></tr></thead><tbody id="performanceTable"></tbody></table></div></details>
+          <div class="button-row"><button class="btn" data-act="identify">Identify</button><button class="btn" data-act="reload">Reload UI</button><button class="btn" data-act="sync">Force sync</button><button class="btn" data-act="restart">Restart panel</button><button class="btn danger" id="removeBtn">Remove panel</button></div>
+        </section>
+        <section class="sect" data-s="access">
+          <div class="page-head"><div><h2>Access &amp; SSH</h2><p class="muted">Manage which computers can connect to this panel.</p></div><button class="btn" id="accessRefresh">Refresh</button></div>
+          <div class="access-info"><strong>Everyday settings belong in Panel Server.</strong><p>Use the settings on the left for routine changes. SSH is available for maintenance and troubleshooting.</p></div>
+          <p id="accessStatus" class="muted" role="status">Refresh to read this panel’s SSH access.</p>
+          <section class="panel-box"><div class="box-head"><h3>Connect from your computer</h3><span class="muted">Key authentication</span></div><div class="box-body"><label for="accessUser">Panel user</label><select id="accessUser" disabled></select><div class="ssh-command"><code id="accessCommand">Waiting for panel…</code><button class="btn" id="accessCopy" disabled>Copy command</button></div><p class="muted">Open your computer’s terminal and paste this command. SSH must already be enabled on the panel.</p></div></section>
+          <section class="panel-box"><div class="box-head"><div><h3>Approved computer keys</h3><p class="muted">Access applies to this panel and selected user only.</p></div><button class="btn primary" id="accessAdd" disabled>Add computer</button></div><div id="accessKeys" class="box-body">Waiting for panel…</div></section>
+          <section class="panel-box"><div class="box-head"><h3>Access activity</h3></div><div id="accessAudit" class="box-body muted">No activity loaded.</div></section>
+        </section>
       </div>
     </div>
   </div>
-</div>
+</main></div></div>
 
 <!-- modals -->
-<div class="modal" id="modal"><div class="card">
+<div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle"><div class="card">
   <h2 id="mTitle">Confirm</h2>
   <div id="mBody" style="margin-top:12px"></div>
   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
@@ -771,19 +778,26 @@ function html(strings, ...vals){
 }
 const raw = s => new SafeHTML(String(s));
 
+let modalPreviousFocus=null;
 function confirmModal(title, body, onOk){
+  modalPreviousFocus=document.activeElement;
   $("#mTitle").textContent=title; $("#mBody").innerHTML=body;
   $("#mOk").textContent="Confirm";   // callers may override; reset so it can't leak
   $("#modal").classList.add("on");
+  $("#mOk").disabled=false;$("#mCancel").focus();
   $("#mOk").onclick = async ()=>{ $("#modal").classList.remove("on"); await onOk(); };
 }
-$("#mCancel").onclick = ()=>$("#modal").classList.remove("on");
+$("#mCancel").onclick = ()=>{$("#modal").classList.remove("on");modalPreviousFocus?.focus();};
+$('#modal').addEventListener('keydown',e=>{
+ if(e.key==='Escape'&&!$('#mOk').disabled){e.preventDefault();$('#mCancel').click();}
+ if(e.key==='Tab'){const controls=[...$('#modal').querySelectorAll('button,input,select,textarea,a[href]')].filter(x=>!x.disabled&&x.getClientRects().length);const first=controls[0],last=controls.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}
+});
 
 /* ---------------- login ---------------- */
 $("#loginBtn").onclick = async ()=>{
   try{
     await api("/login",{method:"POST",body:JSON.stringify({password:$("#pw").value})});
-    $("#loginErr").style.display="none"; show("#app"); loadFleet();
+    $("#loginErr").style.display="none"; show("#app"); setNavigation("fleet"); loadFleet();
   }catch(e){ $("#loginErr").style.display="block"; }
 };
 $("#pw").addEventListener("keydown",e=>{ if(e.key==="Enter") $("#loginBtn").click(); });
@@ -1025,11 +1039,14 @@ function ramUsage(m){
   return pct.toFixed(1)+'% · '+used.toLocaleString()+' / '+total.toLocaleString()+' MiB';
 }
 async function openPanel(id){
+  resetPerformance();
   CUR = await api("/panels/"+id);
+  setNavigation("panel");
   CFG = JSON.parse(JSON.stringify(CUR.config));
   await loadEntities();
   $("#fleetView").style.display="none"; $("#detailView").style.display="block";
-  $("#dTitle").textContent = CUR.panel.hostname;
+  $("#dTitle").textContent = CUR.config.room_label || CUR.panel.hostname;
+  $("#panelNavTitle").textContent = (CUR.config.room_label || CUR.panel.hostname)+" settings";
   $("#dTemplate").textContent = "inherits: "+(CUR.panel.template||"default");
   $("#fHostname").value = CUR.panel.hostname;
   $("#fRoom").value = CUR.panel.room||"";
@@ -1039,94 +1056,24 @@ async function openPanel(id){
   $("#problems").innerHTML = html`${(CUR.problems||[]).map(p=>
     html`<div class="err">⚠ ${p.message}</div>`)}`;
 
-  const m = CUR.panel.metrics||{};
-  $("#diagStrip").innerHTML = [
-    ["CPU", m.cpu_temp?m.cpu_temp+"°C":"—"],
-    ["RAM", ramUsage(m)], ["Disk free", m.disk_free||"—"],
-    /* Raw value over the device's own maximum, not a percentage: two panels at
-       "100%" are two different numbers, which is the whole question when one
-       screen looks dimmer than the other. */
-    ["Backlight", m.backlight ? m.backlight + (m.backlight_dev ? " · "+m.backlight_dev : "") : "—"],
-    ["UI version", m.ui_version||"—"],
-    ["Running config", "v"+(CUR.panel.config_version||0)],
-    ["Socket", CUR.live?"live":"polling"],
-    ["Browser", m.browser_health||"Waiting for updated agent"],
-    ["Adaptive brightness", m.adaptive_status||"—"],
-    /* Shown separately from the launcher on disk on purpose. Equal is the
-       answer; "off, pending restart" means the update arrived and chromium has
-       not been restarted into it yet, which is otherwise indistinguishable
-       from a flag that does not work. */
-    /* The number that settles whether SD wear is a real risk here. Rate first
-       -- a total means nothing without knowing how long it took. */
-    ["Card writes", m.disk_mb_per_day !== undefined
-      ? m.disk_mb_per_day + " MB/day"
-      : (m.disk_written_mb !== undefined ? m.disk_written_mb + " MB so far" : "—")],
-    ["GPU raster", m.gpu_raster_running === undefined ? "—"
-      : m.gpu_raster_running ? "on"
-      : m.gpu_raster_on_disk ? "off, pending restart" : "off"],
-    /* Says both that the pin opened and when it last saw anything, which is what
-       you want while pointing a sensor at a doorway with no shell on the panel.
-       FAILED here almost always means gpiozero is missing, on a panel installed
-       before it was in the bootstrap. */
-    ["Presence", m.presence || "—"],
-    /* Two failures that look alike from a wall and are not: "unreachable" is the
-       network or the gateway, "bus unpowered" is the DALI supply. The second is
-       an electrical fault and no amount of restarting anything will fix it. */
-    ["DALI", m.dali || "—"],
-  ].map(([k,v])=>html`<span>${k} <span style="color:var(--dim)">${v}</span></span>`).join("");
-  $("#diagBody").innerHTML = html`<div class="f2">
-    <div><div class="lbl">IP</div>${CUR.panel.ip||"—"}</div>
-    <div><div class="lbl">MAC</div>${CUR.panel.mac||"—"}</div>
-    <div style="margin-top:10px"><div class="lbl">AGENT VERSION</div>${CUR.panel.agent_version||"—"}</div>
-    <div style="margin-top:10px"><div class="lbl">LAST SEEN</div>${ago(CUR.panel.last_seen)}</div></div>
-    <div style="margin-top:14px"><div class="lbl">PANEL TOKEN</div>${
-      CUR.panel.secured
-        ? html`<span style="color:var(--ok)">Secured</span>
-               <span class="muted" style="font-size:13px"> — claimed ${
-                 new Date((CUR.panel.token_claimed_at||0)*1000).toLocaleString()} from ${
-                 CUR.panel.token_claimed_from||"?"}</span>
-               <button class="btn" id="tokReset" style="margin-left:10px;padding:3px 10px">Reset token</button>`
-        : raw(`<span style="color:var(--warn)">Not yet claimed</span>
-               <span class="muted" style="font-size:13px"> — accepted without one until its
-               agent updates and presents one. Normally within seconds of the update.</span>`)}
-      ${CUR.panel.refused ? html`<div class="warn" style="margin-top:8px">This panel is being
-        <b>refused</b>, not merely offline: it asked at ${
-          new Date(CUR.panel.refused.at*1000).toLocaleTimeString()} from ${
-          CUR.panel.refused.from} with ${CUR.panel.refused.reason}. It will keep asking every
-        15 seconds and reach nothing else until this is cleared. Reset token, and it claims
-        again within about half a minute.</div>` : ""}</div>`;
-  /* Shown with where the claim came from, because that is how a claim that was
-     not this panel's gets noticed: an address that is not the panel's own. */
-  const tr = $("#tokReset");
-  if(tr) tr.onclick = ()=>confirmModal("Reset panel token",
-    html`<p>Forget <b>${CUR.panel.hostname}</b>'s token?</p>
-     <p class="muted" style="margin-top:10px;font-size:13px">Use this when a claim came
-     from an address that is not this panel's, or when the panel's token was lost with
-     its SD card. The panel claims again within one heartbeat — about 30 seconds — and
-     nothing about its lights or configuration changes meanwhile.</p>`,
-    async ()=>{
-      await api(`/panels/${CUR.panel.id}/token/reset`, {method:"POST"});
-      toast("Token reset — the panel will claim again shortly");
-      openPanel(CUR.panel.id);
-    });
-  $("#history").innerHTML = html`${(CUR.history||[]).map(h=>
-    html`<div style="display:flex;gap:12px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line2)">
-      <span>v${h.version}</span><span class="muted">${new Date(h.created_at*1000).toLocaleString()}</span>
-      <button class="btn" style="margin-left:auto" data-rb="${h.version}">Rollback</button></div>`)}`;
-  document.querySelectorAll("[data-rb]").forEach(b=>b.onclick=async()=>{
-    await api(`/panels/${CUR.panel.id}/rollback`,{method:"POST",body:JSON.stringify({version:+b.dataset.rb})});
-    toast("Rolled back"); openPanel(CUR.panel.id);
-  });
+  renderDetailedDiagnostics();
+  renderConfigHistory();
+  updateDeviceDiagnostics();
+  refreshPerformance();
+  resetAccess();
   /* Setup command is for a panel that has never checked in; Reinstall is for
      one that has. Never both, so there is no question which to use. */
   const pending = await pendingTokenFor(id);
   $("#setupCmdBtn").style.display = pending ? "" : "none";
   $("#reinstallBtn").style.display = pending ? "none" : "";
 }
-$("#backBtn").onclick=()=>{ $("#detailView").style.display="none"; $("#fleetView").style.display="block"; loadFleet(); };
-document.querySelectorAll("#sectNav div[data-s]").forEach(n=>n.onclick=()=>{
-  document.querySelectorAll("#sectNav div[data-s]").forEach(x=>x.classList.toggle("on",x===n));
+$("#backBtn").onclick=()=>{ setNavigation("fleet"); resetPerformance(); $("#detailView").style.display="none"; $("#fleetView").style.display="block"; loadFleet(); };
+document.querySelectorAll("#sectNav [data-s]").forEach(n=>n.onclick=()=>{
+  document.querySelectorAll("#sectNav [data-s]").forEach(x=>x.classList.toggle("on",x===n));
   document.querySelectorAll(".sect").forEach(s=>s.classList.toggle("on", s.dataset.s===n.dataset.s));
+  document.querySelectorAll('#sectNav [data-s]').forEach(x=>{if(x===n)x.setAttribute('aria-current','page');else x.removeAttribute('aria-current');});
+  if(n.dataset.s==='diag') refreshPerformance();
+  if(n.dataset.s==='access') loadAccess();
 });
 
 /* Taken verbatim from `dtoverlay -h vc4-kms-dsi-waveshare-panel-v2` on a panel,
@@ -1761,6 +1708,7 @@ $("#setupCmdBtn").onclick = async ()=>{
 
 /* ---------------- settings ---------------- */
 function showSettings(on){
+  setNavigation(on?"settings":"fleet"); resetPerformance();
   $("#fleetView").style.display    = on ? "none"  : "block";
   $("#detailView").style.display   = "none";
   $("#settingsView").style.display = on ? "block" : "none";
@@ -1950,6 +1898,189 @@ $("#pvClose").onclick = ()=>{ $("#previewWrap").classList.remove("on"); $("#prev
   try{ const me = await api("/me"); if(me.authenticated){ show("#app"); loadFleet(); } else show("#login"); }
   catch(e){ show("#login"); }
 })();
+
+/* ---------------- shared navigation ---------------- */
+function setNavigation(view){
+  $('#panelNavigation').hidden=view!=='panel';$('#settingsNavigation').hidden=view!=='settings';
+  $('#navFleet').classList.toggle('on',view==='fleet');$('#navSettings').classList.toggle('on',view==='settings');
+  if(view==='panel')$('#settingsView').style.display='none';
+}
+$('#navFleet').onclick=()=>{showSettings(false);loadFleet();};
+$('#navSettings').onclick=()=>{showSettings(true);loadSettings();};
+const settingCards=[...document.querySelectorAll('#settingsView > .card')];
+function settingsSection(index){settingCards.forEach((card,i)=>card.hidden=i!==index);document.querySelectorAll('#settingsNavigation button').forEach((b,i)=>{b.classList.toggle('on',i===index);if(i===index)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});}
+settingCards.forEach((card,i)=>{const b=document.createElement('button');b.textContent=card.querySelector('h2').textContent;b.onclick=()=>settingsSection(i);$('#settingsNavigation').append(b);});settingsSection(0);
+
+/* ---------------- performance history ---------------- */
+const PERF_SPECS=[
+ {key:'cpu_usage_pct',name:'CPU usage',unit:'%',max:100,color:'var(--ok)',note:'Across all cores'},
+ {key:'cpu_temp',name:'CPU temperature',unit:'°C',max:100,color:'var(--warn)',note:'Processor'},
+ {key:'ram_used_pct',name:'Memory usage',unit:'%',max:100,color:'var(--violet)',note:'RAM'},
+ {key:'net_rx_kbps',name:'Network traffic',unit:'KB/s',color:'#78bcf6',note:'Default network interface',second:'net_tx_kbps'},
+ {key:'disk_write_kbps',name:'Disk writes',unit:'KB/s',color:'var(--ok)',note:'Storage activity'},
+ {key:'load_1m',name:'System load',unit:'',color:'var(--violet)',note:'1-minute average'}
+];
+let perfPeriod='live',perfGeneration=0,perfBusy=false,perfData=null;
+function resetPerformance(){perfGeneration++;perfBusy=false;perfData=null;$('#performanceStatus').textContent='Waiting for measurements…';drawPerformance();}
+PERF_SPECS.forEach((s,i)=>{const card=document.createElement('article');card.className='perf-card';card.innerHTML=html`<div class="perf-top"><h3>${s.name}</h3><span>${s.note}</span></div><div class="perf-value"><strong id="pv-${s.key}">—</strong><span class="unit">${s.unit}</span><span class="extra" id="pe-${s.key}"></span></div><svg id="pc-${s.key}" class="perf-chart" viewBox="0 0 370 128" role="img" aria-label="${s.name} history"></svg><div class="perf-legend" id="pl-${s.key}"></div>`;$(i<4?'#performanceCards':'#performanceExtra').append(card);});
+const metricNumber=(v,d=1)=>Number.isFinite(v)?v.toLocaleString(undefined,{maximumFractionDigits:d,minimumFractionDigits:d}):'—';
+function drawPerformance(){
+ const data=perfData,points=data?.samples||[],latest=data?.latest||{},start=data?.start||Date.now()/1000-300,end=data?.end||Date.now()/1000;
+ const clock=t=>new Date(t*1000).toLocaleTimeString([],{hour12:false,hour:'2-digit',minute:'2-digit',...(perfPeriod==='live'?{second:'2-digit'}:{})});
+ PERF_SPECS.forEach(s=>{
+  const values=points.map(p=>p[s.key]).filter(Number.isFinite),all=points.flatMap(p=>[p[s.key],...(s.second?[p[s.second]]:[])]).filter(Number.isFinite);
+  const max=s.max||(s.key==='load_1m'?Math.max(1,latest.cpu_cores||0,...all):Math.max(10,Math.ceil(Math.max(0,...all)/10)*10));
+  const x=t=>30+330*(t-start)/(end-start),y=v=>102-86*Math.min(1,Math.max(0,v/max));
+  let markup=html`<title>${s.name} · ${points.length?'measurements':'waiting for measurements'}</title>`;
+  for(const v of [max,max/2,0])markup=html`${markup}<line x1="30" y1="${y(v)}" x2="360" y2="${y(v)}" stroke="var(--line)" stroke-width=".7"/><text x="23" y="${y(v)+3}" text-anchor="end">${metricNumber(v,0)}</text>`;
+  const path=key=>{let prev=null;return points.map(p=>{const v=p[key];if(!Number.isFinite(v)){prev=null;return '';}const move=!prev||p.at-prev.at>(data?.bucket_s||5)*2.5;prev=p;return (move?'M':'L')+x(p.at).toFixed(2)+','+y(v).toFixed(2);}).join(' ');};
+  if(values.length){markup=html`${markup}<path d="${path(s.key)}" fill="none" stroke="${s.color}" stroke-width="1.8" stroke-linejoin="round"/>`;const last=points.filter(p=>Number.isFinite(p[s.key])).at(-1);markup=html`${markup}<circle cx="${x(last.at)}" cy="${y(last[s.key])}" r="2.7" fill="${s.color}"/>`;}
+  else markup=html`${markup}<text x="195" y="64" text-anchor="middle">No measurements yet</text>`;
+  if(s.second)markup=html`${markup}<path d="${path(s.second)}" fill="none" stroke="var(--violet)" stroke-width="1.6" stroke-dasharray="4 3"/>`;
+  for(const [i,t] of [start,(start+end)/2,end].entries())markup=html`${markup}<text x="${x(t)}" y="121" text-anchor="${i===0?'start':i===2?'end':'middle'}">${clock(t)}</text>${perfPeriod==='24h'?html`<text x="${x(t)}" y="137" text-anchor="${i===0?'start':i===2?'end':'middle'}">${new Date(t*1000).toLocaleDateString([],{day:'numeric',month:'short'})}</text>`:''}`;
+  $('#pc-'+s.key).setAttribute('viewBox',perfPeriod==='24h'?'0 0 370 145':'0 0 370 128');
+  $('#pc-'+s.key).innerHTML=markup;
+  $('#pv-'+s.key).textContent=metricNumber(latest[s.key],s.key==='load_1m'?2:1);
+  $('#pe-'+s.key).textContent=s.second?'Send '+metricNumber(latest[s.second])+' KB/s':s.key==='ram_used_pct'&&Number.isFinite(latest.ram_used_mb)?metricNumber(latest.ram_used_mb/1024)+' of '+metricNumber(latest.ram_total_mb/1024)+' GiB':s.key==='load_1m'&&latest.cpu_cores?latest.cpu_cores+' CPU cores':'';
+  $('#pl-'+s.key).innerHTML=s.second?html`<span><i class="swatch" style="border-color:#78bcf6"></i>Receive</span> <span style="margin-left:10px"><i class="swatch" style="border-color:var(--violet);border-top-style:dashed"></i>Send</span>`:html`${values.length?'Average '+metricNumber(values.reduce((a,v)=>a+v,0)/values.length)+s.unit+' · Peak '+metricNumber(Math.max(...values))+s.unit:'Measurements appear after the panel updates'}`;
+ });
+ $('#performanceTable').innerHTML=html`${points.map(p=>html`<tr><td>${new Date(p.at*1000).toLocaleString()}</td>${['cpu_usage_pct','cpu_temp','ram_used_pct','net_rx_kbps','net_tx_kbps','disk_write_kbps','load_1m'].map(k=>html`<td>${metricNumber(p[k])}</td>`)}</tr>`)}`;
+}
+function diagnosticsVisible(){return CUR&&$('#app').style.display!=='none'&&$('#detailView').style.display!=='none'&&$('.sect[data-s=diag]').classList.contains('on')&&!document.hidden;}
+async function refreshPerformance(){
+ if(!diagnosticsVisible()||perfBusy)return;
+ const id=CUR.panel.id,gen=perfGeneration,period=perfPeriod;perfBusy=true;
+ try{const data=await api(`/panels/${encodeURIComponent(id)}/performance?period=${period}`);if(gen!==perfGeneration||CUR?.panel.id!==id||period!==perfPeriod)return;perfData=data;CUR.panel=data.panel;CUR.live=data.live;updateDeviceDiagnostics();drawPerformance();
+  const age=data.latest?data.end-data.latest.at:Infinity;
+  $('#performanceStatus').textContent=!data.latest?'No history yet. Measurements start when the updated agent connects.':(age>15?'Updates paused · last sample '+ago(data.latest.at)+'. ':perfPeriod==='live'?'Live · a new sample every 5 seconds · last 5 minutes. ':'Samples collected every 5 seconds. ')+(period==='1h'?'15-second averages. ':period==='24h'?'5-minute averages. ':'')+'History builds from installation; gaps indicate missing samples.';
+ }catch(e){if(gen===perfGeneration)$('#performanceStatus').textContent='Could not refresh: '+e.message;}
+ finally{if(gen===perfGeneration)perfBusy=false;}
+}
+document.querySelectorAll('[data-period]').forEach(b=>b.onclick=()=>{perfPeriod=b.dataset.period;perfGeneration++;perfBusy=false;document.querySelectorAll('[data-period]').forEach(n=>n.setAttribute('aria-pressed',String(n===b)));refreshPerformance();});
+$('#performanceRefresh').onclick=refreshPerformance;
+setInterval(refreshPerformance,5000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshPerformance();});
+function renderDetailedDiagnostics(){
+  const m = CUR.panel.metrics||{};
+  $("#diagStrip").innerHTML = [
+    ["CPU", m.cpu_temp?m.cpu_temp+"°C":"—"],
+    ["RAM", ramUsage(m)], ["Disk free", m.disk_free||"—"],
+    /* Raw value over the device's own maximum, not a percentage: two panels at
+       "100%" are two different numbers, which is the whole question when one
+       screen looks dimmer than the other. */
+    ["Backlight", m.backlight ? m.backlight + (m.backlight_dev ? " · "+m.backlight_dev : "") : "—"],
+    ["UI version", m.ui_version||"—"],
+    ["Running config", "v"+(CUR.panel.config_version||0)],
+    ["Socket", CUR.live?"live":"polling"],
+    ["Browser", m.browser_health||"Waiting for updated agent"],
+    ["Adaptive brightness", m.adaptive_status||"—"],
+    /* Shown separately from the launcher on disk on purpose. Equal is the
+       answer; "off, pending restart" means the update arrived and chromium has
+       not been restarted into it yet, which is otherwise indistinguishable
+       from a flag that does not work. */
+    /* The number that settles whether SD wear is a real risk here. Rate first
+       -- a total means nothing without knowing how long it took. */
+    ["Card writes", m.disk_mb_per_day !== undefined
+      ? m.disk_mb_per_day + " MB/day"
+      : (m.disk_written_mb !== undefined ? m.disk_written_mb + " MB so far" : "—")],
+    ["GPU raster", m.gpu_raster_running === undefined ? "—"
+      : m.gpu_raster_running ? "on"
+      : m.gpu_raster_on_disk ? "off, pending restart" : "off"],
+    /* Says both that the pin opened and when it last saw anything, which is what
+       you want while pointing a sensor at a doorway with no shell on the panel.
+       FAILED here almost always means gpiozero is missing, on a panel installed
+       before it was in the bootstrap. */
+    ["Presence", m.presence || "—"],
+    /* Two failures that look alike from a wall and are not: "unreachable" is the
+       network or the gateway, "bus unpowered" is the DALI supply. The second is
+       an electrical fault and no amount of restarting anything will fix it. */
+    ["DALI", m.dali || "—"],
+  ].map(([k,v])=>html`<span>${k} <span style="color:var(--dim)">${v}</span></span>`).join("");
+  $("#diagBody").innerHTML = html`<div class="f2">
+    <div><div class="lbl">IP</div>${CUR.panel.ip||"—"}</div>
+    <div><div class="lbl">MAC</div>${CUR.panel.mac||"—"}</div>
+    <div style="margin-top:10px"><div class="lbl">AGENT VERSION</div>${CUR.panel.agent_version||"—"}</div>
+    <div style="margin-top:10px"><div class="lbl">LAST SEEN</div>${ago(CUR.panel.last_seen)}</div></div>
+    <div style="margin-top:14px"><div class="lbl">PANEL TOKEN</div>${
+      CUR.panel.secured
+        ? html`<span style="color:var(--ok)">Secured</span>
+               <span class="muted" style="font-size:13px"> — claimed ${
+                 new Date((CUR.panel.token_claimed_at||0)*1000).toLocaleString()} from ${
+                 CUR.panel.token_claimed_from||"?"}</span>
+               <button class="btn" id="tokReset" style="margin-left:10px;padding:3px 10px">Reset token</button>`
+        : raw(`<span style="color:var(--warn)">Not yet claimed</span>
+               <span class="muted" style="font-size:13px"> — accepted without one until its
+               agent updates and presents one. Normally within seconds of the update.</span>`)}
+      ${CUR.panel.refused ? html`<div class="warn" style="margin-top:8px">This panel is being
+        <b>refused</b>, not merely offline: it asked at ${
+          new Date(CUR.panel.refused.at*1000).toLocaleTimeString()} from ${
+          CUR.panel.refused.from} with ${CUR.panel.refused.reason}. It will keep asking every
+        15 seconds and reach nothing else until this is cleared. Reset token, and it claims
+        again within about half a minute.</div>` : ""}</div>`;
+  /* Shown with where the claim came from, because that is how a claim that was
+     not this panel's gets noticed: an address that is not the panel's own. */
+  const tr = $("#tokReset");
+  if(tr) tr.onclick = ()=>confirmModal("Reset panel token",
+    html`<p>Forget <b>${CUR.panel.hostname}</b>'s token?</p>
+     <p class="muted" style="margin-top:10px;font-size:13px">Use this when a claim came
+     from an address that is not this panel's, or when the panel's token was lost with
+     its SD card. The panel claims again within one heartbeat — about 30 seconds — and
+     nothing about its lights or configuration changes meanwhile.</p>`,
+    async ()=>{
+      await api(`/panels/${CUR.panel.id}/token/reset`, {method:"POST"});
+      toast("Token reset — the panel will claim again shortly");
+      openPanel(CUR.panel.id);
+    });
+}
+function updateDeviceDiagnostics(){
+ if(!CUR)return;const p=CUR.panel,m=p.metrics||{};
+ if(!$('#diagBody').contains(document.activeElement))renderDetailedDiagnostics();
+ $('#deviceMeta').textContent=[p.hostname,p.ip||'No address',p.kind==='pi'?'Raspberry Pi':'ESP panel','Config v'+p.config_version].join(' · ');
+ pill($('#deviceStatus'),p.online?'Online':'Offline',p.online?'ok':'bad');
+ $('#connectionSummary').textContent=p.online?'Last heartbeat '+ago(p.last_seen):'Panel offline';
+ const rows=[['Panel agent',CUR.live?'Connected':'Polling / disconnected'],['Home Assistant',m.ha_connected?'Connected':'Disconnected'],['Display browser',m.browser_health||'Not reported'],['Bluetooth proxy',m.bluetooth_status||m.bluetooth_service||'See room detection'],['Presence',m.presence||'Not reported'],['Backlight',m.backlight||'Not reported'],['Browser recoveries',Number.isFinite(m.browser_recoveries_hour)?m.browser_recoveries_hour+' in the last hour':'Not reported'],['Storage free',m.disk_free||'Not reported']];
+ $('#deviceDiagnostics').innerHTML=html`<dl class="device-list">${rows.map(([k,v])=>html`<div><dt>${k}</dt><dd>${v}</dd></div>`)}</dl>`;
+}
+function renderConfigHistory(){
+ $('#currentConfig').textContent='Current: v'+CUR.latest_version;
+ $('#historySelect').innerHTML=html`<option value="">Choose a saved version…</option>${(CUR.history||[]).map(h=>html`<option value="${h.version}">v${h.version}${h.version===CUR.latest_version?' · Current':''} · ${new Date(h.created_at*1000).toLocaleString()}</option>`)}`;$('#history').innerHTML='';
+}
+$('#historySelect').onchange=()=>{const version=Number($('#historySelect').value),entry=(CUR.history||[]).find(h=>h.version===version);if(!entry){$('#history').innerHTML='';return;}$('#history').innerHTML=html`<div class="history-detail"><strong>v${version}</strong><p>${new Date(entry.created_at*1000).toLocaleString()}</p>${version===CUR.latest_version?'This is the current version. No restore needed.':raw('<button class="btn" id="historyRestore">Restore this version…</button>')}</div>`;if($('#historyRestore'))$('#historyRestore').onclick=()=>{const id=CUR.panel.id;confirmModal('Restore v'+version+'?',html`<p>Apply this saved configuration to <strong>${CUR.panel.hostname}</strong> as a new version? The current configuration stays in history.</p>`,async()=>{try{await api(`/panels/${encodeURIComponent(id)}/rollback`,{method:'POST',body:JSON.stringify({version})});toast('Configuration restored');await openPanel(id);}catch(e){toast(e.message);}});};};
+
+/* ---------------- per-device SSH access ---------------- */
+let accessGeneration=0,accessBusy=false,accessData=null;
+function resetAccess(){accessGeneration++;accessBusy=false;accessData=null;$('#accessKeys').textContent='Refresh to read this panel’s keys.';$('#accessAudit').textContent='No activity loaded.';$('#accessCommand').textContent='Waiting for panel…';$('#accessUser').innerHTML='';$('#accessUser').disabled=true;$('#accessCopy').disabled=true;$('#accessAdd').disabled=true;if($('.sect[data-s=access]').classList.contains('on'))loadAccess();}
+async function loadAccess(change={action:'list'},expectedId=CUR?.panel.id){
+ if(!CUR||accessBusy||CUR.panel.id!==expectedId)return false;const id=CUR.panel.id,gen=accessGeneration;accessBusy=true;
+ $('#accessStatus').textContent=change.action==='list'?'Reading SSH access from the panel…':'Applying key change…';$('#accessAdd').disabled=true;$('#accessRefresh').disabled=true;$('#accessUser').disabled=true;
+ document.querySelectorAll('[data-remove-key]').forEach(b=>b.disabled=true);
+ try{const result=await api(`/panels/${encodeURIComponent(id)}/ssh-access`,{method:'POST',headers:{'Content-Type':'application/json','X-Panel-Access':'1'},body:JSON.stringify({user:$('#accessUser').value||'',...change})});if(gen!==accessGeneration||CUR?.panel.id!==id)return;accessData=result;
+  $('#accessUser').innerHTML=html`${result.users.map(u=>html`<option value="${u}">${u}</option>`)}`;$('#accessUser').value=result.user;
+  const host=CUR.panel.ip||CUR.panel.hostname;$('#accessCommand').textContent='ssh '+(result.port&&result.port!==22?'-p '+result.port+' ':'')+result.user+'@'+(host.includes(':')?'['+host+']':host);
+  $('#accessKeys').innerHTML=html`${result.keys.length?result.keys.map(k=>html`<div class="access-key"><div><strong>${k.name}</strong><code>${k.kind} · ${k.fingerprint}</code>${k.protected?raw('<span class="muted">Panel Server connection · preserved during key changes</span>'):''}</div>${k.protected?raw('<span class="pill">Protected</span>'):html`<button class="btn danger" data-remove-key="${k.fingerprint}">Remove</button>`}</div>`):'No public keys for this user.'}`;
+  document.querySelectorAll('[data-remove-key]').forEach(b=>b.onclick=()=>{const key=result.keys.find(k=>k.fingerprint===b.dataset.removeKey);confirmModal('Remove '+key.name+'?',html`<p>Prevent new SSH connections using this key for <strong>${result.user}@${host}</strong>? Existing sessions remain open. Panel Server keys are preserved.</p>`,()=>loadAccess({action:'remove',fingerprint:key.fingerprint,user:result.user},id));});
+  $('#accessAudit').innerHTML=html`${result.audit.length?result.audit.map(a=>html`<div class="audit-entry">${a.action} · ${a.detail}<time>${new Date(a.at*1000).toLocaleString()} · ${a.actor}</time></div>`):'No key changes recorded yet.'}`;
+  $('#accessStatus').textContent=change.action==='list'?'Keys read from '+result.user+' on this panel.':result.changed?'Key change confirmed by the panel.':'That key is already present; nothing changed.';
+  $('#accessCopy').disabled=false;return true;
+ }catch(e){if(gen===accessGeneration)$('#accessStatus').textContent=e.message;return false;}
+ finally{if(gen===accessGeneration){accessBusy=false;$('#accessAdd').disabled=!accessData;$('#accessRefresh').disabled=false;$('#accessUser').disabled=!accessData;document.querySelectorAll('[data-remove-key]').forEach(b=>b.disabled=false);}}
+}
+$('#accessRefresh').onclick=()=>loadAccess({action:'list',user:accessData?$('#accessUser').value:''});
+$('#accessUser').onchange=()=>{accessData=null;$('#accessKeys').textContent='Reading selected user…';$('#accessCopy').disabled=true;$('#accessCommand').textContent='Waiting for panel…';loadAccess();};
+$('#accessCopy').onclick=()=>copyText($('#accessCommand').textContent);
+$('#accessAdd').onclick=()=>{
+ const user=$('#accessUser').value,id=CUR.panel.id;
+ confirmModal('Add a computer',html`<p>Allow this computer to connect to <strong>${user}@${CUR.panel.ip||CUR.panel.hostname}</strong>.</p><label for="accessName">Computer name</label><input id="accessName" maxlength="60" placeholder="e.g. Office laptop"><label for="accessKey">SSH public key</label><textarea id="accessKey" spellcheck="false" placeholder="ssh-ed25519 AAAA… your-computer"></textarea><p class="muted" style="margin-top:10px;font-size:12px">Paste the contents of the computer’s .pub file. Your private key stays on your computer.</p><p id="accessFormError" class="err" role="alert" hidden></p>`,()=>{});
+ $('#mOk').textContent='Add key';$('#mOk').onclick=async()=>{
+  const name=$('#accessName').value.trim(),key=$('#accessKey').value.trim();
+  if(!name||!key){$('#accessFormError').hidden=false;$('#accessFormError').textContent='Enter a computer name and public key.';return;}
+  $('#mOk').disabled=true;$('#mCancel').disabled=true;
+  try{const ok=await loadAccess({action:'add',user,name,key},id);if(ok){$('#mCancel').disabled=false;$('#mCancel').click();}else{$('#accessFormError').hidden=false;$('#accessFormError').textContent=$('#accessStatus').textContent;}}
+  finally{$('#mOk').disabled=false;$('#mCancel').disabled=false;}
+ };
+};
+
+drawPerformance();
+
 </script>
 </body>
 </html>

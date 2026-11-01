@@ -20,8 +20,12 @@ Corollaries:
   **One exception, deliberately narrow:** the server may run the bootstrap over
   SSH on a panel it is *currently provisioning*. It is gated on an unused
   provisioning token, so it cannot reach hardware already in service — those
-  take config through their agent and never commands. Key-based only; the key
+  take config through their agent. Key-based only; the provisioning key
   goes on at flash time via Raspberry Pi Imager.
+- A separately authorized, narrow maintenance operation manages SSH public keys
+  through the enrolled agent: list/add/remove for an existing non-root user. It
+  accepts no shell command, requires signed expiring per-device messages and
+  records changes. See docs/SECURITY.md. Do not widen this into a shell API.
 - The panel UI must boot and function with the config server unreachable.
 - Media control may depend on HA. Lighting may not.
 
