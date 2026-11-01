@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 
-from . import backgrounds, db, firstboot, ha, ssh, screen, performance, access
+from . import backgrounds, db, firstboot, ha, ssh, screen, performance, access, doorbell
 
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme")
 WEAK_DEFAULTS = {"changeme", "change-me", ""}
@@ -716,6 +716,11 @@ _HA_URL_RE = re.compile(
 def check_config(cfg):
     if not isinstance(cfg, dict):
         raise HTTPException(400, "config must be an object")
+    if 'doorbell' in cfg:
+        try:
+            doorbell.validate(cfg['doorbell'])
+        except ValueError as error:
+            raise HTTPException(400, str(error))
     if 'display' in cfg:
         try:
             screen.validate(cfg['display'])
@@ -1267,6 +1272,32 @@ async def screen_diagnostics(panel_id: str, request: Request):
 
 ACCESS_REQUESTS = {}
 ACCESS_LAST = {}
+
+DOORBELL_LAST = {}
+
+
+@app.post('/api/panels/{panel_id}/doorbell/test', dependencies=[Depends(require_admin)])
+async def test_doorbell(panel_id: str, request: Request):
+    if request.headers.get('X-Panel-Access') != '1':
+        raise HTTPException(403, 'Use the Panel Server doorbell page')
+    if not db.get_panel(panel_id):
+        raise HTTPException(404, 'unknown panel')
+    bell = db.merged_config(panel_id).get('doorbell', {})
+    if not bell.get('enabled') or not bell.get('camera'):
+        raise HTTPException(409, 'Save and enable a doorbell camera first')
+    if panel_id not in LIVE:
+        raise HTTPException(503, 'Panel is offline')
+    if time.monotonic() - DOORBELL_LAST.get(panel_id, -100) < 3:
+        raise HTTPException(429, 'Wait a moment before ringing again')
+    if not ha.configured():
+        raise HTTPException(409, 'Connect Home Assistant in server settings first')
+    DOORBELL_LAST[panel_id] = time.monotonic()
+    try:
+        await ha.ring_doorbell(panel_id)
+    except Exception:
+        raise HTTPException(502, 'Home Assistant could not accept the test ring')
+    access.audit(panel_id, 'Administrator', 'doorbell test sent', bell['camera'])
+    return {'sent': True}
 
 
 @app.post('/api/panels/{panel_id}/ssh-access', dependencies=[Depends(require_admin)])

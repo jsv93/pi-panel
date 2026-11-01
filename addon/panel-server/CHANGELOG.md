@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.24.0
+
+- Add per-panel Doorbell settings with a Home Assistant camera selector, ring trigger, popup duration and Test doorbell button.
+- Wake the panel for muted live WebRTC video, then release the stream on close, timeout, sleep, page hiding or connection failure. Repeated rings reuse one stream.
+- Support Home Assistant ring sensors, event entities, input buttons and targeted automation events. Camera selection remains in the saved panel settings; no new listener or shell is exposed.
+- Preserve normal dashboard controls and background optimizations. Cameras without live WebRTC support show a clear message instead of presenting a snapshot as live video.
+
 ## 0.23.3
 
 - Stop unnecessary clock, uptime, media-progress and diagnostic frame updates while the panel is blanked or hidden; only animate playback progress where it is visible.
