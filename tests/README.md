@@ -97,3 +97,21 @@ the root. Running it at the root during development hides a whole class of bug:
 an absolute `/api/...` path in the GUI is correct there and 404s against Home
 Assistant itself once it is behind ingress. That is exactly how Export shipped
 broken. Anything touching a URL in `index.html` is worth a minute here.
+
+
+## Performance and access administration
+
+    python tests/test_performance_access.py
+    python tests/test_ssh_key_files.py  # Linux; disposable files only
+
+The first checks counter arithmetic, reset/missing samples, data retention,
+aggregation, device/admin auth, CSRF, request/reply signing and audit records.
+The Linux check runs the actual least-privilege helper against temporary keys
+and files, including duplicate additions, preservation, backups, protected keys,
+and symlink/hardlink refusal. It never changes real authorized_keys.
+
+For browser QA, start `serve_diagnostics_under_ingress:outer` on port 8878 with
+a scratch PANEL_DB and ADMIN_PASSWORD=local-qa-only, then run
+`node tests/test_diagnostics_admin.cjs`. The fixture uses synthetic data and
+stubbed panel responses. It covers navigation, all four ranges, dropdown/restore,
+unsaved form preservation, access controls and mobile overflow.

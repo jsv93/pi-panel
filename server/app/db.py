@@ -34,6 +34,22 @@ CREATE TABLE IF NOT EXISTS panels (
     sign_key        TEXT                          -- authenticates this server to the panel
 );
 
+CREATE TABLE IF NOT EXISTS performance (
+    panel_id TEXT NOT NULL,
+    at REAL NOT NULL,
+    metrics TEXT NOT NULL,
+    PRIMARY KEY(panel_id, at)
+);
+CREATE INDEX IF NOT EXISTS performance_age ON performance(at);
+CREATE TABLE IF NOT EXISTS access_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    panel_id TEXT NOT NULL,
+    at REAL NOT NULL,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    detail TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS configs (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     panel_id   TEXT NOT NULL,
@@ -332,6 +348,7 @@ def _panel_row(r):
     # get_panel_token(), which nothing outside authentication calls.
     d["secured"] = bool(d.pop("token", None))
     d.pop("sign_key", None)
+    d["online"] = bool(d["last_seen"] and (time.time() - d["last_seen"]) < 90)
     return d
 
 
@@ -382,6 +399,8 @@ def claim(panel_id, room, template, room_label=None):
 
 def delete_panel(panel_id):
     with conn() as c:
+        c.execute("DELETE FROM performance WHERE panel_id=?", (panel_id,))
+        c.execute("DELETE FROM access_audit WHERE panel_id=?", (panel_id,))
         c.execute("DELETE FROM configs WHERE panel_id=?", (panel_id,))
         c.execute("DELETE FROM panels WHERE id=?", (panel_id,))
 

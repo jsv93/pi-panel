@@ -402,3 +402,47 @@ the server down. Each is written up where it was found.
     python tests/test_panel_tokens.py     # tokens, and upgrade day
     python tests/test_signing.py          # signing, including a spoofed server
     python tests/test_login_limits.py     # lockout, per address
+
+
+## Integrated SSH key management (0.23.0)
+
+Access & SSH uses the existing Panel Server administrator session (the existing
+12-hour expiry), not another operator account. All current signed-in server
+users are administrators; there is no additional viewer role. The API requires
+a non-simple CSRF header and allows no cross-origin access. This does not add a
+public listener, terminal, root login, password authentication or arbitrary
+command execution. Keep the administrator password strong and use the existing
+HTTPS/HA access configuration when accessing administration beyond a trusted LAN.
+
+Every request targets a single enrolled panel, is HMAC-signed with that panel's
+separate server-signing key, expires after 20 seconds, and has a replay identifier.
+Replies are signed too. A panel without enrollment cannot use this feature.
+The server waits at most 12 seconds and reports uncertain outcomes explicitly.
+It never creates an OS user: only existing non-root interactive users under
+/home with UID 1000–59999 are eligible. SSH must already be installed/enabled.
+
+The helper runs as the selected user with no supplementary groups. It only
+reads or atomically updates that user's standard .ssh/authorized_keys, validates
+public keys, rejects symlinks/hardlinks and incorrect ownership, preserves
+unrelated lines, and protects keys labelled panel-config-server/pi-panel-server.
+Five private-mode backups are retained locally. Requested changes and their
+results are recorded in the server database (last 5,000 events), with panel,
+user/key label or fingerprint, time, and an administrator-session identifier.
+Private SSH keys are never accepted or transferred by this feature.
+
+## Performance history (0.23.0)
+
+The agent samples inexpensive kernel counters every five seconds independently
+of its normal heartbeat and configuration sync. Samples require the enrolled
+device token; history requires administrator authentication and is scoped to the
+selected panel. CPU uses counter deltas, RAM excludes reclaimable memory, and
+network/disk throughput uses elapsed monotonic time. Missing, first, reset or
+invalid counters are omitted rather than fabricated as zero.
+
+SQLite retains at most approximately 25 hours (pruned once per minute during
+ingestion) and limits accepted sampling to one record per four seconds per
+panel. The UI shows five minutes live, 15 minutes at sample resolution, one hour
+as 15-second averages, or 24 hours as five-minute averages. It stops refreshing
+when the page/tab is not visible. Nothing writes telemetry history on the panel.
+Short outages within an aggregate bucket are averaged; gaps between buckets are
+drawn as gaps. A restart preserves history; an upgrade cannot create old samples.

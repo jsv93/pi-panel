@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 
-from . import backgrounds, db, firstboot, ha, ssh, screen
+from . import backgrounds, db, firstboot, ha, ssh, screen, performance, access
 
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme")
 WEAK_DEFAULTS = {"changeme", "change-me", ""}
@@ -880,6 +880,37 @@ async def heartbeat(request: Request):
             "token": "active" if db.get_panel_token(pid) else "none"}
 
 
+@app.post("/api/performance/{panel_id}")
+async def ingest_performance(panel_id: str, request: Request):
+    if not db.get_panel(panel_id):
+        raise HTTPException(404, "unknown panel")
+    # New telemetry is opt-in to enrolled agents; legacy enrollment stays intact.
+    if not db.get_panel_token(panel_id) or not _token_ok(request.headers, panel_id):
+        raise HTTPException(401, "panel authentication required")
+    body = await request.body()
+    if len(body) > 8192:
+        raise HTTPException(413, "sample too large")
+    try:
+        values = json.loads(body)
+    except ValueError:
+        raise HTTPException(400, "invalid sample")
+    performance.record(panel_id, values)
+    return {"ok": True}
+
+
+@app.get("/api/panels/{panel_id}/performance", dependencies=[Depends(require_admin)])
+async def performance_history(panel_id: str, period: str = 'live'):
+    if not db.get_panel(panel_id):
+        raise HTTPException(404, "unknown panel")
+    if period not in performance.RANGES:
+        raise HTTPException(400, "unknown time range")
+    result = performance.history(panel_id, period)
+    p = db.get_panel(panel_id)
+    result['panel'] = p
+    result['live'] = panel_id in LIVE
+    return JSONResponse(result, headers={'Cache-Control': 'no-store'})
+
+
 @app.get("/api/config/{panel_id}")
 async def panel_config(panel_id: str, request: Request):
     p = db.get_panel(panel_id)
@@ -1163,6 +1194,14 @@ async def panel_ws(ws: WebSocket, panel_id: str):
                 db.touch(panel_id, _clean_metrics(data.get("metrics")),
                          data.get("config_version"))
                 await ws.send_json({"type": "ack", "config_version": db.latest_version(panel_id)})
+            elif data.get('type') == 'ssh_access_result':
+                pending = ACCESS_REQUESTS.get(panel_id)
+                if pending and pending[0] == data.get('request_id') and not pending[1].done():
+                    signature = data.pop('_sig', '')
+                    key = db.get_panel_sign_key(panel_id)
+                    want = hmac.new(key.encode(), canonical(data), hashlib.sha256).hexdigest()
+                    if key and isinstance(signature, str) and hmac.compare_digest(signature, want) and len(msg) <= 65536:
+                        pending[1].set_result(data)
             elif data.get('type') == 'screen_diagnostics':
                 pending = SCREEN_REQUESTS.get(panel_id)
                 if pending and pending[0] == data.get('request_id') and not pending[1].done():
@@ -1224,6 +1263,61 @@ async def screen_diagnostics(panel_id: str, request: Request):
         return JSONResponse(result, headers={'Cache-Control': 'no-store'})
     finally:
         SCREEN_REQUESTS.pop(panel_id, None)
+
+
+ACCESS_REQUESTS = {}
+ACCESS_LAST = {}
+
+
+@app.post('/api/panels/{panel_id}/ssh-access', dependencies=[Depends(require_admin)])
+async def ssh_access(panel_id: str, request: Request):
+    # A non-simple header prevents cross-site form/Fetch CSRF, including when
+    # the GUI is embedded under HA ingress. No CORS origins are allowed.
+    if request.headers.get('X-Panel-Access') != '1':
+        raise HTTPException(403, 'Use the Panel Server access page')
+    p = db.get_panel(panel_id)
+    if not p:
+        raise HTTPException(404, 'unknown panel')
+    if not db.get_panel_token(panel_id) or not db.get_panel_sign_key(panel_id):
+        raise HTTPException(409, 'Update and enroll this panel before managing SSH access')
+    raw_body = await request.body()
+    if len(raw_body) > 10000:
+        raise HTTPException(413, 'request too large')
+    try:
+        body = access.validate(json.loads(raw_body))
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+    if panel_id in ACCESS_REQUESTS or time.monotonic()-ACCESS_LAST.get(panel_id, -100)<1:
+        raise HTTPException(429, 'Wait a moment before retrying')
+    if panel_id not in LIVE:
+        raise HTTPException(503, 'Panel is offline; keys were not changed')
+    rid = secrets.token_hex(16)
+    future = asyncio.get_running_loop().create_future()
+    ACCESS_REQUESTS[panel_id] = (rid, future)
+    ACCESS_LAST[panel_id] = time.monotonic()
+    actor = 'Administrator · session '+hashlib.sha256(request.cookies.get('psid','').encode()).hexdigest()[:8]
+    detail = body.get('user','default user')+' · '+body.get('name',body.get('fingerprint',''))
+    try:
+        if body['action'] != 'list':
+            access.audit(panel_id, actor, body['action']+' requested', detail)
+        payload = signed(panel_id, {'type':'ssh_access', 'request_id':rid,
+                                   'panel_id':panel_id, 'expires':time.time()+20, **body})
+        if not await notify(panel_id, payload):
+            raise HTTPException(503, 'Panel disconnected; refresh to check access')
+        try:
+            result = await asyncio.wait_for(future, 12)
+        except asyncio.TimeoutError:
+            if body['action'] != 'list':
+                access.audit(panel_id, actor, body['action']+' outcome unknown', detail)
+            raise HTTPException(504, 'Panel did not respond. Update its agent or refresh to check the outcome before retrying.')
+        if body['action'] != 'list':
+            access.audit(panel_id, actor, body['action']+(' failed' if result.get('error') else ' completed'), detail)
+        if result.get('error'):
+            raise HTTPException(409, str(result['error'])[:200])
+        result['audit'] = access.history(panel_id)
+        return JSONResponse(result, headers={'Cache-Control':'no-store'})
+    finally:
+        ACCESS_REQUESTS.pop(panel_id, None)
 
 
 @app.get("/api/panels", dependencies=[Depends(require_admin)])
