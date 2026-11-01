@@ -14,10 +14,10 @@ import sqlite3
 import time
 from contextlib import closing
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, quote
 
-from fastapi import HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 ROLE = "diagnostics.read"
 ABSOLUTE_S = 600
@@ -38,6 +38,76 @@ class Management:
     def __init__(self, db, live, sign):
         self.db, self.live, self.sign = db, live, sign
         self.sessions, self.attempts, self.pending = {}, {}, {}
+        self.secure_live = {}
+
+    def device_allowed(self, panel):
+        cfg, _ = self.policy()
+        return any(ROLE in p['roles'] and panel in p['panels'] for p in cfg['users'].values())
+
+    async def transport(self, panel_id: str, request: Request):
+        token = self.db.get_panel_token(panel_id)
+        if (not token or not self.db.get_panel_sign_key(panel_id)
+                or not hmac.compare_digest(request.headers.get('x-panel-token', ''), token)):
+            raise HTTPException(403, 'Enrolled device required')
+        nonce = request.query_params.get('nonce', '')
+        if not re.fullmatch(r'[a-f0-9]{64}', nonce):
+            raise HTTPException(400, 'Fresh device nonce required')
+        cfg, _ = self.policy()
+        fingerprint = os.environ.get('PANEL_MANAGEMENT_FINGERPRINT', '')
+        if not self.device_allowed(panel_id) or not re.fullmatch(r'[a-f0-9]{64}', fingerprint):
+            raise HTTPException(403, 'Device management is not configured')
+        return JSONResponse(self.sign(panel_id, {'type': 'management_transport',
+            'panel': panel_id, 'nonce': nonce, 'origin': cfg['origin'],
+            'fingerprint': fingerprint}), headers={'Cache-Control': 'no-store'})
+
+    async def agent_socket(self, ws: WebSocket, panel_id: str):
+        token = self.db.get_panel_token(panel_id)
+        try:
+            allowed = self.device_allowed(panel_id)
+        except HTTPException:
+            allowed = False
+        if (ws.url.scheme != 'wss' or not allowed or not token
+                or not self.db.get_panel_sign_key(panel_id)
+                or ws.headers.get('origin')
+                or not hmac.compare_digest(ws.headers.get('x-panel-token', ''), token)):
+            await ws.close(code=1008)
+            return
+        await ws.accept()
+        try:
+            challenge = {'type': 'management_auth', 'panel': panel_id,
+                         'challenge': secrets.token_hex(32)}
+            await ws.send_json(challenge)
+            proof = await asyncio.wait_for(ws.receive_json(), 5)
+            if (not isinstance(proof, dict) or set(proof) != {'proof'}
+                    or not isinstance(proof['proof'], str)
+                    or not hmac.compare_digest(proof['proof'], self.sign(panel_id, challenge)['_sig'])):
+                self.audit('agent_auth', panel=panel_id, outcome='proof_denied')
+                await ws.close(code=1008)
+                return
+            old = self.secure_live.get(panel_id)
+            self.audit('agent_connect', panel=panel_id, outcome='authenticated_tls')
+            self.secure_live[panel_id] = ws
+            if old and old is not ws:
+                await old.close(code=1000)
+            await ws.send_json({'type': 'ready'})
+            while True:
+                # Periodic reconnect reauthenticates policy and credentials.
+                raw = await asyncio.wait_for(ws.receive_text(), 90)
+                if len(raw.encode()) > 65536:
+                    await ws.close(code=1009)
+                    break
+                data = json.loads(raw)
+                if isinstance(data, dict) and data.get('type') == 'screen_diagnostics':
+                    self.receive(panel_id, ws, data)
+        except (WebSocketDisconnect, asyncio.TimeoutError, ValueError, KeyError, RuntimeError, HTTPException):
+            pass
+        finally:
+            if self.secure_live.get(panel_id) is ws:
+                self.secure_live.pop(panel_id, None)
+            try:
+                await ws.close()
+            except RuntimeError:
+                pass
 
     def audit(self, event, user="", panel="", outcome="", peer=""):
         # Separate durable store, no payloads, keys, cookies or session tokens.
@@ -174,7 +244,7 @@ class Management:
         return {"ok": True}
 
     def channel(self, panel):
-        ws = self.live.get(panel)
+        ws = self.secure_live.get(panel) or self.live.get(panel)
         token = self.db.get_panel_token(panel)
         signing = self.db.get_panel_sign_key(panel)
         if not ws or not token or not signing:
@@ -227,7 +297,7 @@ class Management:
             if not p:
                 raise HTTPException(404, "Panel is not registered")
             if operation == "connection":
-                ws = self.live.get(panel_id)
+                ws = self.secure_live.get(panel_id) or self.live.get(panel_id)
                 result = {"panel": panel_id, "agent_connected": bool(ws),
                     "enrolled": bool(self.db.get_panel_token(panel_id) and self.db.get_panel_sign_key(panel_id)),
                     "agent_tls": bool(ws and ws.url.scheme == "wss"),
@@ -272,10 +342,18 @@ class Management:
 
 def install(app, db, live, sign):
     manager = Management(db, live, sign)
+    app.add_api_route('/api/management-transport/{panel_id}', manager.transport, methods=['GET'])
+    app.add_api_websocket_route('/management/agent/{panel_id}', manager.agent_socket)
     app.add_api_route("/management/api/session", manager.login, methods=["POST"])
     app.add_api_route("/management/api/logout", manager.logout, methods=["POST"])
     app.add_api_route("/management/api/panels/{panel_id}/diagnostic", manager.run, methods=["POST"])
     directory = Path(__file__).parent / "static" / "management"
+
+    @app.get('/management/open')
+    async def open_console(panel: str = ''):
+        cfg, _ = manager.policy()
+        return RedirectResponse(cfg['origin'] + '/management/?panel=' + quote(panel, safe=''),
+                                headers={'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer'})
 
     @app.get("/management/")
     async def page():

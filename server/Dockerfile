@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY server/app ./app
 COPY server/run.sh /run.sh
+COPY server/launch.py /srv/launch.py
 RUN chmod +x /run.sh
 
 # Fallback bundle. /data/bundle still wins if an operator puts files there, so

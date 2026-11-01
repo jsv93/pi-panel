@@ -1,6 +1,6 @@
 name: Panel Config Server
 slug: panel_server
-version: "0.21.0"
+version: "0.22.0"
 description: Configure and monitor the wall panel fleet
 url: https://github.com/jsv93/pi-panel
 
@@ -39,9 +39,24 @@ options:
   # nothing to guess from.
   admin_password: "changeme"
   panel_url: ""
+  secure_diagnostics: false
+  management_origin: ""
+  management_user: ""
+  management_key_sha256: ""
+  management_panels: []
+  management_certificate: ""
+  management_private_key: ""
 schema:
   # Still required despite ingress: host_network means :8099 is reachable
   # directly on the LAN, bypassing Home Assistant's authentication.
   admin_password: password?
   # Only needed if the address panels should use differs from the host's own.
   panel_url: str?
+  secure_diagnostics: bool
+  management_origin: str?
+  management_user: str?
+  management_key_sha256: str?
+  management_panels:
+    - str
+  management_certificate: str?
+  management_private_key: password?

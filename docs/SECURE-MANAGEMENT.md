@@ -1,6 +1,56 @@
 # Secure Pi Panel management
 
-## Release 0.21.0
+## Release 0.22.0
+
+The Home Assistant add-on now includes an optional native HTTPS listener on
+8449 and explicit management configuration fields. The Diagnostics link opens a
+new tab at the configured HTTPS origin, avoiding the ingress frame navigation
+problem. HTTP 8099 continues to serve existing dashboard and integration clients.
+Both listeners share one process and all in-memory sessions/device connections;
+neither trusts forwarded scheme headers.
+
+For a private LAN deployment, run `server/management_setup.py --origin
+https://HOST:8449 --user NAME --panel PANEL_ID --directory NEW_PRIVATE_DIRECTORY`.
+It creates `options.json` to merge into the add-on options, `root.crt` to trust
+on the operator's devices, and `access-key.txt` for the operator's password
+manager. Do not publish these files. Protect the directory with the OS user's
+file permissions (on Windows, restrict its ACL). The CA key is discarded after
+issuing a host-restricted server certificate; only the leaf private key reaches
+the add-on. Certificates expire after one year: renew and distribute the new
+trust certificate before expiry. Existing valid public certificates can instead
+be supplied in the same options. Keep 8449 private; no router forwarding.
+
+Set `secure_diagnostics`, `management_origin`, `management_user`,
+`management_key_sha256`, `management_panels`, `management_certificate`, and
+`management_private_key` in the add-on configuration, then restart it. Only the
+random operator key's digest is stored in the policy. Startup writes policy,
+certificate and private key with owner-only permissions. Invalid optional TLS
+configuration disables management while the existing dashboard still starts.
+The single operator has only `diagnostics.read` on the listed devices.
+
+The updated agent discovers the HTTPS endpoint through an authenticated,
+signed descriptor containing its fresh random nonce and the exact server
+certificate SHA-256 fingerprint. It opens a separate outbound WSS connection
+with that pin, and proves possession of its separate enrollment signing key
+using a fresh server challenge. The server rejects plaintext, browser-Origin,
+tokenless and incorrect-proof agent connections. This channel accepts only
+signed health requests with `capture=false`; it has no shell or arbitrary
+command interface. Connections periodically renew their authentication. Existing
+dashboard, lighting, config and UI files remain on their established path.
+No SSH credential or physical bootstrap is required for an already enrolled
+agent that can accept the existing signed agent update.
+
+The `tests/test_management_tls.py` test uses real native TLS and the real agent
+loop. It checks trusted TLS, a wrong-certificate rejection, descriptor tampering
+and replay rejection, signing-key proof, HTTP/forwarded-header rejection,
+filtered live health and the new-tab redirect. The existing policy/session and
+dashboard compatibility tests remain in CI.
+
+The following sections document the original standalone setup and security
+model. The add-on options above replace the manual environment/SSH steps for
+the new native listener and dedicated management channel.
+
+## Original 0.21.0 foundation
 
 This release adds opt-in, read-only diagnostics through the existing panel agent
 connection. Installing the release does not enable management access: verified
