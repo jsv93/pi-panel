@@ -1355,7 +1355,7 @@ async function requestScreenDiagnostics(capture){
 }
 $('#screenCaptureBtn').onclick=()=>requestScreenDiagnostics(true);
 $('#screenRefreshBtn').onclick=()=>requestScreenDiagnostics(false);
-$('#secureDiagnostics').onclick=e=>{e.preventDefault();location.href=BASE+'management/?panel='+encodeURIComponent(pid);};
+$('#secureDiagnostics').onclick=e=>{e.preventDefault();window.open(BASE+'management/open?panel='+encodeURIComponent(pid),'_blank','noopener');};
 
 function collect(){
   CFG.bluetooth={mode:$('#fBluetoothMode').value};

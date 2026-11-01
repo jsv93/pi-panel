@@ -27,4 +27,4 @@ fi
 # Supervisor provides SUPERVISOR_TOKEN and proxies the core API, and ha.py
 # falls back to that when neither is configured.
 
-exec uvicorn app.main:app --host 0.0.0.0 --port 8099
+exec python3 /srv/launch.py

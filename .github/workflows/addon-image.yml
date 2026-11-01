@@ -41,6 +41,7 @@ jobs:
         run: |
           python tests/test_management.py
           python tests/test_management_integration.py
+          python tests/test_management_tls.py
           python tests/test_panel_tokens.py
           python tests/test_signing.py
           python tests/test_login_limits.py
