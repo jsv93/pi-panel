@@ -126,6 +126,7 @@ body{line-height:1.5}h1{font-size:22px;letter-spacing:-.5px}h2{font-size:17px}h3
 @media(max-width:650px){.wrap{padding:14px}.app-shell{display:block}.app-nav{position:static;padding-bottom:16px;margin-bottom:20px;border-bottom:1px solid var(--line)}.app-nav>button{display:inline-block;width:auto}.app-nav>hr{display:none}#panelNavigation{margin-top:10px}#sectNav,#settingsNavigation{display:flex;flex-wrap:wrap;gap:4px}#sectNav button,#settingsNavigation button{width:auto;padding:10px 12px}#sectNav hr{display:none}.nav-label{padding:8px 12px}.perf-cards{grid-template-columns:1fr}.app-header>.muted{font-size:11px}.page-head{gap:9px}.page-head p{max-width:25ch}.box-head{align-items:flex-start}.ssh-command{flex-wrap:wrap}.ssh-command code{flex-basis:100%}.access-key{flex-wrap:wrap}.section-head{gap:8px}.perf-ranges{width:100%}.perf-ranges button{flex:1}.page-head h2{font-size:19px}#deviceMeta{font-size:11px}.button-row .btn{flex:1}.sample-scroll{max-width:100%}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 
+.perf-plot{position:relative}.perf-chart{cursor:crosshair;touch-action:pan-y}.perf-chart:focus-visible{outline:2px solid var(--ok);outline-offset:3px;border-radius:4px}.perf-tooltip{position:absolute;top:0;z-index:2;pointer-events:none;max-width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:7px;background:var(--sunk);color:var(--ink);box-shadow:0 4px 16px #0003;font:12px/1.5 system-ui,sans-serif;font-variant-numeric:tabular-nums;white-space:pre-line;overflow-wrap:anywhere}.perf-cursor{pointer-events:none}
 </style>
 </head>
 <body>
@@ -1921,9 +1922,55 @@ const PERF_SPECS=[
  {key:'load_1m',name:'System load',unit:'',color:'var(--violet)',note:'1-minute average'}
 ];
 let perfPeriod='live',perfGeneration=0,perfBusy=false,perfData=null;
-function resetPerformance(){perfGeneration++;perfBusy=false;perfData=null;$('#performanceStatus').textContent='Waiting for measurements…';drawPerformance();}
-PERF_SPECS.forEach((s,i)=>{const card=document.createElement('article');card.className='perf-card';card.innerHTML=html`<div class="perf-top"><h3>${s.name}</h3><span>${s.note}</span></div><div class="perf-value"><strong id="pv-${s.key}">—</strong><span class="unit">${s.unit}</span><span class="extra" id="pe-${s.key}"></span></div><svg id="pc-${s.key}" class="perf-chart" viewBox="0 0 370 128" role="img" aria-label="${s.name} history"></svg><div class="perf-legend" id="pl-${s.key}"></div>`;$(i<4?'#performanceCards':'#performanceExtra').append(card);});
+const perfCharts=new Map();
+function resetPerformance(){perfGeneration++;perfBusy=false;perfData=null;perfCharts.forEach(hidePerformanceTip);$('#performanceStatus').textContent='Waiting for measurements…';drawPerformance();}
+PERF_SPECS.forEach((s,i)=>{
+ const card=document.createElement('article');card.className='perf-card';
+ card.innerHTML=html`<div class="perf-top"><h3>${s.name}</h3><span>${s.note}</span></div><div class="perf-value"><strong id="pv-${s.key}">—</strong><span class="unit">${s.unit}</span><span class="extra" id="pe-${s.key}"></span></div><div class="perf-plot"><svg id="pc-${s.key}" class="perf-chart" viewBox="0 0 370 128" role="img" tabindex="0" aria-label="${s.name} history. Hover or tap to inspect; use left and right arrow keys when focused." aria-describedby="pt-${s.key}"></svg><div id="pt-${s.key}" class="perf-tooltip" role="tooltip" hidden></div></div><div class="perf-legend" id="pl-${s.key}"></div>`;
+ $(i<4?'#performanceCards':'#performanceExtra').append(card);
+ const chart={spec:s,svg:$('#pc-'+s.key),tip:$('#pt-'+s.key),at:null,source:null};perfCharts.set(s.key,chart);
+ const inspect=e=>{
+  if(!perfData)return;
+  const matrix=chart.svg.getScreenCTM();if(!matrix)return;
+  const pos=new DOMPoint(e.clientX,e.clientY).matrixTransform(matrix.inverse());
+  if(pos.x<30||pos.x>360||pos.y<16||pos.y>102){hidePerformanceTip(chart);return;}
+  chart.source='pointer';chart.at=perfData.start+(pos.x-30)/330*(perfData.end-perfData.start);showPerformanceTip(chart);
+ };
+ chart.svg.addEventListener('pointermove',inspect);chart.svg.addEventListener('pointerdown',inspect);
+ chart.svg.addEventListener('pointerleave',e=>{if(e.pointerType!=='touch'&&chart.source==='pointer')hidePerformanceTip(chart);});
+ chart.svg.addEventListener('focus',()=>{chart.source='keyboard';chart.at=perfData?.samples.at(-1)?.at??null;showPerformanceTip(chart);});
+ chart.svg.addEventListener('blur',()=>hidePerformanceTip(chart));
+ chart.svg.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){hidePerformanceTip(chart);return;}
+  if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;
+  e.preventDefault();const points=perfData?.samples||[];if(!points.length)return;
+  let index=points.findIndex(p=>p.at>=chart.at);if(index<0||chart.at===null)index=points.length-1;
+  index=e.key==='Home'?0:e.key==='End'?points.length-1:Math.max(0,Math.min(points.length-1,index+(e.key==='ArrowLeft'?-1:1)));
+  chart.source='keyboard';chart.at=points[index].at;showPerformanceTip(chart);
+ });
+});
 const metricNumber=(v,d=1)=>Number.isFinite(v)?v.toLocaleString(undefined,{maximumFractionDigits:d,minimumFractionDigits:d}):'—';
+document.addEventListener('pointerdown',e=>perfCharts.forEach(chart=>{if(!chart.svg.contains(e.target))hidePerformanceTip(chart);}));
+function hidePerformanceTip(chart){chart.at=null;chart.source=null;chart.tip.hidden=true;chart.svg.querySelector('.perf-cursor')?.remove();}
+function showPerformanceTip(chart){
+ const {spec:s,svg,tip}=chart,data=perfData;svg.querySelector('.perf-cursor')?.remove();
+ if(chart.at===null||!data?.samples.length||!chart.x){tip.hidden=true;return;}
+ const point=data.samples.reduce((best,p)=>Math.abs(p.at-chart.at)<Math.abs(best.at-chart.at)?p:best);
+ // Never bridge an offline gap or silently turn a missing reading into zero.
+ if(Math.abs(point.at-chart.at)>(data.bucket_s||5)*1.5){tip.hidden=true;return;}
+ chart.at=point.at;
+ const format=v=>Number.isFinite(v)?metricNumber(v,s.key==='load_1m'?2:1)+(s.unit?' '+s.unit:''):'No reading';
+ const time=new Date(point.at*1000).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+ const interval=data.bucket_s>5?' · '+(data.bucket_s<60?data.bucket_s+'-second':data.bucket_s/60+'-minute')+' average':'';
+ tip.textContent=time+interval+'\n'+(s.second?'Receive: '+format(point[s.key])+'\nSend: '+format(point[s.second]):s.name+': '+format(point[s.key]));
+ tip.hidden=false;
+ const cx=chart.x(point.at),wrap=svg.parentElement;
+ const px=cx/370*wrap.clientWidth;
+ tip.style.left=Math.max(0,Math.min(wrap.clientWidth-tip.offsetWidth,px-tip.offsetWidth/2))+'px';
+ const cursor=document.createElementNS('http://www.w3.org/2000/svg','g');cursor.classList.add('perf-cursor');cursor.setAttribute('aria-hidden','true');
+ cursor.innerHTML=html`<line x1="${cx}" x2="${cx}" y1="16" y2="102" stroke="var(--dim)" stroke-width=".8" stroke-dasharray="3 3"/>${[s.key,...(s.second?[s.second]:[])].filter(k=>Number.isFinite(point[k])).map(k=>html`<circle cx="${cx}" cy="${chart.y(point[k])}" r="3.5" fill="${k===s.key?s.color:'var(--violet)'}" stroke="var(--card)" stroke-width="1.5"/>`)}`;
+ svg.append(cursor);
+}
 function drawPerformance(){
  const data=perfData,points=data?.samples||[],latest=data?.latest||{},start=data?.start||Date.now()/1000-300,end=data?.end||Date.now()/1000;
  const clock=t=>new Date(t*1000).toLocaleTimeString([],{hour12:false,hour:'2-digit',minute:'2-digit',...(perfPeriod==='live'?{second:'2-digit'}:{})});
@@ -1940,6 +1987,7 @@ function drawPerformance(){
   for(const [i,t] of [start,(start+end)/2,end].entries())markup=html`${markup}<text x="${x(t)}" y="121" text-anchor="${i===0?'start':i===2?'end':'middle'}">${clock(t)}</text>${perfPeriod==='24h'?html`<text x="${x(t)}" y="137" text-anchor="${i===0?'start':i===2?'end':'middle'}">${new Date(t*1000).toLocaleDateString([],{day:'numeric',month:'short'})}</text>`:''}`;
   $('#pc-'+s.key).setAttribute('viewBox',perfPeriod==='24h'?'0 0 370 145':'0 0 370 128');
   $('#pc-'+s.key).innerHTML=markup;
+  const chart=perfCharts.get(s.key);chart.x=x;chart.y=y;showPerformanceTip(chart);
   $('#pv-'+s.key).textContent=metricNumber(latest[s.key],s.key==='load_1m'?2:1);
   $('#pe-'+s.key).textContent=s.second?'Send '+metricNumber(latest[s.second])+' KB/s':s.key==='ram_used_pct'&&Number.isFinite(latest.ram_used_mb)?metricNumber(latest.ram_used_mb/1024)+' of '+metricNumber(latest.ram_total_mb/1024)+' GiB':s.key==='load_1m'&&latest.cpu_cores?latest.cpu_cores+' CPU cores':'';
   $('#pl-'+s.key).innerHTML=s.second?html`<span><i class="swatch" style="border-color:#78bcf6"></i>Receive</span> <span style="margin-left:10px"><i class="swatch" style="border-color:var(--violet);border-top-style:dashed"></i>Send</span>`:html`${values.length?'Average '+metricNumber(values.reduce((a,v)=>a+v,0)/values.length)+s.unit+' · Peak '+metricNumber(Math.max(...values))+s.unit:'Measurements appear after the panel updates'}`;
@@ -1956,7 +2004,7 @@ async function refreshPerformance(){
  }catch(e){if(gen===perfGeneration)$('#performanceStatus').textContent='Could not refresh: '+e.message;}
  finally{if(gen===perfGeneration)perfBusy=false;}
 }
-document.querySelectorAll('[data-period]').forEach(b=>b.onclick=()=>{perfPeriod=b.dataset.period;perfGeneration++;perfBusy=false;document.querySelectorAll('[data-period]').forEach(n=>n.setAttribute('aria-pressed',String(n===b)));refreshPerformance();});
+document.querySelectorAll('[data-period]').forEach(b=>b.onclick=()=>{perfCharts.forEach(hidePerformanceTip);perfPeriod=b.dataset.period;perfGeneration++;perfBusy=false;document.querySelectorAll('[data-period]').forEach(n=>n.setAttribute('aria-pressed',String(n===b)));refreshPerformance();});
 $('#performanceRefresh').onclick=refreshPerformance;
 setInterval(refreshPerformance,5000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshPerformance();});
 function renderDetailedDiagnostics(){
