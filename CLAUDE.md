@@ -25,6 +25,11 @@ Corollaries:
 - The panel UI must boot and function with the config server unreachable.
 - Media control may depend on HA. Lighting may not.
 
+Secure diagnostics is an opt-in, named, device-scoped read-only management
+surface. It reuses the existing signed screen-diagnostic message and does not
+execute commands. See `docs/SECURE-MANAGEMENT.md` for its TLS requirements and
+the future terminal design. Do not turn the root sync agent into a shell.
+
 ## Layout
 
     server/       FastAPI + SQLite config server (Docker, runs on Unraid)
