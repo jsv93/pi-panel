@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.23.1
+
+- Hover over any performance graph to read its historical timestamp and value, with receive and send shown together for network traffic.
+- Tooltips also support touch and keyboard navigation, preserve the selected sample during live refresh, label averaged readings, and leave missing-data gaps empty.
+
 ## 0.23.0
 
 - Apply the new shared layout and left navigation across fleet, panel and server settings.
