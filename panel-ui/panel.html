@@ -1821,11 +1821,14 @@ function wsSend(msg, timeoutMs){
 /* ---- local agent socket: reload commands in, HA status out ---- */
 let agentWS = null;
 let panelReady = false, lastBrowserError = 0;
+let lastReportedScreenMode=null;
+function screenMode(){const idle=$('#idle');return idle.classList.contains('blanked')?'blanked':idle.classList.contains('on')?'idle':'awake';}
+function reportScreenTransition(){if(screenMode()!==lastReportedScreenMode)browserHeartbeat();}
 function browserHeartbeat(){
   if(!panelReady || !agentWS || agentWS.readyState!==1)return;
-  const idle=$('#idle');
+  lastReportedScreenMode=screenMode();
   agentWS.send(JSON.stringify({type:'browser_heartbeat',
-    screen_mode:idle.classList.contains('blanked')?'blanked':idle.classList.contains('on')?'idle':'awake',
+    screen_mode:lastReportedScreenMode,
     adaptive_status:adaptiveStatus(),adaptive_lux:adaptiveLux}));
 }
 setInterval(browserHeartbeat,10000);
@@ -3752,6 +3755,7 @@ function goIdle(){
   if(bellSession){closeDoorbell();clearTimeout(idleT);clearTimeout(offT);}
   $("#idle").classList.add("on");
   document.body.classList.add("panel-idle");
+  reportScreenTransition();
   idleDrift(true);
   setBacklight(screenBrightness());
   syncVisualUpdates();
@@ -3759,6 +3763,7 @@ function goIdle(){
 function goBlank(){
   if(bellSession){closeDoorbell();clearTimeout(idleT);clearTimeout(offT);}
   $("#idle").classList.add("blanked");
+  reportScreenTransition();
   idleDrift(false);
   setBacklight(0);
   /* Back to the home page while nobody is looking. Waking a panel into
@@ -3786,6 +3791,7 @@ function bump(){
     $("#idle").classList.remove("on");
     document.body.classList.remove("panel-idle");
     $("#idle").classList.remove("blanked");
+    reportScreenTransition();
     idleDrift(false);
     resumeVisualState();
     /* Not immediately. The backlight is separate hardware and the panel is

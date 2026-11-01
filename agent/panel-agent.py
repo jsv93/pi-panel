@@ -21,6 +21,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -746,6 +747,7 @@ def metrics():
     m['adaptive_status'] = UI_STATE.get('adaptive_status', 'Waiting for browser')
     m['adaptive_lux'] = UI_STATE.get('adaptive_lux')
     m['screen_mode'] = UI_STATE.get('screen_mode', 'unknown')
+    m['idle_power_status'] = IDLE_POWER.status
     return m
 
 
@@ -879,6 +881,7 @@ async def check_bundle(session):
         except Exception:
             pass
         print("[agent] update: restarting into the new agent")
+        IDLE_POWER.update(False)
         os._exit(0)
 
 
@@ -1005,6 +1008,103 @@ RECOVERY_LAST = 0
 RECOVERY_STAGE = 0
 RECOVERY_FILE = PANEL_DIR / 'browser-recovery.json'
 DIAGNOSTICS_BUSY = False
+
+
+class IdlePowerLimit:
+    """Own a temporary CPU ceiling, never the governor or firmware settings.
+
+    A /run journal survives an agent crash but not a reboot (which resets sysfs).
+    Save it before limiting speed; startup restores it before trusting a browser.
+    """
+    def __init__(self, policy=Path('/sys/devices/system/cpu/cpufreq/policy0'),
+                 journal=Path('/run/pi-panel-idle-power.json')):
+        self.policy, self.journal = policy, journal
+        self.saved = None
+        self.blocked = False
+        self.status = 'Starting'
+
+    def read(self, name):
+        return int((self.policy / name).read_text().strip())
+
+    def restore(self):
+        if self.saved is None and self.journal.exists():
+            value = json.loads(self.journal.read_text())
+            if (not isinstance(value, dict) or set(value) != {'normal', 'idle'} or
+                    any(type(v) is not int for v in value.values()) or
+                    not 0 < value['idle'] < value['normal'] <= self.read('cpuinfo_max_freq')):
+                raise ValueError('Invalid saved CPU limit')
+            self.saved = value
+        if self.saved is None:
+            return
+        current = self.read('scaling_max_freq')
+        if current == self.saved['idle']:
+            normal = max(self.read('scaling_min_freq'), self.saved['normal'])
+            (self.policy / 'scaling_max_freq').write_text(str(normal))
+        # A changed ceiling belongs to another owner; do not overwrite it.
+        self.journal.unlink(missing_ok=True)
+        self.saved = None
+
+    def update(self, asleep):
+        try:
+            if not asleep:
+                self.restore()
+                self.blocked = False
+                self.status = 'Normal performance'
+                return True
+            if self.blocked:
+                self.status = 'External CPU limit changed — waiting for wake'
+                return True
+            if self.saved is not None:
+                if self.read('scaling_max_freq') != self.saved['idle']:
+                    self.restore()
+                    self.blocked = True
+                    self.status = 'External CPU limit changed — waiting for wake'
+                    return True
+            else:
+                self.restore()
+                normal, idle = self.read('scaling_max_freq'), self.read('scaling_min_freq')
+                if not self.read('cpuinfo_min_freq') <= idle <= normal <= self.read('cpuinfo_max_freq'):
+                    raise ValueError('Invalid CPU policy limits')
+                if idle == normal:
+                    self.status = 'Already at minimum CPU limit'
+                    return True
+                value = {'normal': normal, 'idle': idle}
+                temporary = self.journal.with_suffix('.tmp')
+                with open(temporary, 'w', encoding='utf-8') as f:
+                    os.chmod(temporary, 0o600)
+                    json.dump(value, f)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temporary, self.journal)
+                self.saved = value
+                (self.policy / 'scaling_max_freq').write_text(str(idle))
+            self.status = f"Saving power — CPU limit {self.saved['idle']/1000000:g} GHz"
+            return True
+        except (OSError, ValueError, TypeError):
+            self.status = 'Power control unavailable — check CPU policy permissions'
+            return False
+
+
+IDLE_POWER = IdlePowerLimit()
+POWER_PAGES = {}
+
+
+def reconcile_idle_power():
+    enabled = screen_settings().get('idle_power_saving') is True
+    now = time.monotonic()
+    # Unknown/stale/disconnected browsers fail toward full performance,
+    # independently of the browser recovery setting and the server connection.
+    asleep = enabled and bool(PAGES) and all(
+        mode == 'blanked' and 0 <= now - seen < 25
+        for mode, seen in (POWER_PAGES.get(page, ('unknown', 0)) for page in PAGES))
+    if IDLE_POWER.update(asleep) and not enabled:
+        IDLE_POWER.status = 'Off'
+
+
+async def idle_power_loop():
+    while True:
+        reconcile_idle_power()
+        await asyncio.sleep(2)
 
 
 def screen_settings():
@@ -1157,6 +1257,9 @@ async def browser_watchdog():
 
 
 async def tell_pages(payload: dict):
+    if payload.get('type') in ('wake', 'identify', 'reload'):
+        POWER_PAGES.clear()
+        IDLE_POWER.update(False)
     """Send one message to every open page, dropping the ones that have gone."""
     dead = []
     for ws in list(PAGES):
@@ -1180,6 +1283,7 @@ async def page_ws(request):
     ws = web.WebSocketResponse(heartbeat=25)
     await ws.prepare(request)
     PAGES.add(ws)
+    reconcile_idle_power()
     print(f"[agent] page connected ({len(PAGES)} open)")
     try:
         async for msg in ws:
@@ -1192,6 +1296,8 @@ async def page_ws(request):
             if data.get('type') == 'browser_heartbeat':
                 BROWSER_SEEN = time.monotonic()
                 UI_STATE['screen_mode'] = data.get('screen_mode') if data.get('screen_mode') in ('awake', 'idle', 'blanked') else 'unknown'
+                POWER_PAGES[ws] = (UI_STATE['screen_mode'], BROWSER_SEEN)
+                reconcile_idle_power()
                 UI_STATE['adaptive_status'] = str(data.get('adaptive_status', ''))[:120]
                 lux = data.get('adaptive_lux')
                 UI_STATE['adaptive_lux'] = lux if type(lux) in (int, float) and 0 <= lux <= 200000 else None
@@ -1213,6 +1319,8 @@ async def page_ws(request):
                     print(f"[agent] scrolltest {name}: {fps} fps")
     finally:
         PAGES.discard(ws)
+        POWER_PAGES.pop(ws, None)
+        reconcile_idle_power()
         print(f"[agent] page gone ({len(PAGES)} open)")
     return ws
 
@@ -1955,7 +2063,7 @@ async def main():
         # used to sit in the same gather as everything else, behind the
         # register loop below -- so with the server down at boot, neither ever
         # started. Now they start here, whatever the server is doing.
-        await asyncio.gather(server_side(session), presence_loop(), dali_loop(), bluetooth_loop(), browser_watchdog())
+        await asyncio.gather(server_side(session), presence_loop(), dali_loop(), bluetooth_loop(), browser_watchdog(), idle_power_loop())
 
 
 async def server_side(session):
@@ -1974,8 +2082,20 @@ async def server_side(session):
                          poll_loop(session), performance_loop(session))
 
 
+async def run_agent():
+    IDLE_POWER.update(False)
+    loop = asyncio.get_running_loop()
+    task = asyncio.current_task()
+    if sys.platform == 'linux':
+        loop.add_signal_handler(signal.SIGTERM, task.cancel)
+    try:
+        await main()
+    finally:
+        IDLE_POWER.update(False)
+
+
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
+        asyncio.run(run_agent())
+    except (KeyboardInterrupt, asyncio.CancelledError):
         pass

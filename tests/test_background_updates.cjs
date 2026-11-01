@@ -53,6 +53,7 @@ const source=fs.readFileSync(path.join(root,'panel-ui/panel.html'),'utf8').repla
    assert.equal(await page.evaluate(()=>window.mutations.media),0,'standby does not update hidden media');
    assert.equal(await run(()=>fpsOn),false,'diagnostic frame loop stops while asleep');
    await run(()=>{goBlank();window.resetMutations();});
+   assert.equal(await page.evaluate(()=>window.reports.filter(m=>m.type==='browser_heartbeat').at(-1).screen_mode),'blanked','blank reports immediately');
    const reports=await page.evaluate(()=>window.reports.length);
    await run(()=>{
     applyState({entity_id:'sensor.temp',state:'25.5',attributes:{}});
@@ -64,6 +65,7 @@ const source=fs.readFileSync(path.join(root,'panel-ui/panel.html'),'utf8').repla
    assert((await page.evaluate(()=>window.reports.length))>reports,'agent heartbeat continues while blanked');
    assert.equal(await run(()=>panelReady),true);
    await run(()=>bump());
+   assert.equal(await page.evaluate(()=>window.reports.filter(m=>m.type==='browser_heartbeat').at(-1).screen_mode),'awake','touch wake reports immediately');
    assert.equal(await page.locator('#mTitle').textContent(),'Updated while asleep');
    assert.equal(await page.locator('#archTemp').textContent(),'25.5°');
    assert.equal(await page.locator('#clock').textContent(),await run(()=>new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hour12:false})));

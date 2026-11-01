@@ -68,6 +68,12 @@ const root=path.resolve(__dirname,'..'),source=fs.readFileSync(path.join(root,'p
  await q.waitForFunction(()=>!document.querySelector('#saveScreenBtn').disabled);
  let cfg=(await(await api.get(base+'/api/panels/screen-qa')).json()).config;
  assert.equal(cfg.display.adaptive_min_pct,25);assert.equal(cfg.display.theme,'architectural');assert.equal(cfg.display.future_setting,'preserve');assert.deepEqual(cfg.lights,original.lights);
+ assert.equal(await q.locator('#fIdlePower').inputValue(),'0');
+ await q.locator('#fIdlePower').selectOption('1');await q.locator('#saveScreenBtn').click();
+ await q.waitForFunction(()=>!document.querySelector('#saveScreenBtn').disabled);
+ cfg=(await(await api.get(base+'/api/panels/screen-qa')).json()).config;
+ assert.equal(cfg.display.idle_power_saving,true);assert.deepEqual(cfg.lights,original.lights);
+ assert.equal((await api.patch(base+'/api/panels/screen-qa/display',{data:{idle_power_saving:'yes'}})).status(),400);
  await q.locator('#fAdaptiveMin').fill('99');await q.locator('#saveScreenBtn').click();
  await q.waitForFunction(()=>!document.querySelector('#saveScreenBtn').disabled);
  assert.match(await q.locator('#screenSaveStatus').textContent(),/minimum/);
