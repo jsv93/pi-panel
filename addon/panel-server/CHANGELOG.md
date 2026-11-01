@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.23.2
+
+- Keep historical readouts at their natural width near graph edges, while fitting narrow mobile screens.
+
 ## 0.23.1
 
 - Hover over any performance graph to read its historical timestamp and value, with receive and send shown together for network traffic.
