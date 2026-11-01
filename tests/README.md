@@ -1,5 +1,15 @@
 # Tests
 
+## Background rendering
+
+    node tests/test_background_updates.cjs
+
+Runs the shipped panel in all three themes with controlled time and simulated
+HA/agent connections. Verifies minute clock cadence, visible-only media ticks,
+paused playback, standby clock, no clock/media mutations while blanked or
+hidden, current state and elapsed playback on wake, continued heartbeats, and
+diagnostic frame-loop suspension/resumption.
+
 ## RAM diagnostics
 
     python tests/test_ram_metrics.py
