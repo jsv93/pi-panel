@@ -1,29 +1,10 @@
 # Changelog
 
-## 0.22.1
+## 0.22.2
 
-- Fix the device Diagnostics link's undefined variable. Use a normal new-tab
-  link populated from the selected device, so normal clicks and Open in new tab
-  both reach the configured HTTPS console with the device selected.
-
-## 0.22.0
-
-- Make secure diagnostics configurable in Home Assistant, with a private native
-  HTTPS listener, named account, explicit device permissions and audit storage.
-- Open the diagnostics link in a new tab at its configured HTTPS address.
-- Add a separate outbound agent WSS channel with signed certificate discovery,
-  exact certificate pinning and signing-key challenge authentication.
-- Retain fixed read-only health checks, expiring sessions and the working kiosk.
-  No interactive shell is exposed. Add a real TLS and agent-loop test to CI.
-
-## 0.21.0
-
-- Add an opt-in secure diagnostics console with named operators, role and
-  device permissions, HTTPS/WSS requirements, audit records and expiring sessions.
-- Reuse the existing agent's signed health diagnostic request. No shell,
-  screenshots, agent update or kiosk change is introduced.
-- Keep diagnostics disabled until the management policy and TLS are configured.
-  Installing the update preserves existing dashboard and Home Assistant access.
-- Gate release image builds on management security and dashboard regression tests.
-
-See the main repository's `docs/SECURE-MANAGEMENT.md` for setup and limitations.
+- Remove the separate secure diagnostics console, operator login, HTTPS
+  listener and additional agent connection introduced in 0.21.0–0.22.1.
+- Restore the original panel agent and dashboard behavior. Existing panel
+  configuration, enrollment keys and provisioning SSH credentials are preserved.
+- Remove the retired management policy, TLS files and audit database from the
+  add-on data directory on startup. Normal SSH behavior is unchanged.

@@ -27,7 +27,7 @@ import sys
 import time
 import uuid
 from collections import deque
-from urllib.parse import urlsplit, quote
+from urllib.parse import urlsplit
 from pathlib import Path
 
 import aiohttp
@@ -1220,80 +1220,6 @@ async def ws_loop(session):
         await asyncio.sleep(10)
 
 
-def checked_management_transport(payload, nonce):
-    # The descriptor arrives over the existing channel but must be signed with
-    # the separate enrolled signing key, and echo this request's random nonce.
-    # Nothing from the kiosk config or browser can select a certificate/target.
-    if not SIGN_KEY or not TOKEN:
-        return None
-    data = verified(payload, 'management transport')
-    if (not data or data.get('type') != 'management_transport'
-            or data.get('panel') != PANEL_ID or data.get('nonce') != nonce):
-        return None
-    origin, fingerprint = data.get('origin', ''), data.get('fingerprint', '')
-    if not isinstance(origin, str) or not isinstance(fingerprint, str):
-        return None
-    u = urlsplit(origin)
-    if (u.scheme != 'https' or not u.hostname or u.username or u.password
-            or u.path or u.query or u.fragment or not re.fullmatch(r'[a-f0-9]{64}', fingerprint)):
-        return None
-    return origin, aiohttp.Fingerprint(bytes.fromhex(fingerprint))
-
-
-async def management_loop(session):
-    """Optional outbound TLS channel: fixed health reads only, never a shell.
-
-    This independent task cannot block config, presence, lighting or the kiosk.
-    Certificate pinning prevents sending the token to a substituted TLS peer.
-    """
-    while True:
-        try:
-            nonce = secrets.token_hex(32)
-            async with session.get(f'{SERVER}/api/management-transport/{quote(PANEL_ID, safe="")}',
-                                   params={'nonce': nonce}, timeout=10) as response:
-                if response.status != 200:
-                    await asyncio.sleep(30)
-                    continue
-                target = checked_management_transport(await response.json(), nonce)
-            if not target:
-                await asyncio.sleep(30)
-                continue
-            origin, fingerprint = target
-            # A separate session has no default credential headers or redirects
-            # from the old server. The pin is enforced before the WS upgrade.
-            async with aiohttp.ClientSession() as secure:
-                async with secure.ws_connect(origin.replace('https:', 'wss:', 1)
-                        + '/management/agent/' + quote(PANEL_ID, safe=''), ssl=fingerprint,
-                        headers=server_headers(), heartbeat=20, max_msg_size=4096) as ws:
-                    challenge = await ws.receive_json(timeout=5)
-                    if (set(challenge) != {'type', 'panel', 'challenge'}
-                            or challenge['type'] != 'management_auth' or challenge['panel'] != PANEL_ID
-                            or not re.fullmatch(r'[a-f0-9]{64}', challenge['challenge'])):
-                        raise ValueError('Invalid management challenge')
-                    proof = hmac.new(SIGN_KEY.encode(), _canonical(challenge), hashlib.sha256).hexdigest()
-                    await ws.send_json({'proof': proof})
-                    if await ws.receive_json(timeout=5) != {'type': 'ready'}:
-                        raise ValueError('Management authentication refused')
-                    # Bound connection lifetime also picks up cert/policy changes.
-                    end = time.monotonic() + 60
-                    while time.monotonic() < end:
-                        try:
-                            data = await ws.receive_json(timeout=max(.1, end - time.monotonic()))
-                        except asyncio.TimeoutError:
-                            break
-                        checked = verified(data, 'management diagnostic')
-                        if (checked and checked.get('type') == 'screen_diagnostics'
-                                and checked.get('capture') is False
-                                and re.fullmatch(r'[a-f0-9]{32}', checked.get('request_id', ''))):
-                            await send_screen_diagnostics(ws, checked)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            # No TLS material, tokens, response bodies or URLs in the journal.
-            pass
-        await asyncio.sleep(3)
-
-
 # Defaults per sensor, used when the config does not override them. A PIR
 # self-retriggers and only needs to be heard from occasionally; an mmWave module
 # holds its output high the whole time someone is there, so the poke repeats and
@@ -1793,7 +1719,7 @@ async def server_side(session):
     await sync(session)
     await check_bundle(session)
     await asyncio.gather(ws_loop(session), heartbeat_loop(session),
-                         poll_loop(session), management_loop(session))
+                         poll_loop(session))
 
 
 if __name__ == "__main__":
