@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 
-from . import backgrounds, db, firstboot, ha, ssh, screen
+from . import backgrounds, db, firstboot, ha, ssh, screen, management
 
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme")
 WEAK_DEFAULTS = {"changeme", "change-me", ""}
@@ -1164,6 +1164,7 @@ async def panel_ws(ws: WebSocket, panel_id: str):
                          data.get("config_version"))
                 await ws.send_json({"type": "ack", "config_version": db.latest_version(panel_id)})
             elif data.get('type') == 'screen_diagnostics':
+                MANAGEMENT.receive(panel_id, ws, data)
                 pending = SCREEN_REQUESTS.get(panel_id)
                 if pending and pending[0] == data.get('request_id') and not pending[1].done():
                     pending[1].set_result(data)
@@ -2095,7 +2096,7 @@ async def no_cache_html(request: Request, call_next):
     # different document with a different script and must not get this policy.
     path = request.url.path
     ctype = response.headers.get("content-type", "")
-    if ctype.startswith("text/html") and "/preview/" not in path:
+    if ctype.startswith("text/html") and "/preview/" not in path and "/management/" not in path:
         response.headers["Cache-Control"] = "no-store, must-revalidate"
         csp = _gui_csp()
         if csp:
@@ -2105,4 +2106,5 @@ async def no_cache_html(request: Request, call_next):
     return response
 
 
+MANAGEMENT = management.install(app, db, LIVE, signed)
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
