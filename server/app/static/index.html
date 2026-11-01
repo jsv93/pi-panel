@@ -150,7 +150,7 @@ body{line-height:1.5}h1{font-size:22px;letter-spacing:-.5px}h2{font-size:17px}h3
       <button data-s="identity" class="on" aria-current="page">General</button>
       <button data-s="display">Display</button><button data-s="lights">Lights &amp; presets</button>
       <button data-s="media">Media</button><button data-s="sensors">Sensors</button>
-      <button data-s="tracking">Room detection</button><hr>
+      <button data-s="doorbell">Doorbell</button><button data-s="tracking">Room detection</button><hr>
       <button data-s="diag">Diagnostics</button><button data-s="access">Access &amp; SSH</button>
     </nav>
   </div><hr><button class="nav-item" id="navSettings">Server settings</button>
@@ -439,6 +439,22 @@ body{line-height:1.5}h1{font-size:22px;letter-spacing:-.5px}h2{font-size:17px}h3
                 <option value="tiles">Tiles — two columns with artwork</option></select></div>
             </div>
           </div>
+        </div>
+
+        <div class="sect" data-s="doorbell">
+          <h2>Doorbell</h2>
+          <p class="hint">Wake this panel and show a live camera when someone rings. Video stops when dismissed or when the display time expires. Audio is muted.</p>
+          <div class="grp"><div class="f2">
+            <div><label class="lbl" for="fBellEnabled">DOORBELL POPUP</label><select id="fBellEnabled"><option value="0">Off</option><option value="1">On</option></select></div>
+            <div><label class="lbl" for="fBellTitle">TITLE</label><input id="fBellTitle" maxlength="80" placeholder="Someone at the door"></div>
+            <div><label class="lbl" for="fBellCamera">CAMERA</label><select id="fBellCamera"></select></div>
+            <div><label class="lbl" for="fBellDuration">DISPLAY TIME</label><select id="fBellDuration"><option value="15">15 seconds</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option></select></div>
+          </div><p class="hint">Choose a camera that supports Home Assistant live WebRTC video. Still-image and map cameras cannot provide a live feed.</p></div>
+          <div class="grp"><label class="lbl" for="fBellTrigger">RING TRIGGER (OPTIONAL)</label><select id="fBellTrigger"></select>
+            <p class="hint">A binary sensor rings when it changes from off to on. An event entity or input button rings when its timestamp changes. Leave empty for manual tests or Home Assistant automations.</p></div>
+          <div class="button-row"><button class="btn" id="testDoorbellBtn">Test doorbell</button></div>
+          <p class="hint" id="doorbellStatus" role="status">Save &amp; push your camera settings before testing. The test uses the saved settings.</p>
+          <details><summary>Use another Home Assistant trigger</summary><p class="hint">In your automation, add a Fire event action with event type <code>pi_panel_doorbell</code> and the event data below. The camera and duration always come from this panel's settings.</p><pre id="doorbellEventData"></pre></details>
         </div>
 
         <div class="sect" data-s="sensors">
@@ -903,6 +919,12 @@ async function claimPanel(id){
 }
 
 /* ---------------- panel detail ---------------- */
+$('#testDoorbellBtn').onclick=async()=>{
+  const button=$('#testDoorbellBtn'),status=$('#doorbellStatus');button.disabled=true;
+  try{await api('/panels/'+encodeURIComponent(CUR.panel.id)+'/doorbell/test',{method:'POST',headers:{'X-Panel-Access':'1'}});
+    status.textContent='Test ring sent. Check the panel for live video; Diagnostics shows its CPU, temperature and network load.';
+  }catch(error){status.textContent=error.message;}finally{button.disabled=false;}
+};
 let CUR=null, CFG=null, backgroundImage='', backgroundUploadPending=false;
 function paintBackgroundForm(){
   const mode=$('#fBackground').value, preview=$('#fBackgroundPreview');
@@ -933,6 +955,8 @@ async function loadEntities(){
   ENTITIES.media  = await api("/entities?domain=media_player");
   ENTITIES.sensor = await api("/entities?domain=sensor");
   ENTITIES.climate = await api("/entities?domain=climate");
+  ENTITIES.camera = await api('/entities?domain=camera');
+  ENTITIES.bell = await api('/entities?domain=binary_sensor,event,input_button');
 }
 /* Entity names come from Home Assistant, so they are escaped like anything else
    a panel or a device can influence. Returns SafeHTML so it can sit inside
@@ -948,6 +972,15 @@ function opts(list, val, blank="— none —"){
    panel record. Split out because loading a template refills exactly this and
    must leave hostname, room and the template picker alone. */
 function fillConfigForm(){
+  const bell=CFG.doorbell||{};
+  $('#fBellEnabled').value=bell.enabled?'1':'0';
+  $('#fBellTitle').value=bell.title||'';
+  $('#fBellCamera').innerHTML=opts(ENTITIES.camera||[],bell.camera);
+  $('#fBellTrigger').innerHTML=opts(ENTITIES.bell||[],bell.trigger);
+  const duration=bell.duration_s||30;
+  $('#fBellDuration').innerHTML=html`${[...new Set([15,30,60,120,duration])].sort((a,b)=>a-b).map(s=>html`<option value="${s}">${s} seconds</option>`)}`;
+  $('#fBellDuration').value=String(duration);
+  $('#doorbellEventData').textContent='panel_id: '+CUR.panel.id;
   const bluetooth=CFG.bluetooth||{};
   $('#fBluetoothMode').value=bluetooth.mode||'existing';
   bluetoothFields();
@@ -1304,6 +1337,7 @@ $('#screenCaptureBtn').onclick=()=>requestScreenDiagnostics(true);
 $('#screenRefreshBtn').onclick=()=>requestScreenDiagnostics(false);
 
 function collect(){
+  CFG.doorbell={enabled:$('#fBellEnabled').value==='1',camera:$('#fBellCamera').value,title:$('#fBellTitle').value.trim(),duration_s:Number($('#fBellDuration').value),trigger:$('#fBellTrigger').value};
   CFG.bluetooth={mode:$('#fBluetoothMode').value};
   CFG.room_label = $("#fRoomLabel").value;
   CFG.connection = {...(CFG.connection||{}), ha_url:$("#fHaUrl").value};

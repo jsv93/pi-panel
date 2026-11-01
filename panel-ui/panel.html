@@ -998,6 +998,17 @@ body[class] #s-media.music-player button:focus-visible,body[class] #s-media.musi
 body[class] #s-media.music-player #mpVolumeButton:disabled{opacity:.4}
 @media(prefers-reduced-motion:reduce){body[class] #s-media.music-player.mp-playing .mp-wave{display:none}body[class] #s-media.music-player.mp-playing #mFill{visibility:visible}body[class] #s-media.music-player .mp-wave svg{animation:none}}
 
+
+#doorbellPopup{position:fixed;inset:0;z-index:8000;background:var(--bg-bot);color:var(--ink);padding:clamp(20px,5vw,48px);display:flex;flex-direction:column;gap:22px;font-family:inherit}
+#doorbellPopup[hidden]{display:none}
+#doorbellPopup header{display:flex;justify-content:space-between;gap:20px;align-items:center}
+#doorbellLabel{color:var(--accent);font-size:13px;letter-spacing:.15em}
+#doorbellTitle{font-size:clamp(24px,5vw,38px);font-weight:500;margin:10px 0}
+#doorbellClose{min-width:80px;min-height:52px;padding:12px 18px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2);color:var(--ink);font:inherit}
+#doorbellClose:focus-visible{outline:3px solid var(--accent);outline-offset:4px}
+#doorbellVideo{display:block;width:100%;flex:1;min-height:0;object-fit:contain;background:var(--scrim);border-radius:16px}
+#doorbellState{font-size:20px;margin:0}
+#doorbellDuration{font-size:15px;color:var(--ink-dim);margin:0}
 </style>
 <!-- Embedded asset licences
 Inter font:
@@ -1439,6 +1450,11 @@ SOFTWARE.
   addEventListener("unhandledrejection", e => fail("unhandled rejection", e.reason));
 })();
 </script>
+<section id="doorbellPopup" role="dialog" aria-modal="true" aria-labelledby="doorbellTitle" hidden>
+  <header><div><div id="doorbellLabel">DOORBELL</div><h1 id="doorbellTitle">Someone at the door</h1></div><button id="doorbellClose" type="button">Close</button></header>
+  <video id="doorbellVideo" autoplay muted playsinline aria-label="Doorbell live video"></video>
+  <p id="doorbellState" role="status"></p><p id="doorbellDuration"></p>
+</section>
 <script type="module">
 /* ============================================================
    CONFIG
@@ -1876,12 +1892,19 @@ function connect(){
         .catch(e=>status("state load failed: "+(e.message||e),"bad"));
       wsSend({type:"subscribe_events", event_type:"state_changed"})
         .catch(e=>status("state updates unavailable: "+(e.message||e),"bad"));
+      if(bellConfig.enabled)wsSend({type:'subscribe_events',event_type:'pi_panel_doorbell'},8000).catch(()=>{});
       wsSend({type:"get_services"},10000).then(r=>{
         transferAvailable=!!r?.music_assistant?.transfer_queue; paintSpeakers();
       }).catch(()=>{transferAvailable=false;paintSpeakers();});
       return;
     }
     if(m.type==="auth_invalid"){ status("token rejected","bad"); return; }
+    if(cameraSubscriptions.has(m.id)){
+      if(m.type==='event')cameraSubscriptions.get(m.id)(m.event);
+      else if(m.type==='result'&&!m.success&&bellSession)failDoorbell(bellSession,'Home Assistant could not start this camera.');
+      return;
+    }
+    if(m.type==='event')ringEvent(m.event);
     if(m.type==="result" && pending.has(m.id)){
       const p = pending.get(m.id); pending.delete(m.id); clearTimeout(p.timer);
       if(m.success) p.res(m.result); else p.rej(m.error);
@@ -1895,7 +1918,7 @@ function connect(){
     }
   };
   ws.onclose = ()=>{
-    wsReady=false; transferAvailable=false; speakerStates.clear();
+    wsReady=false;if(bellSession)failDoorbell(bellSession,"Home Assistant disconnected.");cameraSubscriptions.clear(); transferAvailable=false; speakerStates.clear();
     for(const p of pending.values()){clearTimeout(p.timer);p.rej(new Error("Home Assistant disconnected"));}
     pending.clear();paintSpeakers();reportHA(false);status("disconnected — retrying","bad");setTimeout(connect,3000);
   };
@@ -1905,6 +1928,108 @@ function call(domain,service,data){
   return wsSend({type:"call_service",domain,service,service_data:data||{}})
     .catch(e=>{ status("call failed: "+(e.message||e),"bad"); });
 }
+/* Doorbell streams use the panel's existing authenticated HA connection.
+   No camera URL, credential or command can arrive in the ring event. */
+const bellConfig=CFG.doorbell||{};
+let bellSession=null,bellSerial=0;
+const cameraSubscriptions=new Map();
+function releaseDoorbellStream(s){
+  clearTimeout(s.connectTimer);
+  if(s.subscription){
+    cameraSubscriptions.delete(s.subscription);
+    if(wsReady&&ws===s.socket)wsSend({type:'unsubscribe_events',subscription:s.subscription},5000).catch(()=>{});
+    s.subscription=null;
+  }
+  if(s.peer){s.peer.ontrack=null;s.peer.onicecandidate=null;s.peer.onconnectionstatechange=null;s.peer.close();s.peer=null;}
+  s.stream?.getTracks().forEach(t=>t.stop());s.stream=null;
+  const video=$('#doorbellVideo');video.onplaying=null;video.pause();video.srcObject=null;
+}
+function closeDoorbell(){
+  const s=bellSession;if(!s)return;
+  bellSession=null;++bellSerial;clearTimeout(s.closeTimer);releaseDoorbellStream(s);
+  $('#doorbellPopup').hidden=true;
+  for(const [node,wasInert] of s.inertNodes||[])node.inert=wasInert;
+  s.focus?.focus?.({preventScroll:true});bump();syncVisualUpdates();
+}
+function failDoorbell(s,message){
+  if(bellSession!==s)return;
+  s.failed=true;releaseDoorbellStream(s);$('#doorbellState').textContent=message;
+  $('#doorbellPopup').dataset.state='error';
+}
+function ringEvent(event){
+  if(event?.event_type==='pi_panel_doorbell'&&event.data?.panel_id===CFG._panel_id)openDoorbell(event.data.test===true);
+  if(event?.event_type!=='state_changed'||!bellConfig.trigger)return;
+  const d=event.data,old=d?.old_state?.state,next=d?.new_state?.state;
+  if(d?.entity_id!==bellConfig.trigger||!old||!next||old===next||['unknown','unavailable'].includes(old)||['unknown','unavailable'].includes(next))return;
+  if(bellConfig.trigger.startsWith('binary_sensor.') ? old==='off'&&next==='on' : Number.isFinite(Date.parse(next)))openDoorbell(false);
+}
+async function openDoorbell(test=false){
+  if(!bellConfig.enabled||!/^camera\.[a-z0-9_]+$/.test(bellConfig.camera||'')||document.hidden)return;
+  const duration=Math.max(10,Math.min(120,Number(bellConfig.duration_s)||30));
+  if(bellSession){
+    // Repeated rings extend the current view without creating extra decoders.
+    // Five minutes is an absolute cap even if a trigger is stuck firing.
+    clearTimeout(bellSession.closeTimer);
+    bellSession.closeTimer=setTimeout(closeDoorbell,Math.max(0,Math.min(duration*1000,300000-(performance.now()-bellSession.started))));return;
+  }
+  const s={serial:++bellSerial,started:performance.now(),focus:document.activeElement,socket:ws,local:[],remote:[],events:Promise.resolve()};
+  bellSession=s;bump();clearTimeout(idleT);clearTimeout(offT);
+  const popup=$('#doorbellPopup');popup.hidden=false;popup.dataset.state='connecting';delete popup.dataset.startupMs;
+  $('#doorbellTitle').textContent=bellConfig.title||'Someone at the door';
+  $('#doorbellLabel').textContent=test?'DOORBELL TEST':'DOORBELL';
+  $('#doorbellState').textContent='Connecting to live camera…';
+  $('#doorbellDuration').textContent='Closes automatically after '+duration+' seconds · Muted';
+  s.inertNodes=[...document.body.children].filter(n=>n!==popup&&!['SCRIPT','STYLE'].includes(n.tagName)).map(n=>[n,n.inert]);
+  s.inertNodes.forEach(([n])=>n.inert=true);$('#doorbellClose').focus({preventScroll:true});syncVisualUpdates();
+  s.closeTimer=setTimeout(closeDoorbell,duration*1000);
+  s.connectTimer=setTimeout(()=>failDoorbell(s,'Camera did not start. Check its live view in Home Assistant.'),15000);
+  const current=()=>!s.failed&&bellSession===s&&s.serial===bellSerial&&s.socket===ws;
+  try{
+    const caps=await wsSend({type:'camera/capabilities',entity_id:bellConfig.camera},8000);
+    if(!current())return;
+    if(!caps?.frontend_stream_types?.includes('web_rtc'))throw Error('This camera does not support live WebRTC video in Home Assistant.');
+    const config=await wsSend({type:'camera/webrtc/get_client_config',entity_id:bellConfig.camera},8000);
+    if(!current())return;
+    const peer=s.peer=new RTCPeerConnection(config.configuration||{});
+    if(config.dataChannel)peer.createDataChannel(config.dataChannel);
+    const stream=s.stream=new MediaStream(),video=$('#doorbellVideo');video.srcObject=stream;video.muted=true;
+    const candidate=c=>wsSend({type:'camera/webrtc/candidate',entity_id:bellConfig.camera,session_id:s.sessionId,candidate:c},5000).catch(()=>{if(current())failDoorbell(s,'Camera connection failed. Please try again.');});
+    peer.onicecandidate=e=>{if(!current()||!e.candidate)return;const c=e.candidate.toJSON();if(s.sessionId)candidate(c);else s.local.push(c);};
+    peer.ontrack=e=>{if(current()&&e.track.kind==='video'){stream.addTrack(e.track);video.play().catch(()=>failDoorbell(s,'Video playback could not start.'));}};
+    peer.onconnectionstatechange=()=>{if(current()&&['failed','disconnected'].includes(peer.connectionState))failDoorbell(s,'Camera disconnected. Please try again.');};
+    video.onplaying=()=>{if(!current())return;clearTimeout(s.connectTimer);popup.dataset.state='playing';popup.dataset.startupMs=String(Math.round(performance.now()-s.started));$('#doorbellState').textContent='Live camera';};
+    peer.addTransceiver('video',{direction:'recvonly'});
+    const offer=await peer.createOffer();if(!current())return;
+    await peer.setLocalDescription(offer);if(!current())return;
+    const id=wsId++;s.subscription=id;
+    cameraSubscriptions.set(id,event=>{
+      // HA may send candidates before the remote description is applied.
+      s.events=s.events.then(async()=>{
+        if(!current()||!s.peer)return;
+        if(event.type==='session'){s.sessionId=event.session_id;s.local.splice(0).forEach(candidate);}
+        if(event.type==='answer'){
+          await peer.setRemoteDescription({type:'answer',sdp:event.answer});
+          if(!current()||!s.peer)return;
+          for(const c of s.remote.splice(0))await peer.addIceCandidate(c);
+        }
+        if(event.type==='candidate'){
+          const c={...event.candidate};if(c.sdpMid==null&&c.sdpMLineIndex==null)c.sdpMid='0';
+          if(peer.remoteDescription)await peer.addIceCandidate(c);else s.remote.push(c);
+        }
+        if(event.type==='error')failDoorbell(s,'Home Assistant could not open this camera. Check its live view.');
+      }).catch(()=>{if(current())failDoorbell(s,'Camera negotiation failed. Please try again.');});
+    });
+    ws.send(JSON.stringify({id,type:'camera/webrtc/offer',entity_id:bellConfig.camera,offer:offer.sdp}));
+  }catch(error){if(current())failDoorbell(s,error.message==='This camera does not support live WebRTC video in Home Assistant.'?error.message:'Cannot open the camera. Check Home Assistant and try again.');}
+}
+$('#doorbellClose').onclick=closeDoorbell;
+$('#doorbellPopup').addEventListener('keydown',event=>{
+  if(event.key==='Escape'){event.stopPropagation();closeDoorbell();}
+  if(event.key==='Tab'){event.preventDefault();$('#doorbellClose').focus();}
+});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)closeDoorbell();});
+window.addEventListener('pagehide',closeDoorbell);
+
 const signCache = new Map();
 async function sign(path){
   if(!path) return "";
@@ -2167,7 +2292,7 @@ function buildQueue(){
 
 /* ---------- clock ---------- */
 let visualUpdatesReady=false,clockTimer=null,progressTimer=null;
-function visualsAwake(){return !document.hidden&&!$('#idle').classList.contains('on')&&!$('#idle').classList.contains('blanked');}
+function visualsAwake(){return !bellSession&&!document.hidden&&!$('#idle').classList.contains('on')&&!$('#idle').classList.contains('blanked');}
 function textChanged(selector,value){const el=$(selector);if(el&&el.textContent!==value)el.textContent=value;}
 function tick(){
   if(document.hidden||$('#idle').classList.contains('blanked'))return;
@@ -3624,6 +3749,7 @@ let idleT, offT;
    one is how the timed path and the commanded path drift into leaving the panel
    in states that differ by a backlight write nobody remembers making. */
 function goIdle(){
+  if(bellSession){closeDoorbell();clearTimeout(idleT);clearTimeout(offT);}
   $("#idle").classList.add("on");
   document.body.classList.add("panel-idle");
   idleDrift(true);
@@ -3631,6 +3757,7 @@ function goIdle(){
   syncVisualUpdates();
 }
 function goBlank(){
+  if(bellSession){closeDoorbell();clearTimeout(idleT);clearTimeout(offT);}
   $("#idle").classList.add("blanked");
   idleDrift(false);
   setBacklight(0);
@@ -3671,6 +3798,7 @@ function bump(){
     requestAnimationFrame(() => requestAnimationFrame(light));
     setTimeout(light, 150);
   }
+  if(bellSession)return;
   idleT = setTimeout(()=>{
     goIdle();
     /* Dimmed is not off: this panel still throws real light at its lowest

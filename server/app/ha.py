@@ -183,6 +183,15 @@ async def exists(entity_id):
     return any(s.get("entity_id") == entity_id for s in await states())
 
 
+async def ring_doorbell(panel_id):
+    # The server can only ring a configured panel, never supply a stream URL.
+    async with httpx.AsyncClient(timeout=8) as client:
+        response = await client.post(f"{url()}/api/events/pi_panel_doorbell",
+                                     headers={"Authorization": f"Bearer {token()}"},
+                                     json={"panel_id": panel_id, "test": True})
+        response.raise_for_status()
+
+
 async def validate_config(cfg):
     """Return a list of human-readable problems with a config's entity refs."""
     if not configured():
@@ -203,4 +212,7 @@ async def validate_config(cfg):
     sens = cfg.get("sensors") or {}
     check(sens.get("temperature"), "Temperature sensor")
     check(sens.get("humidity"), "Humidity sensor")
+    bell = cfg.get('doorbell') or {}
+    check(bell.get('camera'), 'Doorbell camera')
+    check(bell.get('trigger'), 'Doorbell ring trigger')
     return problems
