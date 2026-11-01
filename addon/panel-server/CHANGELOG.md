@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.22.1
+
+- Fix the device Diagnostics link's undefined variable. Use a normal new-tab
+  link populated from the selected device, so normal clicks and Open in new tab
+  both reach the configured HTTPS console with the device selected.
+
 ## 0.22.0
 
 - Make secure diagnostics configurable in Home Assistant, with a private native
