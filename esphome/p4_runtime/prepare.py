@@ -50,6 +50,30 @@ def main():
         array("bool" if key == "include_presets" else "int", "seed_" + name, [l.pop(key, default) for l in lights])
     header.append("constexpr char layout_contract[]=" + json.dumps(json.dumps(contract, separators=(",", ":"))) + ";")
     fields = [args.server.rstrip("/"), args.id, args.mac, args.id, identity["token"], identity["sign_key"]]
+    display=config["display"]
+    for name,default in [("idle_timeout_s",45),("backlight_off_s",0),("backlight_default",100),("backlight_min",5),
+                         ("adaptive_min_pct",10),("adaptive_max_pct",100),("adaptive_dark_lux",5),
+                         ("adaptive_bright_lux",300),("adaptive_transition_s",5)]:
+        value=display.get(name,default)
+        if not isinstance(value,(int,float)) or value<0 or (name in ("backlight_default","backlight_min","adaptive_min_pct","adaptive_max_pct") and value>100):
+            p.error(f"invalid display setting {name}")
+        header.append(f"constexpr double {name}={value};")
+    sensor=display.get("adaptive_sensor","") if display.get("adaptive_brightness") else ""
+    header.append("constexpr char lux_entity[]="+json.dumps(sensor)+";")
+    media=config.get("media") or {}
+    speakers=[s if isinstance(s,str) else s.get("entity_id") for s in media.get("speakers",[])]
+    speakers=[s for s in speakers if s]
+    default=media.get("default_speaker")
+    if default and default not in speakers:
+        speakers.insert(0,default)
+    if any(not re.fullmatch(r"media_player\.[a-z0-9_]+",s) for s in speakers):
+        p.error("invalid media player entity")
+    header.append("constexpr char initial_speaker[]="+json.dumps(speakers[0] if speakers else "")+";")
+    for role in ("temperature","humidity","climate"):
+        entity=config.get("sensors",{}).get(role,"") or ""
+        if entity and not re.fullmatch(r"[a-z0-9_]+\.[a-z0-9_]+",entity):
+            p.error(f"invalid {role} entity")
+        header.append(f"constexpr char {role}_entity[]="+json.dumps(entity)+";")
     header.append("constexpr p4_runtime::FleetSettings fleet_settings={" + ",".join(map(json.dumps, fields)) + "};\n}")
     dest = args.build / "live_runtime"
     dest.mkdir(exist_ok=True)
@@ -70,10 +94,15 @@ def main():
         f"constexpr unsigned tail_offset={start},tail_size={len(blob)};\n"
         f"constexpr unsigned char tail_sha[]={{{expected}}};\n}}\n")
     source = (args.build / "study.yaml").read_text(encoding="utf-8")
+    if not (args.build / "control_art.h").exists():
+        p.error("generate control_art.h using esphome/study/control_art.py first")
+    source = source.replace("study_assets.h, study.h", "study_assets.h, control_art.h, study.h")
     source = source.replace("includes: [scanout.h", "includes: [live_runtime, scanout.h")
     source = source.replace("esp_driver_jpeg, esp_driver_ppa]", "esp_driver_jpeg, esp_driver_ppa, esp_http_client, json, nvs_flash]")
     source = source.replace("    sdkconfig_options:\n", '    sdkconfig_options:\n      CONFIG_MBEDTLS_CERTIFICATE_BUNDLE: "y"\n')
     source = source.replace("\napi:\n", "\napi:\n  homeassistant_services: true\n  homeassistant_states: true\n")
+    source += "\ntime:\n  - platform: homeassistant\n    id: study_clock\n"
+    source = source.replace("study::begin(id(panel_display)", "study::screen_callbacks([](){auto t=id(study_clock).now();return t.is_valid()?int(t.hour)*60+t.minute:-1;}, [](int level){return id(backlight_ctrl).write_byte(0x96, (level*255+50)/100);}); study::begin(id(panel_display)")
     (args.build / "study-live.yaml").write_text(source, encoding="utf-8")
 
 

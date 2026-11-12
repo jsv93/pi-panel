@@ -45,6 +45,7 @@ class Scanout {
     return true;
   }
   bool active=false;
+  void invalidate_lamp(){for(auto &slot:slots_)slot.lamp_background=false;}
  private:
   esp_lcd_panel_handle_t panel_{};
   Slot slots_[3]{};

@@ -1,4 +1,5 @@
 """Build local 720x1280 RGB565 artwork and hit areas from the released kiosk."""
+from contextlib import contextmanager
 import argparse
 import io
 import json
@@ -27,9 +28,9 @@ def rgb565(im, x=0, y=0):
     return ((r<<11)|(g<<5)|b).astype("<u2").tobytes()
 
 
-def generate(cfg, states, dest):
-    dest.mkdir(parents=True, exist_ok=True)
-    cfg["display"]["idle_timeout_s"]=3600
+@contextmanager
+def fixture_page(cfg, states):
+    cfg={**cfg, "display": {**cfg["display"], "idle_timeout_s":3600}}
     # Only fixture sockets exist in this context. Buttons cannot operate the house.
     fake = """
     window.WebSocket = class {
@@ -63,6 +64,14 @@ def generate(cfg, states, dest):
         page.wait_for_function("document.body.dataset.theme==='architectural' || document.body.classList.contains('architectural') || document.querySelector('#archRoom').textContent==='Study'")
         page.evaluate("document.fonts.ready")
         page.wait_for_timeout(400)
+        try:
+            yield page
+        finally:
+            browser.close()
+
+def generate(cfg, states, dest):
+    dest.mkdir(parents=True, exist_ok=True)
+    with fixture_page(cfg, states) as page:
         views, data = [], bytearray()
         def store(name, rect=None, motion_source=False):
             b=page.screenshot(clip=rect) if rect else page.screenshot()
@@ -146,7 +155,6 @@ def generate(cfg, states, dest):
           document.querySelector('#doorbellState').textContent='Live';}""",cfg["doorbell"]["title"])
         capture("doorbell")
         video=page.locator("#doorbellVideo").bounding_box()
-        browser.close()
     presets=[[(-1 if light.get("include_presets") is False else
                0 if name=="off" else light.get(name,30 if name=="soft" else 100)) for light in cfg["lights"]]
              for name in ("soft","off","bright")]

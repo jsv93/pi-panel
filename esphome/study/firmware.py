@@ -52,11 +52,50 @@ def sprite(v):
     return values(v[k] for k in ("offset","size","w","h"))
 def rect(v):
     return values(v[k] for k in ("x","y","width","height"))
+
+# Store each ordinary sprite once. The three full scene captures are authoring
+# references: only the buttons differ, and each can highlight independently.
+packed=bytearray()
+offsets={}
+def pack(content,w,h):
+    if content not in offsets:
+        offsets[content]=len(packed)
+        packed.extend(content)
+    return dict(offset=offsets[content],size=len(content),w=w,h=h)
+def pack_sprite(v):
+    return pack(data[v["offset"]:v["offset"]+v["size"]],v["w"],v["h"])
+pages=[pack_sprite(v) for v in m["views"]]
+patches=[[pack_sprite(v) for v in pair] for pair in m["patches"]]
+scene_view=m["views"][names.index("scenes")]
+def pixels(v):
+    raw=zlib.decompress(data[v["offset"]:v["offset"]+v["size"]])
+    return np.frombuffer(raw,dtype="<u2").reshape(v["h"],v["w"])
+captures=[pixels(v) for v in m["scene_sprites"]]
+scene_buttons=[]
+scene_modes=[]
+for i,name in enumerate(("soft","off","bright")):
+    link=next(v for v in scene_view["links"] if v["to"]==name)
+    x,y,w,h=(link[k] for k in ("x","y","w","h"))
+    scene_buttons.append(values((x,y,w,h)))
+    modes=[]
+    for capture in (captures[(i+1)%3],captures[i]):
+        modes.append(pack(zlib.compress(capture[y:y+h,x:x+w].tobytes(),9),w,h))
+    scene_modes.append(modes)
+for selected,reference in enumerate(captures):
+    reconstructed=pixels(scene_view).copy()
+    for i,mode in enumerate(scene_modes):
+        l=next(l for l in scene_view["links"] if l["to"]==m["scene_sprites"][i]["name"])
+        x,y,w,h=(l[k] for k in ("x","y","w","h"))
+        s=mode[int(i==selected)]
+        buf=zlib.decompress(packed[s["offset"]:s["offset"]+s["size"]])
+        reconstructed[y:y+h,x:x+w]=np.frombuffer(buf,dtype="<u2").reshape(h,w)
+    if not np.array_equal(reconstructed,reference):
+        raise ValueError("Scene patches do not reproduce the captured screen")
 with (D/"study_assets.h").open("w",encoding="ascii") as h:
     h.write("#pragma once\n#include <cstdint>\nnamespace study {\n")
     h.write("static const unsigned char artwork[] =\n")
-    for start in range(0,len(data),256):
-        h.write('"'+''.join('\\x%02x'%n for n in data[start:start+256])+'"\n')
+    for start in range(0,len(packed),256):
+        h.write('"'+''.join('\\x%02x'%n for n in packed[start:start+256])+'"\n')
     h.write(";\nstruct Sprite {unsigned offset,size; int w,h;};\n")
     h.write("struct Rect {int x,y,w,h; bool contains(int a,int b) const {return a>=x&&a<x+w&&b>=y&&b<y+h;}};\n")
     h.write("struct Link {int page; Rect area; int dest; bool root;};\n")
@@ -64,7 +103,7 @@ with (D/"study_assets.h").open("w",encoding="ascii") as h:
     h.write("struct Span {uint16_t x,y,w;};\nconstexpr Span lamp_spans[] = {"+",".join(values(r) for r in regions)+"};\n")
     h.write(f"constexpr unsigned lamp_stride={sum(r[2] for r in regions)};\n")
     h.write("constexpr int lamp_clip[]={"+",".join(str(min([l["y"] for l in m["views"][names.index(n)]["links"] if l["root"]]+[1280])) for n in ("light0","lights"))+"};\n")
-    h.write("constexpr Sprite pages[] = {"+",".join(map(sprite,m["views"]))+"};\n")
+    h.write("constexpr Sprite pages[] = {"+",".join(map(sprite,pages))+"};\n")
     h.write("constexpr Link links[] = {\n")
     for i,v in enumerate(m["views"]):
         for l in v["links"]:
@@ -73,7 +112,7 @@ with (D/"study_assets.h").open("w",encoding="ascii") as h:
             if target in commands or target in names:
                 dest=commands[target] if target in commands else names.index(target)
                 h.write(values((i,values(l[k] for k in ("x","y","w","h")),dest,int(l["root"])))+",\n")
-    h.write("};\nconstexpr Sprite patches[][2] = {"+",".join(values(map(sprite,pair)) for pair in m["patches"])+"};\n")
+    h.write("};\nconstexpr Sprite patches[][2] = {"+",".join(values(map(sprite,pair)) for pair in patches)+"};\n")
     for name in ("reading","slider"):
         h.write("constexpr Rect "+name+"="+rect(m[name])+";\n")
     for name in ("home","idle","doorbell","scenes","lights","media","light0"):
@@ -81,7 +120,8 @@ with (D/"study_assets.h").open("w",encoding="ascii") as h:
     h.write("constexpr int light_count="+str(sum(bool(re.fullmatch(r"light\d+",n)) for n in names))+";\n")
     h.write("constexpr int initial[]="+values(m["initial"])+";\n")
     h.write("constexpr int presets[][light_count]="+values(values(p) for p in m["presets"])+";\n")
-    h.write("constexpr Sprite scene_sprites[]="+values(map(sprite,m["scene_sprites"]))+";\n")
+    h.write("constexpr Rect preset_buttons[]="+values(scene_buttons)+";\n")
+    h.write("constexpr Sprite preset_modes[][2]="+values(values(map(sprite,p)) for p in scene_modes)+";\n")
     h.write("constexpr int video_y="+str(round(m["video"]["y"]+(m["video"]["height"]-400)/2))+";\n}\n")
     pattern=Image.new("RGB",(640,400),"black")
     painter=ImageDraw.Draw(pattern)

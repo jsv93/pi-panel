@@ -54,11 +54,29 @@ class Navigation {
   int queued_=-1;
   bool job_ok_=false,job_done_=false;
   static bool variant(int p){
+#ifdef STUDY_LIVE
+    if(p==scenes || p==lights || p==home || p==media || p==display_page || p==climate_page)return true;
+#endif
     if(p==scenes)return scene>=0;
     int i=p-light0;
     return i>=0 && i<light_count && levels[i]!=initial[i];
   }
   static bool affected(int page,int x,int y){
+#ifdef STUDY_LIVE
+    auto intersects=[=](const Rect &r){
+      return x<r.x+r.w && x+16>r.x && y<r.y+r.h && y+8>r.y;
+    };
+    if(page==home)return intersects(number_rects[0]);
+    if(page==media)return intersects(transport_buttons[0]) || intersects(transport_buttons[2]) || intersects(transport_buttons[4]);
+    if(page==display_page)return intersects(backlight_rail) || intersects(backlight_value);
+    if(page==climate_page)return intersects(number_rects[1]) || intersects(number_rects[2]) ||
+        intersects(number_rects[3]) || intersects(climate_slider) || intersects(climate_up) || intersects(climate_down);
+    if(page==lights){
+      for(int i=0;i<light_count;i++)if(intersects(row_values[i]) || intersects(row_powers[i]))return true;
+      return intersects(all_lights_button);
+    }
+    if(page>=light0 && page<light0+light_count && intersects(detail_power_button))return true;
+#endif
     int start=std::max(0,x),end=std::min(width,x+16);
     if(start>=end)return false;
     auto *bits=page==scenes?scene_changes:lamp_changes;

@@ -16,6 +16,12 @@ template<size_t N> class LightClient {
   void start(const char *const (&entities)[N], Handler changed) {
     entities_=entities;
     changed_=std::move(changed);
+#ifdef STUDY_BENCH_TEST
+    for(size_t i=0;i<N;i++){
+      lights_[i].power=1;lights_[i].brightness=17+int(i)*11;notify(i);
+    }
+    return;
+#endif
     for(size_t i=0;i<N;i++){
       auto *api=esphome::api::global_api_server;
       api->subscribe_home_assistant_state(entities_[i],nullptr,[this,i](esphome::StringRef value){
@@ -33,6 +39,9 @@ template<size_t N> class LightClient {
     }
   }
   void tick() {
+#ifdef STUDY_BENCH_TEST
+    return;
+#endif
     auto *api=esphome::api::global_api_server;
     if(api->is_connected_with_state_subscription())return;
     received_=false;
@@ -44,6 +53,10 @@ template<size_t N> class LightClient {
   }
   bool receiving() const {return received_;}
   bool request(size_t i,int percent) {
+#ifdef STUDY_BENCH_TEST
+    if(i>=N || percent<0 || percent>100 || lights_[i].power<0)return false;
+    lights_[i].power=percent?1:0;lights_[i].brightness=percent;notify(i);return true;
+#endif
     if(i>=N || percent<0 || percent>100 || lights_[i].power<0 ||
        !esphome::api::global_api_server->is_connected_with_state_subscription())return false;
     using esphome::StringRef;
