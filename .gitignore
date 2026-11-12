@@ -17,6 +17,10 @@ data/
 # uses secrets.yaml. Neither belongs in the repo.
 secrets.json
 secrets.yaml
+fleet-identity.json
+bench.key
+study-live.yaml
+live_settings.h
 .env
 
 # ESPHome build output

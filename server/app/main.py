@@ -926,6 +926,16 @@ async def panel_config(panel_id: str, request: Request):
     cfg["_version"] = db.latest_version(panel_id)
     cfg["_panel_id"] = panel_id
     cfg["_claimed"] = bool(p["claimed"])
+    if request.headers.get("accept") == "application/vnd.pi-panel.config+json":
+        # Embedded clients verify these exact bytes before persisting them.
+        # This avoids reserializing Python floats and Unicode on the device.
+        key = db.get_panel_sign_key(panel_id)
+        if not key or not db.get_panel_token(panel_id):
+            raise HTTPException(403, "signed configuration requires enrollment")
+        body = canonical(cfg)
+        return Response(body, media_type="application/vnd.pi-panel.config+json",
+                        headers={"X-Panel-Signature": hmac.new(key.encode(), body, hashlib.sha256).hexdigest(),
+                                 "Cache-Control": "no-store", "Vary": "Accept"})
     # Signed as well as the bundle. Config is data, not code, but the kiosk
     # page holds Home Assistant's token and renders some of it -- a server
     # that could forge config could forge its way into that page.
