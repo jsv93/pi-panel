@@ -9,7 +9,7 @@ from control_art import box
 
 def capture(config,states,dest):
     # Include the punctuation used by the HA player and the dashboard.
-    chars="".join(chr(i) for i in range(32,127))+" °éèëàáäöóñüß–—‘’“”…•"
+    chars="".join(chr(i) for i in range(32,127))+" °·éèëàáäöóñüß–—‘’“”…•"
     bank=bytearray();offsets={};fonts={};fields=[]
     def put(data):
         if data not in offsets:offsets[data]=len(bank);bank.extend(data)
@@ -123,6 +123,26 @@ def capture(config,states,dest):
         click('#archSettingsLinks [data-sheet="diagnostics"]')
         for name,sel in (("ha_status","#stHA"),("backlight_status","#stBL"),("net_status","#stNet"),("up_status","#sUp")):
             field(name,sel,"right","right")
+        bell=config.get("doorbell") or {}
+        page.evaluate("""([title,seconds])=>{
+          document.querySelector('#doorbellPopup').hidden=false;
+          document.querySelector('#doorbellTitle').textContent=title;
+          document.querySelector('#doorbellLabel').textContent='DOORBELL TEST';
+          document.querySelector('#doorbellState').textContent='Live camera';
+          document.querySelector('#doorbellDuration').textContent='Closes automatically after '+seconds+' seconds · Muted';
+        }""",[bell.get("title") or "Someone at the door",bell.get("duration_s",30)])
+        viewport=box(page,"#doorbellVideo")
+        header=(0,0,720,viewport[1])
+        foot_y=viewport[1]+viewport[3]
+        footer=(0,foot_y,720,1280-foot_y)
+        video_bg=region(viewport);bell_head=[];bell_foot=[]
+        for value in ("DOORBELL","DOORBELL TEST"):
+            page.locator("#doorbellLabel").evaluate("(e,t)=>e.textContent=t",value)
+            bell_head.append(region(header))
+        for value in ("Connecting to live camera…","Live camera","Live camera unavailable"):
+            page.locator("#doorbellState").evaluate("(e,t)=>e.textContent=t",value)
+            if box(page,"#doorbellVideo")!=viewport:raise ValueError("Variable doorbell state height")
+            bell_foot.append(region(footer))
     def c(v):return "{"+",".join(c(x) if isinstance(x,(list,tuple)) else str(x) for x in v)+"}"
     with (dest/"text_art.h").open("w",encoding="ascii") as f:
         f.write('#pragma once\n#include "study_assets.h"\nnamespace study {\nstatic const uint8_t text_art[]=\n')
@@ -141,6 +161,8 @@ def capture(config,states,dest):
         f.write("constexpr Rect queue_button="+c(queue_open)+",queue_back="+c(queue_back)+";\n")
         f.write("constexpr unsigned queue_pages[][2]="+c(queue_frames)+";\n")
         f.write("constexpr Rect queue_patches[]="+c(queue_rects)+";\n")
+        f.write("constexpr Rect bell_viewport="+c(viewport)+",bell_header="+c(header)+",bell_footer="+c(footer)+";\n")
+        f.write("constexpr unsigned bell_empty_video[]="+c(video_bg)+",bell_headers[][2]="+c(bell_head)+",bell_footers[][2]="+c(bell_foot)+";\n")
         for name,rect,bg,col,font,baseline,spacing,align in fields:
             f.write("constexpr TextArea "+name+"="+c((rect,*bg,col,font,baseline,spacing,align))+";\n")
         f.write("}\n")

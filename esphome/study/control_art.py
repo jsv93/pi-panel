@@ -289,24 +289,6 @@ def capture(config, states, dest):
             if any(img is None for img in images):
                 raise ValueError(f"Missing {name} artwork; verify that the Study fixture has a speaker")
             table("Sprite",name+"[]",images)
-        page.evaluate("document.querySelector('#doorbellPopup').hidden=false")
-        page.wait_for_timeout(320)
-        for selector,key,strings in (
-            ("#doorbellState","bell_state",["Connecting to live camera…","Live camera","Live camera unavailable"]),
-            ("#doorbellLabel","bell_label",["DOORBELL","DOORBELL TEST"]),
-            ("#doorbellDuration","bell_duration",[f"Closes automatically after {config.get('doorbell',{}).get('duration_s',30)} seconds · Muted"])):
-            areas=[]
-            for label in strings:
-                page.locator(selector).evaluate("(e,t)=>e.textContent=t",label)
-                areas.append(box(page,selector))
-            x=min(r[0] for r in areas);y=min(r[1] for r in areas)
-            rect=(x,y,max(r[0]+r[2] for r in areas)-x,max(r[1]+r[3] for r in areas)-y)
-            table("Rect",key+"_rect",rect)
-            images=[]
-            for label in strings:
-                page.locator(selector).evaluate("(e,t)=>e.textContent=t",label)
-                images.append(sprite(Image.open(io.BytesIO(page.screenshot())),rect))
-            table("Sprite",key+"_art[]",images)
     capture_advanced(config,states,table,sprite,box)
     bank=pack(bank,tables)
     lines = ['#pragma once', '#include "study_assets.h"', 'namespace study {',

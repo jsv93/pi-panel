@@ -6,7 +6,7 @@ import time
 from email.message import Message
 
 import httpx
-from PIL import Image, ImageOps
+from PIL import Image
 
 from . import ha
 
@@ -19,14 +19,15 @@ def encode(jpeg):
         if source.format != "JPEG" or source.width * source.height > 12_000_000:
             raise ValueError("Unsupported camera image")
         source.draft("RGB", (1280, 800))
-        fitted = ImageOps.contain(source.convert("RGB"), (640, 400), Image.Resampling.LANCZOS)
-        frame = Image.new("RGB", (640, 400))
-        frame.paste(fitted, ((640-fitted.width)//2, (400-fitted.height)//2))
-    for quality in (86, 72, 56, 40, 25):
-        target = io.BytesIO()
-        frame.save(target, "JPEG", quality=quality, subsampling=2)
-        if target.tell() <= MAX_JPEG:
-            return target.getvalue()
+        frame = source.convert("RGB")
+        frame.thumbnail((640, 1024),Image.Resampling.LANCZOS)
+    for edge in (1024,640,400):
+        frame.thumbnail((edge,edge),Image.Resampling.LANCZOS)
+        for quality in (86, 72, 56, 40, 25):
+            target = io.BytesIO()
+            frame.save(target, "JPEG", quality=quality, subsampling=2)
+            if target.tell() <= MAX_JPEG:
+                return target.getvalue()
     raise ValueError("Camera image exceeds decoder capacity")
 
 

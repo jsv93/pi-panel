@@ -35,7 +35,12 @@ async def run(main,db,video):
         response=httpx.Response(200,headers={"Content-Type":f"multipart/x-mixed-replace; boundary={boundary}"},stream=Chunks())
         assert [part async for part in video.jpeg_parts(response)]==[jpg]
     data=video.encode(jpg)
-    assert Image.open(io.BytesIO(data)).size==(640,400)
+    assert Image.open(io.BytesIO(data)).size==(320,240)
+    portrait=io.BytesIO()
+    Image.effect_noise((640,1024),100).convert("RGB").save(portrait,"JPEG",quality=95)
+    compressed=video.encode(portrait.getvalue())
+    w,h=Image.open(io.BytesIO(compressed)).size
+    assert len(compressed)<=video.MAX_JPEG and abs(w/h-640/1024)<0.003
     seen=[]
     async def source(eid):
         seen.append(eid);yield struct.pack(">I",len(data))+data

@@ -1139,10 +1139,11 @@ static void close_ring() {if(current==doorbell)go(-1);}
 static int bell_status=-1;
 static bool pulled_video=false;
 static unsigned bell_frames=0;
+static int bell_draw_w=0,bell_draw_h=0;
 static void paint_bell_status(int next){
   if(next==bell_status)return;
   bell_status=next;
-  control_patch(page_pixels,bell_state_art[next],bell_state_rect);
+  text_background(page_pixels,width,scratch,bell_footer,bell_footers[next][0],bell_footers[next][1]);
   ++revision;blit(0,0,width,height,page_pixels);
 }
 static void camera_ring(bool test){
@@ -1152,9 +1153,8 @@ static void camera_ring(bool test){
   if(!already)session_start=now;
   ring();deadline=std::min(now+bell_seconds*1000,session_start+300000);
   if(already)return;
-  pulled_video=true;bell_status=-1;bell_frames=0;
-  control_patch(page_pixels,bell_label_art[test],bell_label_rect);
-  control_patch(page_pixels,bell_duration_art[0],bell_duration_rect);
+  pulled_video=true;bell_status=-1;bell_frames=0;bell_draw_w=bell_draw_h=0;
+  text_background(page_pixels,width,scratch,bell_header,bell_headers[test][0],bell_headers[test][1]);
   paint_bell_status(0);bell_client.open(fleet.online());
 }
 #endif
@@ -1357,6 +1357,41 @@ static void update_cover(){
   show(current,0);
 }
 #endif
+#ifdef STUDY_LIVE
+static bool present_camera_pixels(const uint16_t *pixels,int source_w,int source_h,int stride){
+  const Rect &v=bell_viewport;
+  const int w=std::max(1,std::min(v.w,v.h*source_w/source_h));
+  const int h=std::max(1,std::min(v.h,v.w*source_h/source_w));
+  if(w!=bell_draw_w || h!=bell_draw_h){
+    text_background(page_pixels,width,scratch,v,bell_empty_video[0],bell_empty_video[1]);
+    bell_draw_w=w;bell_draw_h=h;
+    ESP_LOGD("study","Camera image %dx%d at %d,%d size %dx%d",source_w,source_h,
+             v.x+(v.w-w)/2,v.y+(v.h-h)/2,w,h);
+  }
+  const int left=(v.w-w)/2,top=(v.h-h)/2;
+  for(int y=0;y<h;y++){
+    const int edge=std::min(top+y,v.h-1-(top+y));
+    int inset=0;
+    if(edge<16){
+      const float dy=15.5f-edge;
+      inset=std::max(0,int(std::ceil(15.5f-std::sqrt(256.f-dy*dy))));
+    }
+    const auto *src=pixels+(y*source_h/h)*stride;
+    auto *dst=reinterpret_cast<uint16_t*>(page_pixels)+(v.y+top+y)*width+v.x+left;
+    for(int x=std::max(0,inset-left);x<std::min(w,v.w-inset-left);x++)dst[x]=src[x*source_w/w];
+  }
+  auto *first=page_pixels+2*(v.y*width+v.x);
+  const bool presented=blit(v.x,v.y,v.w,v.h,first,width);
+#ifdef STUDY_BENCH_TEST
+  if(presented){
+    uint32_t crc=0;
+    for(int y=0;y<v.h;y++)crc=esp_rom_crc32_le(crc,first+2*y*width,2*v.w);
+    ESP_LOGI("study","QA_VIDEO_FRAME %08x",crc);
+  }
+#endif
+  return presented;
+}
+#endif
 static bool draw_jpeg(const uint8_t *data,size_t size) {
   if(!scratch || current!=doorbell || !size || size>384*1024)return false;
   auto engine=decoder();
@@ -1395,6 +1430,13 @@ static bool draw_jpeg(const uint8_t *data,size_t size) {
     static bool warned;
     if(!warned){ESP_LOGW("study","Camera decoder %s %ux%u mode %d produced %u of %u bytes",esp_err_to_name(err),info.width,info.height,int(info.sample_method),unsigned(written),unsigned(need));warned=true;}
   }
+#ifdef STUDY_LIVE
+  if(ok && pulled_video && page_pixels){
+    const bool presented=present_camera_pixels(reinterpret_cast<const uint16_t*>(decoded),info.width,info.height,stride);
+    if(allocated)free(decoded);
+    return presented;
+  }
+#endif
   if(ok && !exact){
     const unsigned w=std::min<uint32_t>(640,400*info.width/info.height);
     const unsigned h=std::min<uint32_t>(400,640*info.height/info.width);

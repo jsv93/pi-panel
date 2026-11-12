@@ -32,6 +32,8 @@ The light More sheets expose the captured effects, warmth, colour and preset mem
 
 An admin test ring uses the paired device’s long poll. Panel Server retrieves the configured Home Assistant MJPEG stream and transcodes frames for the P4. If the server is unreachable, the panel can request that camera’s MJPEG stream directly with a camera-specific playback credential received through its encrypted ESPHome subscription. A direct ring then requires the configured HA trigger or the encrypted `ring_live_camera` action. A source that provides only WebRTC or HLS needs a separate video path.
 
+The relay preserves the camera aspect ratio. The P4 fits each frame into the video rectangle measured from the kiosk HTML and draws the status and duration from the same layout. If a server stream ends during a ring, the same overlay can continue from Home Assistant.
+
 The Home player and Music screen use the configured speaker’s HA title, artist, position and duration. The seek action is available when the speaker reports support. The queue shows the current track and reported playlist or album. The panel can decode baseline JPEG cover art from the configured HA host, including a Music Assistant image endpoint on that host. The Home artwork preference persists on the device.
 
 The room menu date and diagnostic connection, Ethernet, backlight and uptime readings are generated on the panel. The music library, speaker selection and transfer, alternate themes and palettes, Wi-Fi setup and diagnostic actions still require implementation and verification.
