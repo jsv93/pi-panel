@@ -51,6 +51,7 @@ def main():
     header.append("constexpr char layout_contract[]=" + json.dumps(json.dumps(contract, separators=(",", ":"))) + ";")
     fields = [args.server.rstrip("/"), args.id, args.mac, args.id, identity["token"], identity["sign_key"]]
     display=config["display"]
+    header.append("constexpr bool default_mini_art="+json.dumps(bool(display.get("mini_art",True)))+";")
     for name,default in [("idle_timeout_s",45),("backlight_off_s",0),("backlight_default",100),("backlight_min",5),
                          ("adaptive_min_pct",10),("adaptive_max_pct",100),("adaptive_dark_lux",5),
                          ("adaptive_bright_lux",300),("adaptive_transition_s",5)]:

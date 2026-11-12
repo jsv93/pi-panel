@@ -32,7 +32,9 @@ The light More sheets expose the captured effects, warmth, colour and preset mem
 
 An admin test ring uses the paired device’s long poll. Panel Server retrieves the configured Home Assistant MJPEG stream and transcodes frames for the P4. If the server is unreachable, the panel can request that camera’s MJPEG stream directly with a camera-specific playback credential received through its encrypted ESPHome subscription. A direct ring then requires the configured HA trigger or the encrypted `ring_live_camera` action. A source that provides only WebRTC or HLS needs a separate video path.
 
-The Home player and Music screen use the configured speaker’s HA title, artist, position and duration. The seek action is available when the speaker reports support. The room menu date and diagnostic connection, Ethernet, backlight and uptime readings are generated on the panel. Album artwork, library, queue and speaker selection, appearance and network settings, and the diagnostic actions still require implementation and verification.
+The Home player and Music screen use the configured speaker’s HA title, artist, position and duration. The seek action is available when the speaker reports support. The queue shows the current track and reported playlist or album. The panel can decode baseline JPEG cover art from the configured HA host, including a Music Assistant image endpoint on that host. The Home artwork preference persists on the device.
+
+The room menu date and diagnostic connection, Ethernet, backlight and uptime readings are generated on the panel. The music library, speaker selection and transfer, alternate themes and palettes, Wi-Fi setup and diagnostic actions still require implementation and verification.
 
 ## Hardware test
 
@@ -41,3 +43,5 @@ The Home player and Music screen use the configured speaker’s HA title, artist
 `tests/p4_study_inventory.py` compares visible kiosk touch targets with the native hit regions. `tests/p4_study_numbers.py` measures RGB565 readout differences against Chromium. A matching touch rectangle alone only establishes reachability.
 
 Pass `--capture` to the touch replay generator to export the actual 720 × 1280 framebuffer when each page settles. Save the USB log locally. Run `python tests/p4_study_capture.py PRIVATE_BUILD usb.log PRIVATE_FRAMES` to reconstruct every pixel and check the board's CRC for each view. The captures contain room information.
+
+For a comparison with real Home Assistant readings, first generate the bench configuration with a separate fixture identity. Run `python tests/p4_study_live_views.py PRIVATE_BUILD` and compile the resulting `study-views.yaml`. This replay uses the panel's real HA state subscriptions. It navigates through the room, light sheets, Music popups and doorbell, then returns Home. Capture the UART at 1,500,000 baud through `LIVE_VIEWS_DONE`. Run `python tests/p4_study_capture.py --live PRIVATE_BUILD usb.log PRIVATE_FRAMES` to verify the captured frames. Use a separate run after stopping the test server and rebooting the panel. Restore the enrolled application when the comparison finishes.

@@ -136,7 +136,7 @@ with (D/"study_assets.h").open("w",encoding="ascii") as h:
         h.write("constexpr Rect "+name+"="+rect(m[name])+";\n")
     for name in ("home","idle","doorbell","scenes","lights","media","light0"):
         h.write(f"constexpr int {name}={names.index(name)};\n")
-    for key in ("room-menu","diagnostics"):
+    for key in ("room-menu","diagnostics","settings"):
         h.write(f"constexpr int {key.replace('-','_')}_page={names.index(key)};\n")
     h.write("constexpr int light_count="+str(sum(bool(re.fullmatch(r"light\d+",n)) for n in names))+";\n")
     h.write("constexpr int initial[]="+values(m["initial"])+";\n")

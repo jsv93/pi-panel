@@ -294,6 +294,38 @@ static void display_field(int level){
   control_patch(page_pixels,backlight_modes[level][1],backlight_value);
 }
 static bool volume_open=false;
+static bool queue_open=false;
+static uint16_t *cover_pixels=nullptr;
+static bool cover_ready=false;
+static bool mini_art_enabled=default_mini_art;
+#ifdef STUDY_BENCH_TEST
+static constexpr const char *display_namespace="p4_qa_display";
+#else
+static constexpr const char *display_namespace="p4_display";
+#endif
+static void load_display_choice(){
+  nvs_handle_t h;
+  if(nvs_open(display_namespace,NVS_READONLY,&h)!=ESP_OK)return;
+  uint8_t value=0;if(nvs_get_u8(h,"mini",&value)==ESP_OK)mini_art_enabled=value!=0;
+  nvs_close(h);
+}
+static bool save_display_choice(bool enabled){
+  nvs_handle_t h;if(nvs_open(display_namespace,NVS_READWRITE,&h)!=ESP_OK)return false;
+  const bool ok=nvs_set_u8(h,"mini",enabled)==ESP_OK && nvs_commit(h)==ESP_OK;nvs_close(h);
+  if(ok)mini_art_enabled=enabled;
+  return ok;
+}
+static uint32_t cover_generation=0;
+static void update_cover();
+static void draw_cover(const Rect &r){
+  if(!cover_ready || !cover_pixels)return;
+  for(int y=0;y<r.h;y++){
+    auto *out=reinterpret_cast<uint16_t*>(page_pixels)+(r.y+y)*width+r.x;
+    const auto *source=cover_pixels+(y*album_rect.h/r.h)*album_rect.w;
+    if(r.w==album_rect.w)memcpy(out,source,r.w*2);
+    else for(int x=0;x<r.w;x++)out[x]=source[x*album_rect.w/r.w];
+  }
+}
 static int volume_drag=-1;
 static int seek_drag=-1;
 static uint8_t *volume_dictionary_pixels=nullptr;
@@ -353,15 +385,18 @@ static void progress_fields(){
   text_background(page_pixels,width,scratch,thumb,seek_art[3][0],seek_art[3][1]);
 }
 static void home_player(){
-  const auto &art=home_strip_art[player.playing];
+  const bool cover=cover_ready && mini_art_enabled;
+  const auto &art=home_strip_art[player.playing?(cover?2:1):0];
   text_background(page_pixels,width,scratch,home_strip,art[0],art[1]);
   if(player.playing){
-    label(home_title,player.title.empty()?"Music":player.title.c_str());
-    label(home_artist,player.title.empty()?"Nothing playing":player.artist.empty()?"Playing":player.artist.c_str());
+    if(cover)draw_cover(mini_album_rect);
+    label(cover?home_cover_title:home_title,player.title.empty()?"Music":player.title.c_str());
+    label(cover?home_cover_artist:home_artist,player.title.empty()?"Nothing playing":player.artist.empty()?"Playing":player.artist.c_str());
   }
 }
 static void status_fields(){
-  if(current==room_menu_page){
+  if(current==settings_page)label(mini_choice,mini_art_enabled?"On":"Off");
+  else if(current==room_menu_page){
     const time_t now=::time(nullptr);struct tm local{};localtime_r(&now,&local);
     char date[64]="–";
     if(local.tm_year>=120){
@@ -382,7 +417,21 @@ static void status_fields(){
   }
 }
 static void transport_fields(){
+  if(queue_open){
+    const auto &list=player.playlist.empty()?player.album:player.playlist;
+    const int mask=int(!player.title.empty())+2*int(!list.empty());
+    text_background(page_pixels,width,scratch,queue_patches[0],queue_pages[0][0],queue_pages[0][1]);
+    if(mask)text_background(page_pixels,width,scratch,queue_patches[mask],queue_pages[mask][0],queue_pages[mask][1]);
+    if(mask&1){
+      std::string track=player.title;
+      if(!player.artist.empty())track+="  ·  "+player.artist;
+      label(queue_track,track.c_str());
+    }
+    if(mask&2)label(mask==2?queue_playlist_2:queue_playlist_3,("Playlist: "+list).c_str());
+    return;
+  }
   label(song_title,player.title.empty()?"Nothing playing":player.title.c_str());
+  draw_cover(album_rect);
   label(song_artist,player.title.empty()?"Browse your music library":player.artist.empty()?initial_speaker_name:player.artist.c_str());
   progress_fields();
   control_patch(page_pixels,shuffle_modes[player.shuffled],transport_buttons[0]);
@@ -640,7 +689,7 @@ static void show(int dest,int shift=14) {
   const bool change=dest!=current;
 #ifdef STUDY_LIVE
   light_sheet=LightSheet::closed;sheet_drag=-1;
-  volume_open=false;volume_drag=-1;seek_drag=-1;
+  volume_open=false;queue_open=false;volume_drag=-1;seek_drag=-1;
   if(change && current==doorbell)bell_client.close();
 #endif
   playback_direction=-1;last_phase=-1;
@@ -662,6 +711,7 @@ static void show(int dest,int shift=14) {
   const bool parallel=transition && page_worker && playback_direction<0 && dest!=scenes && nav.can_prepare_endpoint()
 #ifdef STUDY_LIVE
       && i<0 && dest!=lights && dest!=home && dest!=media && dest!=climate_page && dest!=display_page && dest!=edit_page && dest!=members_page
+      && dest!=room_menu_page && dest!=settings_page && dest!=diagnostics_page
 #endif
       ;
   if(parallel){
@@ -753,6 +803,7 @@ static void begin(Display *display) {
 #ifdef STUDY_LIVE
   std::fill_n(levels,light_count,-1);
   room_start();
+  load_display_choice();
   if(lux_entity[0])esphome::api::global_api_server->subscribe_home_assistant_state(
       lux_entity,nullptr,[](esphome::StringRef s){
         auto lux=esphome::parse_number<float>(s.str());
@@ -889,6 +940,16 @@ static void touch(int x,int y) {
     wake_touch=true;blanked=false;show(wake_page,0);apply_brightness();return;
   }
   if(!moving && sheet_touch(x,y))return;
+  if(!moving && current==settings_page && (!down || pressed==-154 || pressed==-155)){
+    if(!down && (mini_button.contains(x,y) || reload_button.contains(x,y))){
+      down=true;pressed=mini_button.contains(x,y)?-154:-155;x0=x;y0=y;dx=dy=0;return;
+    }
+    if(pressed==-154 || pressed==-155){dx=x-x0;dy=y-y0;return;}
+  }
+  if(current==media && !moving && !volume_open && (queue_open || (!down && queue_button.contains(x,y)) || pressed==-153)){
+    if(!down){x0=x;y0=y;down=true;pressed=-153;}
+    dx=x-x0;dy=y-y0;return;
+  }
   if(!down && current==home && player.playing && home_strip.contains(x,y)){
     down=true;pressed=home_play.contains(x,y)?-151:-152;x0=x;y0=y;dx=dy=0;return;
   }
@@ -984,6 +1045,25 @@ static void release() {
   last_activity=clock_ms();
   if(wake_touch){wake_touch=false;return;}
   if(sheet_release())return;
+  if(pressed==-154 || pressed==-155){
+    const bool preference=pressed==-154;
+    down=false;pressed=-2;
+    if(std::abs(dx)<35 && std::abs(dy)<35){
+      if(preference && save_display_choice(!mini_art_enabled)){status_fields();++revision;blit(0,0,width,height,page_pixels);}
+      else if(!preference){depth=0;last_activity=clock_ms();load_display_choice();show(home,0);}
+    }
+    return;
+  }
+  if(pressed==-153){
+    down=false;pressed=-2;
+    if(std::abs(dx)<35 && std::abs(dy)<35){
+      if(queue_open && queue_back.contains(x0+dx,y0+dy))show(media,0);
+      else if(!queue_open && queue_button.contains(x0+dx,y0+dy)){
+        queue_open=true;transport_fields();++revision;blit(0,0,width,height,page_pixels);
+      }
+    }
+    return;
+  }
   if(seek_drag>=0){
     player.seek(seek_drag);seek_drag=-1;down=false;pressed=-2;return;
   }
@@ -1119,6 +1199,7 @@ static void tick() {
   }
   apply_brightness();
   ha_lights.tick();
+  if(!moving && !down && current!=doorbell && !bench_demo)update_cover();
   player.tick();
   if(player.dirty && !moving && !down){
     player.dirty=false;
@@ -1126,7 +1207,7 @@ static void tick() {
     if(current==home && page_pixels){home_player();++revision;blit(0,0,width,height,page_pixels);}
   }
   static int64_t next_progress=0;
-  if(current==media && player.playing && player.duration && !down && !moving && !volume_open && now>=next_progress){
+  if(current==media && player.playing && player.duration && !down && !moving && !volume_open && !queue_open && now>=next_progress){
     progress_fields();++revision;blit(0,0,width,height,page_pixels);next_progress=now+125;
   }
   static int64_t next_status=0;
@@ -1235,6 +1316,47 @@ static size_t camera_bitstream(uint8_t *jpg,size_t size){
   }
   return 0;
 }
+#ifdef STUDY_LIVE
+static void update_cover(){
+  const bool previously=cover_ready;
+  bool changed=false;
+  if(cover_generation!=album_client.generation()){
+    cover_generation=album_client.generation();cover_ready=false;
+  }
+  p4_runtime::AlbumClient::Frame f;
+  if(album_client.take(f)){
+    if(f.version==cover_generation && f.data && previous_pixels && scratch){
+      memcpy(scratch,f.data,f.size);
+      const auto bytes=camera_bitstream(scratch,f.size);
+      jpeg_decode_picture_info_t info{};
+      if(bytes && jpeg_decoder_get_info(scratch,bytes,&info)==ESP_OK && info.width && info.height &&
+         info.width<=1280 && info.height<=1280){
+        auto engine=decoder();jpeg_decode_cfg_t cfg{};cfg.output_format=JPEG_DECODE_OUT_FORMAT_RGB565;cfg.rgb_order=panel_jpeg_order;
+        const int mx=(info.sample_method==JPEG_DOWN_SAMPLING_YUV420 || info.sample_method==JPEG_DOWN_SAMPLING_YUV422)?16:8;
+        const int stride=(info.width+mx-1)&~(mx-1);
+        uint32_t written=0;
+        if(engine && 2u*stride*((info.height+15)&~15u)<=page_bytes &&
+           jpeg_decoder_process(engine,&cfg,scratch,bytes,previous_pixels,page_bytes,&written)==ESP_OK &&
+           written>=2u*stride*info.height){
+          if(!cover_pixels)cover_pixels=static_cast<uint16_t*>(heap_caps_malloc(2*album_rect.w*album_rect.h,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+          if(cover_pixels){
+            const int side=std::min(info.width,info.height);
+            const auto *src=reinterpret_cast<const uint16_t*>(previous_pixels);
+            for(int y=0;y<album_rect.h;y++){
+              const auto *row=src+((info.height-side)/2+y*side/album_rect.h)*stride+(info.width-side)/2;
+              for(int x=0;x<album_rect.w;x++)cover_pixels[y*album_rect.w+x]=row[x*side/album_rect.w];
+            }
+            cover_ready=true;changed=true;ESP_LOGD("study","Album artwork decoded %ux%u",info.width,info.height);
+          }
+        }
+      }
+    }
+    heap_caps_free(f.data);
+  }
+  if((!changed && previously==cover_ready) || (current!=home && current!=media) || volume_open || queue_open)return;
+  show(current,0);
+}
+#endif
 static bool draw_jpeg(const uint8_t *data,size_t size) {
   if(!scratch || current!=doorbell || !size || size>384*1024)return false;
   auto engine=decoder();

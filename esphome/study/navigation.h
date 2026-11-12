@@ -56,7 +56,7 @@ class Navigation {
   static bool variant(int p){
 #ifdef STUDY_LIVE
     if(p==scenes || p==lights || p==home || p==media || p==display_page || p==climate_page ||
-       p==room_menu_page || p==diagnostics_page)return true;
+       p==room_menu_page || p==diagnostics_page || p==settings_page)return true;
 #endif
     if(p==scenes)return scene>=0;
     int i=p-light0;
@@ -69,6 +69,7 @@ class Navigation {
     };
     if(page==home)return intersects(number_rects[0]) || (player.playing && intersects(home_strip));
     if(page==room_menu_page)return intersects(menu_date.rect);
+    if(page==settings_page)return intersects(mini_choice.rect);
     if(page==diagnostics_page)return intersects(net_status.rect) || intersects(ha_status.rect) || intersects(up_status.rect) || intersects(backlight_status.rect);
     if(page==media)return intersects(transport_buttons[0]) || intersects(transport_buttons[2]) || intersects(transport_buttons[4]) ||
                          intersects(song_title.rect) || intersects(song_artist.rect) || intersects(volume_button);

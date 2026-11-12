@@ -13,7 +13,7 @@ class MediaClient {
   enum Control { shuffle, previous, play_pause, next, repeat };
   bool available=false, playing=false, shuffled=false, dirty=true;
   int repeat_mode=0,volume=-1;
-  std::string title,artist;
+  std::string title,artist,playlist,album;
   int duration=0;
   bool can_seek=false;
   double position()const{
@@ -39,6 +39,7 @@ class MediaClient {
       });
     };
     text("media_title",&title);text("media_artist",&artist);
+    text("media_playlist",&playlist);text("media_album_name",&album);
     api->subscribe_home_assistant_state(speaker_,"media_duration",[this](esphome::StringRef s){
       auto n=esphome::parse_number<float>(s.str());duration=n && std::isfinite(*n) && *n>0 && *n<864000?std::lround(*n):0;dirty=true;
     });
@@ -83,7 +84,7 @@ class MediaClient {
 #ifndef STUDY_BENCH_TEST
     if(available && !esphome::api::global_api_server->is_connected_with_state_subscription()){
       available=playing=shuffled=false;repeat_mode=0;volume=-1;dirty=true;
-      title.clear();artist.clear();duration=0;can_seek=false;updated_at_=0;
+      title.clear();artist.clear();playlist.clear();album.clear();duration=0;can_seek=false;updated_at_=0;
     }
 #endif
   }
