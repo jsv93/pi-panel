@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <functional>
+#include <cstdlib>
 
 namespace p4_runtime {
 // A confirmed level comes from HA. Slider previews are local and are never
@@ -13,6 +14,13 @@ namespace p4_runtime {
 template<size_t N> class LightClient {
  public:
   using Handler = std::function<void(size_t, int)>;
+  struct Detail {
+    int kelvin=-1,minimum=2000,maximum=6500,hue=-1;
+    std::string effect;
+    bool dirty=true;
+  };
+  const Detail &detail(size_t i)const{return detail_[i];}
+  bool take_detail(size_t i){bool d=detail_[i].dirty;detail_[i].dirty=false;return d;}
   void start(const char *const (&entities)[N], Handler changed) {
     entities_=entities;
     changed_=std::move(changed);
@@ -24,6 +32,22 @@ template<size_t N> class LightClient {
 #endif
     for(size_t i=0;i<N;i++){
       auto *api=esphome::api::global_api_server;
+      auto attr=[this,i,api](const char *name,auto update){
+        api->subscribe_home_assistant_state(entities_[i],name,[this,i,update](esphome::StringRef s){
+          update(detail_[i],s.str());detail_[i].dirty=true;
+        });
+      };
+      attr("effect",[](Detail &d,const std::string &s){d.effect=s;});
+      attr("color_temp_kelvin",[](Detail &d,const std::string &s){d.kelvin=esphome::parse_number<int>(s).value_or(-1);});
+      attr("min_color_temp_kelvin",[](Detail &d,const std::string &s){d.minimum=esphome::parse_number<int>(s).value_or(2000);});
+      attr("max_color_temp_kelvin",[](Detail &d,const std::string &s){d.maximum=esphome::parse_number<int>(s).value_or(6500);});
+      attr("hs_color",[](Detail &d,const std::string &s){
+        char *end=nullptr;
+        auto start=s.find_first_not_of(" [(\t");
+        const char *p=start==std::string::npos?"":s.c_str()+start;
+        double hue=strtod(p,&end);
+        d.hue=end!=p && *end==',' && hue>=0 && hue<=360?int(std::lround(hue)):-1;
+      });
       api->subscribe_home_assistant_state(entities_[i],nullptr,[this,i](esphome::StringRef value){
         received_=true;
         auto state=value.str();
@@ -48,6 +72,7 @@ template<size_t N> class LightClient {
     for(size_t i=0;i<N;i++){
       if(lights_[i].power<0 && lights_[i].brightness<0)continue;
       lights_[i]=State{};
+      detail_[i]=Detail{};
       notify(i);
     }
   }
@@ -78,9 +103,41 @@ template<size_t N> class LightClient {
   int confirmed(size_t i) const {
     return lights_[i].power==1 ? std::max(1,lights_[i].brightness<0?100:lights_[i].brightness) : lights_[i].power;
   }
+  enum class Property { warmth,colour,effect };
+  bool adjust(size_t i,Property property,int value,const char *effect=nullptr){
+    if(i>=N || confirmed(i)<0)return false;
+    auto &d=detail_[i];
+    if(property==Property::warmth && (value<d.minimum || value>d.maximum))return false;
+    if(property==Property::colour && (value<0 || value>360))return false;
+    if(property==Property::effect && (!effect || !*effect))return false;
+#ifdef STUDY_BENCH_TEST
+    if(property==Property::warmth)d.kelvin=value;
+    if(property==Property::colour)d.hue=value;
+    if(property==Property::effect)d.effect=effect;
+    d.dirty=true;
+#else
+    if(!esphome::api::global_api_server->is_connected_with_state_subscription())return false;
+    using esphome::StringRef;
+    esphome::api::HomeassistantActionRequest call;
+    call.service=StringRef("light.turn_on");
+    const bool colour=property==Property::colour;
+    call.data.init(colour?1:2);
+    auto &target=call.data.emplace_back();
+    target.key=StringRef("entity_id");target.value=StringRef(entities_[i]);
+    if(colour)call.data_template.init(1);
+    auto &arg=colour?call.data_template.emplace_back():call.data.emplace_back();
+    const auto text=colour?"{{ ["+std::to_string(value)+", 85] }}":
+        property==Property::warmth?std::to_string(value):std::string(effect);
+    arg.key=StringRef(colour?"hs_color":property==Property::warmth?"color_temp_kelvin":"effect");
+    arg.value=StringRef(text);
+    esphome::api::global_api_server->send_homeassistant_action(call);
+#endif
+    return true;
+  }
  private:
   struct State { int power=-1,brightness=-1; };
   std::array<State,N> lights_{};
+  std::array<Detail,N> detail_{};
   const char *const *entities_{};
   Handler changed_;
   bool received_=false;

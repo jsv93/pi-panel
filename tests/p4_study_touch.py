@@ -60,6 +60,16 @@ def main():
     for light,original in enumerate((17,28,39)):
         step(f'show(light0+{light},0);touch(slider.x+slider.w/4,slider.y+slider.h/2);touch(slider.x+slider.w*3/4,slider.y+slider.h/2);release();check("light {light+1} brightness drag",std::abs(ha_lights.confirmed({light})-75)<=1);')
         step(f'tap_rect(detail_power_button);check("light {light+1} detail off",ha_lights.confirmed({light})==0);ha_lights.request({light},{original});')
+    for i in range(3):
+        step(f'show(light0+{i},0);tap_rect(more_open);check("light {i+1} More",light_sheet==LightSheet::more);')
+        step(f'if(effect_open[{i}].w){{tap_rect(effect_open[{i}]);check("light {i+1} effect menu",light_sheet==LightSheet::effects);int effect=effect_starts[{i}+1]-1;tap_rect(effect_rows[effect]);check("light {i+1} effect selection",light_sheet==LightSheet::more && ha_lights.detail({i}).effect==effect_names[effect]);}}')
+        step(f'if(warmth_slider[{i}].w){{tap_rect(warmth_slider[{i}]);const auto &d=ha_lights.detail({i});check("light {i+1} warmth",d.kelvin==(d.minimum+d.maximum)/2);}}')
+        step(f'if(colour_open[{i}].w){{tap_rect(colour_open[{i}]);tap_rect(colour_swatches[{i}][5]);check("light {i+1} swatch",ha_lights.detail({i}).hue==180);tap_rect(hue_slider[{i}]);check("light {i+1} hue",ha_lights.detail({i}).hue==180);tap_rect(colour_back[{i}]);}}')
+        step(f'tap_rect(more_back[{i}]);check("light {i+1} back to brightness",light_sheet==LightSheet::closed && current==light0+{i});')
+    step('show(media,0);tap_rect(volume_button);check("volume opens",volume_open);tap_rect(volume_slider);check("volume slider",player.volume==50);tap_rect(volume_close);check("volume closes",!volume_open);')
+    step('player.duration=200;player.can_seek=true;tap_rect(seek_slider);check("seek midpoint",int(player.position())==100);player.can_seek=false;check("unsupported seek rejected",!player.seek(22));player.duration=0;player.can_seek=true;')
+    step('player.title="Study track";player.artist="Study artist";player.playing=true;show(home,0);tap(home_strip.x+4,home_strip.y+4);check("now playing opens Music",current==media);')
+    step('const auto before=esp_rom_crc32_le(0,page_pixels,page_bytes);player.title="Different title";transport_fields();check("track text updates pixels",before!=esp_rom_crc32_le(0,page_pixels,page_bytes));player.title.clear();player.artist.clear();player.playing=false;')
     step('show(scenes,0);tap_rect(preset_buttons[2]);check("bright preset confirmed",scene_matches()&4);')
     step('tap_rect(preset_buttons[1]);check("off preset confirmed",scene_matches()&2);')
     step('ha_lights.request(0,17);ha_lights.request(1,28);ha_lights.request(2,39);')

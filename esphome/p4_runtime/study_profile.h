@@ -4,6 +4,7 @@
 #include "light_client.h"
 #include "climate_client.h"
 #include "media_client.h"
+#include "doorbell_client.h"
 #include "live_settings.h"
 
 namespace study {
@@ -16,6 +17,7 @@ static p4_runtime::FleetClient<RoomProfile> fleet;
 static p4_runtime::LightClient<light_count> ha_lights;
 static p4_runtime::ClimateClient thermostat;
 static p4_runtime::MediaClient player;
+static p4_runtime::DoorbellClient bell_client;
 static RoomProfile factory_profile(){
   RoomProfile p;
   for(int i=0;i<light_count;i++){
@@ -58,6 +60,7 @@ static void room_start(){
   fleet.begin(fleet_settings,decode_room,factory_profile());
   thermostat.start(temperature_entity,humidity_entity,climate_entity);
   player.start(initial_speaker);
+  if(bell_enabled)bell_client.begin(fleet_settings,bell_trigger,bell_camera,ha_origin);
   ha_lights.start(room_entities,[](size_t i,int value){
     live_dirty[i]=true;
     ESP_LOGI("study","HA light %u confirmed %d",unsigned(i),value);

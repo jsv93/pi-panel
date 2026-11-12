@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import struct
 import shutil
 import sys
 import esphome.components.mipi_dsi as mipi
@@ -65,7 +66,24 @@ def pack(content,w,h):
 def pack_sprite(v):
     return pack(data[v["offset"]:v["offset"]+v["size"]],v["w"],v["h"])
 pages=[pack_sprite(v) for v in m["views"]]
-patches=[[pack_sprite(v) for v in pair] for pair in m["patches"]]
+# The large percentage digits share identical vertical strips across levels.
+# Store each strip once, keeping Chromium's RGB565 pixels exactly.
+digit_strips=[]
+digit_ids={}
+def pack_digits(v):
+    pixels=np.frombuffer(zlib.decompress(data[v["offset"]:v["offset"]+v["size"]]),"<u2").reshape(v["h"],v["w"])
+    ids=[]
+    for x in range(0,v["w"],16):
+        tile=pixels[:,x:x+16]
+        raw=zlib.compress(tile.tobytes(),9)
+        if raw not in digit_ids:
+            digit_ids[raw]=len(digit_strips)
+            digit_strips.append(pack(raw,tile.shape[1],tile.shape[0]))
+        ids.append(digit_ids[raw])
+    entry=pack(struct.pack("<"+"H"*len(ids),*ids),v["w"],v["h"])
+    entry["size"]|=1<<31
+    return entry
+patches=[[pack_digits(digits),pack_sprite(rail)] for digits,rail in m["patches"]]
 scene_view=m["views"][names.index("scenes")]
 def pixels(v):
     raw=zlib.decompress(data[v["offset"]:v["offset"]+v["size"]])
@@ -97,6 +115,7 @@ with (D/"study_assets.h").open("w",encoding="ascii") as h:
     for start in range(0,len(packed),256):
         h.write('"'+''.join('\\x%02x'%n for n in packed[start:start+256])+'"\n')
     h.write(";\nstruct Sprite {unsigned offset,size; int w,h;};\n")
+    h.write("constexpr Sprite digit_strips[]={"+",".join(map(sprite,digit_strips))+"};\n")
     h.write("struct Rect {int x,y,w,h; bool contains(int a,int b) const {return a>=x&&a<x+w&&b>=y&&b<y+h;}};\n")
     h.write("struct Link {int page; Rect area; int dest; bool root;};\n")
     regions=lamp_regions(m,data)
@@ -117,6 +136,8 @@ with (D/"study_assets.h").open("w",encoding="ascii") as h:
         h.write("constexpr Rect "+name+"="+rect(m[name])+";\n")
     for name in ("home","idle","doorbell","scenes","lights","media","light0"):
         h.write(f"constexpr int {name}={names.index(name)};\n")
+    for key in ("room-menu","diagnostics"):
+        h.write(f"constexpr int {key.replace('-','_')}_page={names.index(key)};\n")
     h.write("constexpr int light_count="+str(sum(bool(re.fullmatch(r"light\d+",n)) for n in names))+";\n")
     h.write("constexpr int initial[]="+values(m["initial"])+";\n")
     h.write("constexpr int presets[][light_count]="+values(values(p) for p in m["presets"])+";\n")

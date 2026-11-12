@@ -8,6 +8,8 @@ Use Python 3.11 with ESPHome 2026.6.5, NumPy, Pillow and Playwright with Microso
 
     python esphome/study/render.py config-export.json states.json PRIVATE_BUILD
     python esphome/study/control_art.py config-export.json states.json PRIVATE_BUILD
+    python esphome/study/media_art.py config-export.json states.json PRIVATE_BUILD
+    python esphome/study/text_art.py config-export.json states.json PRIVATE_BUILD
     python esphome/study/firmware.py PRIVATE_BUILD
     python esphome/p4_runtime/prepare.py PRIVATE_BUILD config-export.json --id DEVICE_ID --mac DEVICE_MAC --server SERVER_URL
     python -m esphome compile PRIVATE_BUILD/study-live.yaml
@@ -26,7 +28,11 @@ The normal ESPHome upload writes only the application images. This target also n
 
 Live bindings cover native HA light details, individual and group power, current climate readings and thermostat controls. Scene highlights follow confirmed HA levels with the kiosk's two-point tolerance. The initial Study speaker supports play, pause, previous, next, shuffle and repeat over the direct HA connection. Soft and Bright levels and participating lights use per-device server writes. A stopped server leaves the last signed profile active. Failed edits are shown on the panel and are discarded. The Display slider commits on release and overrides adaptive brightness for ten minutes. Standby uses the configured idle and blank intervals, HA time and ambient light. A wake touch is consumed before the underlying controls receive input.
 
-The current firmware still includes captured widgets. Advanced light overlays, live media metadata and artwork, volume, seeking, library, queue and speaker selection, appearance and network settings, live diagnostics, and the production doorbell path require further implementation and verification.
+The light More sheets expose the captured effects, warmth, colour and preset membership for each configured light. The volume popup and transport controls operate on the configured speaker over its Home Assistant connection.
+
+An admin test ring uses the paired device’s long poll. Panel Server retrieves the configured Home Assistant MJPEG stream and transcodes frames for the P4. If the server is unreachable, the panel can request that camera’s MJPEG stream directly with a camera-specific playback credential received through its encrypted ESPHome subscription. A direct ring then requires the configured HA trigger or the encrypted `ring_live_camera` action. A source that provides only WebRTC or HLS needs a separate video path.
+
+The Home player and Music screen use the configured speaker’s HA title, artist, position and duration. The seek action is available when the speaker reports support. The room menu date and diagnostic connection, Ethernet, backlight and uptime readings are generated on the panel. Album artwork, library, queue and speaker selection, appearance and network settings, and the diagnostic actions still require implementation and verification.
 
 ## Hardware test
 

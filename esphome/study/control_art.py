@@ -2,6 +2,7 @@
 import io
 import json
 import math
+import struct
 from pathlib import Path
 import sys
 import zlib
@@ -9,6 +10,8 @@ import numpy as np
 
 from PIL import Image
 from render import fixture_page, rgb565
+from advanced_art import capture_advanced
+from control_palette import pack
 
 
 def box(page, selector, width=None):
@@ -20,6 +23,7 @@ def box(page, selector, width=None):
 def capture(config, states, dest):
     bank = bytearray()
     seen = {}
+    backgrounds = {}
     tables = []
 
     def table(kind, name, rows):
@@ -30,12 +34,29 @@ def capture(config, states, dest):
         tables.append("constexpr " + kind + " " + name + "=" + c(rows) + ";")
 
     def sprite(pic, rect):
+        rect=tuple(rect)
         x, y, w, h = rect
         raw = rgb565(pic.crop((x, y, x+w, y+h)), x, y)
         data = zlib.compress(raw, 9)
+        if data in seen:return (seen[data],len(data),w,h)
+        if rect in backgrounds:
+            base,offset,size=backgrounds[rect]
+            changed=np.frombuffer(raw,"<u2").reshape(h,w)!=base
+            ys,xs=np.nonzero(changed)
+            if len(xs):
+                x0,y0,x1,y1=int(xs.min()),int(ys.min()),int(xs.max())+1,int(ys.max())+1
+                pixels=np.frombuffer(raw,"<u2").reshape(h,w)
+                crop=zlib.compress(pixels[y0:y1,x0:x1].tobytes(),9)
+                patch=struct.pack("<IIHHHH",offset,size,x0,y0,x1-x0,y1-y0)+crop
+                if len(patch)<len(data)*.75:
+                    key=(offset,patch)
+                    if key not in seen:seen[key]=len(bank);bank.extend(patch)
+                    return (seen[key],len(patch)|(1<<31),w,h)
         if data not in seen:
             seen[data] = len(bank)
             bank.extend(data)
+        if rect not in backgrounds:
+            backgrounds[rect]=np.frombuffer(raw,"<u2").reshape(h,w),seen[data],len(data)
         return (seen[data], len(data), w, h)
 
     def numeric_field(page, selector, width, main, unit, unit_text):
@@ -268,6 +289,26 @@ def capture(config, states, dest):
             if any(img is None for img in images):
                 raise ValueError(f"Missing {name} artwork; verify that the Study fixture has a speaker")
             table("Sprite",name+"[]",images)
+        page.evaluate("document.querySelector('#doorbellPopup').hidden=false")
+        page.wait_for_timeout(320)
+        for selector,key,strings in (
+            ("#doorbellState","bell_state",["Connecting to live camera…","Live camera","Live camera unavailable"]),
+            ("#doorbellLabel","bell_label",["DOORBELL","DOORBELL TEST"]),
+            ("#doorbellDuration","bell_duration",[f"Closes automatically after {config.get('doorbell',{}).get('duration_s',30)} seconds · Muted"])):
+            areas=[]
+            for label in strings:
+                page.locator(selector).evaluate("(e,t)=>e.textContent=t",label)
+                areas.append(box(page,selector))
+            x=min(r[0] for r in areas);y=min(r[1] for r in areas)
+            rect=(x,y,max(r[0]+r[2] for r in areas)-x,max(r[1]+r[3] for r in areas)-y)
+            table("Rect",key+"_rect",rect)
+            images=[]
+            for label in strings:
+                page.locator(selector).evaluate("(e,t)=>e.textContent=t",label)
+                images.append(sprite(Image.open(io.BytesIO(page.screenshot())),rect))
+            table("Sprite",key+"_art[]",images)
+    capture_advanced(config,states,table,sprite,box)
+    bank=pack(bank,tables)
     lines = ['#pragma once', '#include "study_assets.h"', 'namespace study {',
              'static const unsigned char control_art[]=']
     for off in range(0, len(bank), 256):

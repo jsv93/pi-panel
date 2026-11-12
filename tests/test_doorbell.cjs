@@ -49,6 +49,16 @@ const root=path.resolve(__dirname,'..'),source=fs.readFileSync(path.join(root,'p
   await page.evaluate(()=>window.supported=false);await run('openDoorbell()');
   await page.waitForFunction(()=>document.querySelector('#doorbellPopup').dataset.state==='error');
   assert.match(await page.locator('#doorbellState').textContent(),/does not support/);await run('closeDoorbell()');
+  await page.route('**/api/camera_proxy_stream/camera.test?token=fixture',r=>r.fulfill({
+    contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jCeQAAAAASUVORK5CYII=','base64')
+  }));
+  await run("bellPicture='/api/camera_proxy/camera.test?token=fixture';openDoorbell()");
+  await page.waitForFunction(()=>document.querySelector('#doorbellMjpeg').naturalWidth===1);
+  await page.clock.runFor(200);assert.equal(await page.locator('#doorbellState').innerText(),'Live camera');
+  await run('closeDoorbell()');assert.equal(await page.locator('#doorbellMjpeg').getAttribute('src'),null);
+  await run("bellPicture='/api/camera_proxy/camera.other?token=fixture';openDoorbell()");
+  await page.clock.runFor(100);assert.equal(await page.locator('#doorbellMjpeg').getAttribute('src'),null);
+  await run('closeDoorbell()');
   await page.evaluate(()=>window.supported=true);await run('openDoorbell();closeDoorbell()');await page.clock.runFor(100);
   assert(await page.evaluate(()=>window.peers.every(p=>p.closed)),'close during startup does not leak');
   assert.deepEqual(errors,[]);await page.close();console.log('PASS '+theme+': routing, blank wake, live lifecycle, early ICE, repeated ring, timeout, dismiss, unsupported camera and startup cancellation');

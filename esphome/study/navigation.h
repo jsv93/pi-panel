@@ -55,7 +55,8 @@ class Navigation {
   bool job_ok_=false,job_done_=false;
   static bool variant(int p){
 #ifdef STUDY_LIVE
-    if(p==scenes || p==lights || p==home || p==media || p==display_page || p==climate_page)return true;
+    if(p==scenes || p==lights || p==home || p==media || p==display_page || p==climate_page ||
+       p==room_menu_page || p==diagnostics_page)return true;
 #endif
     if(p==scenes)return scene>=0;
     int i=p-light0;
@@ -66,8 +67,11 @@ class Navigation {
     auto intersects=[=](const Rect &r){
       return x<r.x+r.w && x+16>r.x && y<r.y+r.h && y+8>r.y;
     };
-    if(page==home)return intersects(number_rects[0]);
-    if(page==media)return intersects(transport_buttons[0]) || intersects(transport_buttons[2]) || intersects(transport_buttons[4]);
+    if(page==home)return intersects(number_rects[0]) || (player.playing && intersects(home_strip));
+    if(page==room_menu_page)return intersects(menu_date.rect);
+    if(page==diagnostics_page)return intersects(net_status.rect) || intersects(ha_status.rect) || intersects(up_status.rect) || intersects(backlight_status.rect);
+    if(page==media)return intersects(transport_buttons[0]) || intersects(transport_buttons[2]) || intersects(transport_buttons[4]) ||
+                         intersects(song_title.rect) || intersects(song_artist.rect) || intersects(volume_button);
     if(page==display_page)return intersects(backlight_rail) || intersects(backlight_value);
     if(page==climate_page)return intersects(number_rects[1]) || intersects(number_rects[2]) ||
         intersects(number_rects[3]) || intersects(climate_slider) || intersects(climate_up) || intersects(climate_down);
