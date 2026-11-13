@@ -17,6 +17,7 @@ def main():
     p.add_argument("--mac", required=True)
     p.add_argument("--server", required=True)
     p.add_argument("--identity-file", type=Path)
+    p.add_argument("--production", action="store_true", help="Omit touchscreen demonstration actions from the paired build")
     p.add_argument("--hosted-wifi",action="store_true",help="Include the Waveshare C6 radio and external text artwork")
     p.add_argument("--card-assets",type=Path,help="Directory containing the generated card_assets.h and card_lights.h for this room")
     args = p.parse_args()
@@ -152,6 +153,8 @@ def main():
         f"constexpr unsigned volume_offset={volume_offset},volume_size={len(volume)};\n"
         f"constexpr unsigned char volume_sha[]={{{volume_sha}}};\n{text_settings}}}\n")
     source = (args.build / "study.yaml").read_text(encoding="utf-8")
+    if args.production:
+        source = re.sub(r"(?ms)^    - action: (?:navigation_demo|lamp_demo)\n.*?(?=^    - action:|^\S|\Z)", "", source)
     source = source.replace("          for (const auto &p : touches) {",
                             "          if(study::observe_touches(touches))return;\n          for (const auto &p : touches) {")
     if not (args.build / "control_art.h").exists():
@@ -266,6 +269,10 @@ inline bool study_station_ip(esp_netif_ip_info_t &info){
                         if overlays.is_file():
                             shutil.copyfile(overlays,dest/overlays.name)
                             source=source.replace("build_flags: [","build_flags: [-DSTUDY_CARD_OVERLAYS, ",1)
+                            geometry=args.card_assets/"card_motion_geometry.h"
+                            if geometry.is_file():
+                                shutil.copyfile(geometry,dest/geometry.name)
+                                source=source.replace("build_flags: [","build_flags: [-DSTUDY_CARD_MOTION_GEOMETRY, ",1)
                             editor=args.card_assets/"card_editor.h"
                             if editor.is_file():
                                 shutil.copyfile(editor,dest/editor.name)

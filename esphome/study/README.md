@@ -26,6 +26,8 @@ Run `card_climate.py` for the Climate digits and raised units, `card_speaker_art
 
 `card_overlay_art.py` captures the room’s light-detail sheets, playback volume, queue and Home player. `card_scene_editor.py` captures the preset editor and membership controls. `card_diagnostics.py` measures the diagnostic labels. `card_doorbell.py` captures the camera viewport, button and status messages in all three themes. These use the same config, states, destination and optional `--chromium-cdp` arguments. Card files have content-addressed names, so an older application can continue using its own artwork during an upgrade.
 
+Run `card_motion_geometry.py CONFIG STATES DEST/card_motion_geometry.h` with the same Chromium viewport to capture the Home equalizer and empty Wi-Fi screen positions. Use `prepare.py --production` for a paired panel. This build exposes the encrypted doorbell controls and omits the navigation and lamp demonstration actions.
+
 The card build binds Lights sliders to HA, preset buttons to the room’s lamp levels, and the Home clock to HA time. The Climate and speaker pages use live HA data. The local player build includes the on-screen theme choice in Settings → Display, Music transport and library navigation. The kiosk’s theme and palette identifiers are also accepted in signed configuration updates. The local selections persist during a server outage. Keep test firmware on the separate P4 until the remaining overlays, settings, transitions and live states pass the CM5 comparison.
 
 ## Device and server

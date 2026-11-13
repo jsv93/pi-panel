@@ -55,7 +55,7 @@ template<typename Profile> class FleetClient {
     auto cached=load_config(settings_.sign_key,settings_.id,last_signature_);
     if(cached && decode_(cached.get(),active_))ESP_LOGI("p4_fleet","Booted cached profile v%d",active_.version);
     else{active_=seed;last_signature_.clear();ESP_LOGI("p4_fleet","Booted provisioned profile");}
-    latest_=xQueueCreate(1,sizeof(Profile));
+    latest_=xQueueCreate(1,sizeof(Update));
     changes_=xQueueCreate(1,sizeof(Change));
   }
   const Profile &active()const{return active_;}
@@ -74,16 +74,23 @@ template<typename Profile> class FleetClient {
     return status;
   }
   bool display_pending()const{return pending_ && last_edit_==Edit::display;}
+  bool acknowledged_display()const{return acknowledged_display_;}
   bool tick(bool ha_connected){
     ha_connected_.store(ha_connected);
     if(latest_ && !task_ && esphome::network::is_connected()){
       esphome::network::get_ip_addresses()[0].str_to(ip_);
       xTaskCreate(worker,"p4_fleet",12288,this,1,&task_);
     }
-    return latest_ && xQueueReceive(latest_,&active_,0)==pdTRUE;
+    Update update{};
+    if(!latest_ || xQueueReceive(latest_,&update,0)!=pdTRUE)return false;
+    active_=update.profile;
+    acknowledged_display_=update.own_display;
+    return true;
   }
  private:
   struct Change {Edit edit;TickType_t issued;char body[1536];};
+  struct Update {Profile profile;bool own_display;};
+  bool acknowledged_display_=false;
   QueueHandle_t changes_{};
   std::atomic<bool> online_{false};
   std::atomic<int> result_{0};
@@ -143,7 +150,9 @@ template<typename Profile> class FleetClient {
           Profile next{};
           if(r.status==200 && doc && decode_(doc.get(),next) &&
              (last_signature_==r.signature || save_config(r.body,r.signature))){
-            version=next.version;last_signature_=r.signature;xQueueOverwrite(latest_,&next);
+            version=next.version;last_signature_=r.signature;
+            Update update{next,edited_version==version && c.edit==Edit::display};
+            xQueueOverwrite(latest_,&update);
             ESP_LOGI("p4_fleet","Cached signed profile v%d",version);
           }else ESP_LOGW("p4_fleet","Kept local profile; server configuration failed verification or layout checks");
         }

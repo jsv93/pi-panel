@@ -13,7 +13,7 @@ namespace study {
 #ifdef STUDY_CARD_PLAYER
 constexpr const char *theme_keys[]={"default","ambient","architectural"};
 constexpr const char *palette_keys[]={"linen","midnight","ember","slate","heath","mono"};
-struct ScreenChoices {uint8_t theme=2,palette=0;bool diagnostics=false,tiles=false;};
+struct ScreenChoices {uint8_t theme=2,palette=0;bool diagnostics=false,tiles=false,mini_art=true;};
 static bool read_screen_choices(cJSON *display,ScreenChoices &screen){
   if(!cJSON_IsObject(display))return false;
   auto index=[&](const char *key,const auto &names,int fallback)->int{
@@ -29,10 +29,12 @@ static bool read_screen_choices(cJSON *display,ScreenChoices &screen){
   if(theme<0 || palette<0)return false;
   screen.theme=theme;screen.palette=palette;
   auto *diag=cJSON_GetObjectItemCaseSensitive(display,"diagnostics");
+  auto *mini=cJSON_GetObjectItemCaseSensitive(display,"mini_art");
   auto *browse=cJSON_GetObjectItemCaseSensitive(display,"browse_view");
-  if((diag && !cJSON_IsBool(diag)) || (browse && (!cJSON_IsString(browse) ||
+  if((mini && !cJSON_IsBool(mini)) || (diag && !cJSON_IsBool(diag)) || (browse && (!cJSON_IsString(browse) ||
      (strcmp(browse->valuestring,"list") && strcmp(browse->valuestring,"tiles")))))return false;
   screen.diagnostics=cJSON_IsTrue(diag);
+  screen.mini_art=!mini || cJSON_IsTrue(mini);
   screen.tiles=browse && !strcmp(browse->valuestring,"tiles");
   return true;
 }
@@ -77,7 +79,7 @@ static bool decode_room(const cJSON *doc,RoomProfile &out){
   auto *actual_display=cJSON_GetObjectItemCaseSensitive(shape.get(),"display");
   auto *expected_display=cJSON_GetObjectItemCaseSensitive(expected.get(),"display");
   if(!read_screen_choices(actual_display,out.screen))return false;
-  for(const char *key:{"theme","palette","diagnostics","browse_view"}){
+  for(const char *key:{"theme","palette","diagnostics","browse_view","mini_art"}){
     cJSON_DeleteItemFromObjectCaseSensitive(actual_display,key);
     cJSON_DeleteItemFromObjectCaseSensitive(expected_display,key);
   }

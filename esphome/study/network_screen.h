@@ -10,6 +10,13 @@ static int wifi_selected=-1,wifi_scroll=0,wifi_touch_scroll=0;
 static bool wifi_shift=false,wifi_pending=false;
 static bool wifi_scan_after_restore=false;
 static char passphrase[64]{};
+static std::string wifi_password_preview(){
+  std::string display;
+  const size_t n=strlen(passphrase);
+  for(size_t i=1;i<n;++i)display+="•";
+  if(n)display+=passphrase[n-1];
+  return display;
+}
 #ifdef STUDY_CARD_WIFI
 static const WifiLayout &wifi_layout(){return card_wifi_layouts[selected_theme*6+card_mode];}
 static const WifiSheet &wifi_sheet(){
@@ -35,7 +42,16 @@ static int wifi_list_bottom(){
 #endif
   return std::min(1210,height);
 }
-static int wifi_scroll_limit(){return std::max(0,int(wifi_result.networks.size())*wifi_row_step()-wifi_list_bottom()+wifi_first_row().y);}
+static int wifi_scroll_limit(){
+#ifdef STUDY_CARD_WIFI
+  if(card_network_open){
+    const auto row=wifi_first_row();
+    const int n=wifi_result.networks.size();
+    return n?std::max(0,row.y+(n-1)*wifi_row_step()+row.h+34-height):0;
+  }
+#endif
+  return std::max(0,int(wifi_result.networks.size())*wifi_row_step()-wifi_list_bottom()+wifi_first_row().y);
+}
 static void close_network(){
   network_open=false;wifi_selected=-1;wifi_shift=false;wifi_pending=false;wifi_scan_after_restore=false;
 #ifdef STUDY_CARD_WIFI
@@ -62,9 +78,7 @@ static void paint_network(){
     const char *message=wifi_result.state==Wifi::State::joining?"Connecting…":wifi_result.state==Wifi::State::failed?"Failed":net.secure?"":"open network";
     text_field(page_pixels,width,scratch,wifi_join_name,net.ssid,0,height,false);
     text_field(page_pixels,width,scratch,wifi_message,message,0,height,false);
-    std::string masked;
-    for(size_t i=0;i<strlen(passphrase);i++)masked+="•";
-    text_field(page_pixels,width,scratch,wifi_password,masked.c_str(),0,height,false);
+    text_field(page_pixels,width,scratch,wifi_password,wifi_password_preview().c_str(),0,height,false);
   }else{
     const auto &r=wifi_rows[0];
     for(size_t i=0;i<wifi_result.networks.size();i++){
@@ -123,7 +137,11 @@ static void network_action(int x,int y){
   if(wifi_selected<0){
     const auto row=wifi_first_row();
     const int index=(y-row.y+wifi_scroll)/wifi_row_step();
-    if(y>=row.y && y<wifi_list_bottom() && x>=row.x && x<row.x+row.w && (y-row.y+wifi_scroll)%wifi_row_step()<row.h &&
+    int clip=row.y;
+#ifdef STUDY_CARD_WIFI
+    if(card_network_open)clip=std::max(wifi_sheet().top,row.y-wifi_scroll);
+#endif
+    if(y>=clip && y<wifi_list_bottom() && x>=row.x && x<row.x+row.w && (y-row.y+wifi_scroll)%wifi_row_step()<row.h &&
        index>=0 && size_t(index)<wifi_result.networks.size()){
       wifi_selected=index;wifi_shift=false;explicit_bzero(passphrase,sizeof(passphrase));paint_network();
     }

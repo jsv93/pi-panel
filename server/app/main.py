@@ -1153,10 +1153,8 @@ async def panel_presets(panel_id: str, request: Request):
     return {"version": version, "changed": changed}
 
 
-# What a panel may change about its own screen. Narrower than DISPLAY_KEYS on
-# purpose: these are the four with a control on the panel, and a panel has no
-# business setting its own screen size or dtoverlay.
-PANEL_DISPLAY_KEYS = {"theme", "palette", "glass_tier", "diagnostics", "browse_view"}
+# Display preferences editable from a paired panel's own touchscreen.
+PANEL_DISPLAY_KEYS = {"theme", "palette", "glass_tier", "diagnostics", "browse_view", "mini_art"}
 
 
 @app.post("/api/panel/{panel_id}/display")
