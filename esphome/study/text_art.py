@@ -10,7 +10,7 @@ from control_art import box
 
 def capture(config,states,dest):
     # Include the punctuation used by the HA player and the dashboard.
-    chars="".join(chr(i) for i in range(32,127))+" °·éèëàáäöóñüß–—‘’“”…•←›"
+    chars="".join(chr(i) for i in range(32,127))+" °·éèëàáäöóñüß–—‘’“”…•←›✓✗▂▄▆█"
     bank=bytearray();offsets={};fonts={};fields=[]
     def put(data):
         if data not in offsets:offsets[data]=len(bank);bank.extend(data)
@@ -184,6 +184,42 @@ def capture(config,states,dest):
         click('#archRoomLinks [data-sheet="settings"]')
         mini_button=box(page,"#archMiniArt");reload_button=box(page,"#reload")
         field("mini_choice","#archMiniArt .v","right","right")
+        wifi_button=box(page,"#wifiRow")
+        field("wifi_choice","#wifiV","right","right")
+        net_rows=[dict(ssid="Network",signal=80,secure=flag) for flag in (True,False)]
+        page.route("**/wifi*",lambda route:route.fulfill(json={"status":{"available":True,"type":"ethernet"},"networks":net_rows}))
+        click("#wifiRow")
+        wifi_back=box(page,"#ovWifi [data-ov-back]")
+        wifi_rows=[box(page,f"#wifiList .wnet:nth-child({i+1})") for i in range(2)]
+        field("wifi_now","#wifiNow")
+        wifi_list_art=[]
+        for i in range(2):
+            sel=f"#wifiList .wnet:nth-child({i+1})"
+            page.locator(sel+" .s").evaluate("e=>{e.style.flex='1';e.textContent='Network'}")
+            if not i:
+                field("wifi_name",sel+" .s")
+                field("wifi_signal",sel+" .g",alignment="right")
+            page.locator(sel+" .s,"+sel+" .g").evaluate_all("els=>els.forEach(e=>e.style.visibility='hidden')")
+            wifi_list_art.append(region(wifi_rows[i]))
+        page.locator("#wifiList").evaluate("e=>e.style.visibility='hidden'")
+        page.locator("#wifiNow").evaluate("e=>e.style.visibility='hidden'")
+        wifi_empty=region((0,0,720,1280))
+        page.locator("#wifiList,#wifiNow").evaluate_all("els=>els.forEach(e=>e.style.visibility='')")
+        click("#wifiList .wnet:first-child")
+        page.locator("#wifiJoinSsid").evaluate("e=>{e.style.flex='1';e.textContent='Network'}")
+        page.locator("#wifiJoinMsg").evaluate("e=>e.textContent='Connecting…'")
+        field("wifi_join_name","#wifiJoinSsid")
+        field("wifi_message","#wifiJoinMsg")
+        page.locator("#wifiPw").evaluate("e=>e.textContent='••••'")
+        field("wifi_password","#wifiPw")
+        wifi_cancel=box(page,"#wifiCancel");wifi_go=box(page,"#wifiGo")
+        wifi_keys=[];wifi_keyboard=[]
+        for shift in (False,True):
+            if shift:click('#wifiKeys [data-k="__shift"]')
+            wifi_keys.append(page.locator("#wifiKeys [data-k]").evaluate_all("els=>els.map(e=>{const b=e.getBoundingClientRect();return [e.dataset.k,[Math.floor(b.x),Math.floor(b.y),Math.ceil(b.right)-Math.floor(b.x),Math.ceil(b.bottom)-Math.floor(b.y)]]})"))
+            page.locator("#wifiJoinSsid,#wifiJoinMsg,#wifiPw,#wifiNow").evaluate_all("els=>els.forEach(e=>e.style.color='transparent')")
+            wifi_keyboard.append(region((0,0,720,1280)))
+        click("#ovWifi [data-ov-back]")
         click('#archSettingsLinks [data-sheet="diagnostics"]')
         for name,sel in (("ha_status","#stHA"),("backlight_status","#stBL"),("net_status","#stNet"),("up_status","#sUp")):
             field(name,sel,"right","right")
@@ -217,6 +253,13 @@ def capture(config,states,dest):
             page.locator("#bList .bmeta").evaluate_all("xs=>xs.forEach(el=>el.style.visibility='')")
         click("#bBack")
         page.locator("#conn,#fps").evaluate_all("els=>els.forEach(e=>e.style.visibility='')")
+        page.reload()
+        page.wait_for_function("document.body.classList.contains('diag') && document.querySelector('#pDiag').textContent.includes('config v')")
+        page.evaluate("document.fonts.ready")
+        home_diag=page.locator("#pDiag")
+        home_diag.evaluate("e=>e.textContent='touch: reports 5 points'")
+        field("diag_home_line","#pDiag")
+        diag_line_height=home_diag.evaluate("e=>parseFloat(getComputedStyle(e).lineHeight)")
         click("#archMenu");click('#archRoomLinks [data-sheet="settings"]');click('#archSettingsLinks [data-sheet="diagnostics"]')
         click("#diagRow")
         bell=config.get("doorbell") or {}
@@ -242,10 +285,11 @@ def capture(config,states,dest):
     def c(v):return "{"+",".join(c(x) if isinstance(x,(list,tuple)) else str(x) for x in v)+"}"
     with (dest/"text_art.h").open("w",encoding="ascii") as f:
         f.write('#pragma once\n#include "study_assets.h"\nnamespace study {\n')
-        f.write(f'constexpr size_t text_bytes={len(bank)};\nstatic uint8_t *text_art;\nstatic const uint8_t packed_text[]=\n')
+        f.write(f'constexpr size_t text_bytes={len(bank)};\nstatic uint8_t *text_art;\n#ifndef STUDY_EXTERNAL_TEXT\nstatic const uint8_t packed_text[]=\n')
         compressed=zlib.compress(bank,9)
+        (dest/"text-art.bin").write_bytes(compressed)
         for o in range(0,len(compressed),256):f.write('"'+''.join(f'\\x{b:02x}' for b in compressed[o:o+256])+'"\n')
-        f.write(';\nstruct TextGlyph{uint16_t code,advance;int16_t x,y;uint16_t w,h;uint32_t offset,size;};\n')
+        f.write(';\n#endif\nstruct TextGlyph{uint16_t code,advance;int16_t x,y;uint16_t w,h;uint32_t offset,size;};\n')
         starts=[0];flat=[]
         for records in fonts.values():flat.extend(records);starts.append(len(flat))
         f.write("constexpr TextGlyph text_glyphs[]="+c(flat)+";\nconstexpr int text_starts[]="+c(starts)+";\n")
@@ -266,6 +310,13 @@ def capture(config,states,dest):
         f.write("constexpr Rect bell_viewport="+c(viewport)+",bell_header="+c(header)+",bell_footer="+c(footer)+";\n")
         f.write("constexpr Rect diagnostic_button="+c(diagnostic_button)+",diagnostic_on_button="+c(diagnostic_on_button)+",scroll_button="+c(scroll_button)+";\n")
         f.write("constexpr unsigned diagnostic_on[]="+c(diagnostic_on)+";\n")
+        f.write("constexpr Rect wifi_button="+c(wifi_button)+",wifi_back="+c(wifi_back)+",wifi_cancel="+c(wifi_cancel)+",wifi_go="+c(wifi_go)+";\n")
+        f.write("constexpr Rect wifi_rows[]="+c(wifi_rows)+";\n")
+        f.write("constexpr unsigned wifi_empty[]="+c(wifi_empty)+",wifi_row_art[][2]="+c(wifi_list_art)+",wifi_keyboard[][2]="+c(wifi_keyboard)+";\n")
+        for mode,keys in enumerate(wifi_keys):
+            f.write(f"constexpr Rect wifi_keys_{mode}[]="+c([r for key,r in keys])+";\n")
+            f.write(f"constexpr const char *wifi_values_{mode}[]={{"+",".join(json.dumps(key) for key,r in keys)+"};\n")
+        f.write(f"constexpr int diag_line_height_64={round(diag_line_height*64)};\n")
         f.write("constexpr unsigned bell_empty_video[]="+c(video_bg)+",bell_headers[][2]="+c(bell_head)+",bell_footers[][2]="+c(bell_foot)+";\n")
         for name,rect,bg,col,font,baseline,spacing,align in fields:
             f.write("constexpr TextArea "+name+"="+c((rect,*bg,col,font,baseline,spacing,align))+";\n")

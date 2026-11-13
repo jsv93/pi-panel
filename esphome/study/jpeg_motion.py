@@ -88,7 +88,15 @@ def emit(d):
     prefix,entropy,maximum,paths=json.loads((d/"jpeg_meta.json").read_text())
     bank=(d/"jpeg_bank.bin").read_bytes()
     offsets=(d/"jpeg_offsets.bin").read_bytes()
-    payload=offsets+bank
+    ends=np.frombuffer(offsets,"<u4")
+    lengths=np.diff(ends)
+    if not len(lengths) or ends[0] or ends[-1]!=entropy or np.any(lengths>255):
+        raise ValueError("Unexpected motion segment length")
+    # A checkpoint and 16 one-byte lengths replace 16 four-byte offsets.
+    # The decoder sums at most 15 lengths for a random segment.
+    checkpoints=ends[:-1:16].astype("<u4").tobytes()
+    packed_index=checkpoints+lengths.astype("u1").tobytes()
+    payload=packed_index+bank
     tag=hashlib.sha256(payload).digest()
     image=tag+payload
     if len(image)>0x1980000:raise ValueError("Motion asset exceeds its data partition")
@@ -111,8 +119,6 @@ def emit(d):
     with (d/"navigation_assets.h").open("w",encoding="ascii") as h:
         h.write("#pragma once\n#include <cstdint>\nnamespace study {\n")
         h.write("struct Block {uint32_t offset,size,bytes;};struct PathMotion {int from,to,travel; Block phases[10];};\n")
-        ends=np.frombuffer(offsets,"<u4")
-        lengths=np.diff(ends)
         entries=[]
         for a,b,t,phases in paths:
             blocks=[]
@@ -123,7 +129,8 @@ def emit(d):
             entries.append("{%d,%d,%d,{%s}}"%(a,b,t,",".join(blocks)))
         h.write("constexpr PathMotion nav_paths[]={"+",".join(entries)+"};\n")
         h.write("constexpr uint8_t motion_tag[]={"+",".join(map(str,tag))+"};\n")
-        h.write(f"constexpr size_t motion_bytes={len(image)}, offsets_bytes={len(offsets)}, header_bytes={prefix}, entropy_bytes={entropy}, max_frame={maximum};\n")
+        h.write(f"#define STUDY_PACKED_SEGMENTS\nconstexpr size_t checkpoint_bytes={len(checkpoints)};\n")
+        h.write(f"constexpr size_t motion_bytes={len(image)}, offsets_bytes={len(packed_index)}, header_bytes={prefix}, entropy_bytes={entropy}, max_frame={maximum};\n")
         h.write("struct Pose {int shift; unsigned alpha;};constexpr Pose nav_pose[3][11]={"+
                 ",".join("{"+",".join("{%d,%d}"%pose(i,t) for i in range(11))+"}" for t in (14,24,-24))+"};\n")
         h.write("constexpr const char *page_names[]={"+",".join(json.dumps(v["name"]) for v in m["views"])+"};\n")

@@ -470,6 +470,11 @@ static uint16_t *cover_pixels=nullptr;
 static bool cover_ready=false;
 static bool mini_art_enabled=default_mini_art;
 static bool diagnostics_enabled=diagnostic_default;
+static int observed_touches=0;
+template<class Touches> static void observe_touches(const Touches &touches){
+  const int active=std::count_if(touches.begin(),touches.end(),[](const auto &p){return p.state==1 || p.state==2;});
+  observed_touches=std::max(observed_touches,active);
+}
 static int refresh_fps=0;
 static bool ha_connected(){
   const auto *api=esphome::api::global_api_server;
@@ -581,6 +586,13 @@ static void paint_volume(){
   if(volume_open)volume_paint(volume_popup,volume_popup_tiles[pct]);
 }
 static void label(const TextArea &field,const char *value){text_field(page_pixels,width,scratch,field,value);}
+}
+#ifdef USE_ESP32_HOSTED
+#define STUDY_RENDER_NETWORK
+#include "live_runtime/network_screen.h"
+#undef STUDY_RENDER_NETWORK
+#endif
+namespace study {
 static void playback_time(const TextArea &area,int seconds){
   char out[24];snprintf(out,sizeof(out),"%d:%02d",seconds/60,seconds%60);label(area,out);
 }
@@ -612,8 +624,71 @@ static void home_player(){
     label(cover?home_cover_artist:home_artist,player().title.empty()?"Nothing playing":player().artist.empty()?"Playing":player().artist.c_str());
   }
 }
+static std::string home_diagnostic_message(){
+  const auto &profile=fleet.active();
+  std::string notes,details;
+  const char *preset_names[]={"soft","bright","soft","off","bright"};
+  for(const char *preset:preset_names){
+    bool seen=false;std::string differences;
+    for(int i=0;i<light_count;i++){
+      const int level=ha_lights.confirmed(i);
+      if(!profile.members[i] || level<0)continue;
+      seen=true;
+      const int goal=*preset=='s'?profile.soft[i]:*preset=='b'?profile.bright[i]:0;
+      if(std::abs(level-goal)<=2)continue;
+      if(!differences.empty())differences+=", ";
+      differences+=room_light_names[i]+std::string(" ")+std::to_string(level)+"/"+std::to_string(goal);
+    }
+    if(!notes.empty())notes+="   ";
+    notes+=preset;notes+=!seen?" ✗ no lights seen":differences.empty()?" ✓":" ✗ "+differences;
+  }
+  for(int i=0;i<light_count;i++){
+    const int level=ha_lights.confirmed(i);
+    details+=" · "+std::string(room_light_names[i])+" "+(level<0?"unseen":std::to_string(level)+"%")+
+      " want "+std::to_string(profile.soft[i])+"/"+std::to_string(profile.bright[i])+(profile.members[i]?"":" EXCLUDED");
+  }
+  // The GT911 driver accepts up to five contacts. The single-touch Study
+  // renderer does not bind a multi-finger gesture.
+  return "touch: reports 5 points, seen "+std::to_string(observed_touches)+" · gesture off\n"+
+    notes+"\nconfig v"+std::to_string(profile.version)+details;
+}
+static std::string last_home_diagnostic;
+static void paint_home_diagnostics(const std::string &message){
+  if(!room_pixels || !page_pixels)return;
+  auto field=diag_home_line;
+  const int base_y=field.rect.y;
+  const int bottom=std::min(home_strip.y,height);
+  for(int y=base_y;y<bottom;y++){
+    const int pos=2*(y*width+field.rect.x);
+    memcpy(page_pixels+pos,room_pixels+pos,2*field.rect.w);
+  }
+  const char *p=message.c_str();
+  for(int line=0;*p;line++){
+    field.rect.y=base_y+(line*diag_line_height_64+32)/64;
+    if(field.rect.y+field.rect.h>bottom)break;
+    const char *first=p,*last_space=nullptr;
+    int advance=0;
+    while(*p && *p!='\n'){
+      const char *next=p;const auto &g=text_glyph(field.font,next_code(next));
+      if(advance+g.advance>64*field.rect.w && p!=first){if(last_space && last_space>first)p=last_space;break;}
+      if(*p==' ')last_space=p;
+      advance+=g.advance+field.spacing;p=next;
+    }
+    const auto value=std::string(first,p);
+    text_field(page_pixels,width,scratch,field,value.c_str(),base_y,bottom,false);
+    if(*p=='\n')++p;else while(*p==' ')++p;
+  }
+  last_home_diagnostic=message;
+}
 static void status_fields(){
-  if(current==settings_page)label(mini_choice,mini_art_enabled?"On":"Off");
+#ifdef USE_ESP32_HOSTED
+  if(current==settings_page){
+    const auto status=station.snapshot();
+    label(wifi_choice,status.ssid[0]?status.ssid:"not connected");
+  }
+#endif
+  if(current==home && diagnostics_enabled)paint_home_diagnostics(home_diagnostic_message());
+  else if(current==settings_page)label(mini_choice,mini_art_enabled?"On":"Off");
   else if(current==room_menu_page){
     const time_t now=::time(nullptr);struct tm local{};localtime_r(&now,&local);
     char date[64]="–";
@@ -628,7 +703,15 @@ static void status_fields(){
       text_background(page_pixels,width,scratch,{0,0,width,height},diagnostic_on[0],diagnostic_on[1]);
     }
     label(diagnostics_enabled?diag_ha:ha_status,ha_connected()?"• connected":"• disconnected");
-    label(diagnostics_enabled?diag_net:net_status,esphome::network::is_connected()?"Ethernet":"Disconnected");
+    std::string network_name=esphome::network::is_connected()?"Ethernet":"Disconnected";
+#ifdef USE_ESP32_HOSTED
+    if(!esphome::ethernet::global_eth_component->is_connected()){
+      auto radio=station.snapshot();
+      if(radio.ssid[0] && esphome::network::is_connected())
+        network_name=std::string(radio.ssid)+" · "+std::to_string(radio.signal)+"%";
+    }
+#endif
+    label(diagnostics_enabled?diag_net:net_status,network_name.c_str());
     label(diagnostics_enabled?diag_backlight:backlight_status,applied_brightness>=0?"• running":"• unavailable");
     const auto minutes=clock_ms()/60000;
     char uptime[32];
@@ -932,6 +1015,9 @@ static void animate() {
   ++motion_frames;
 }
 static void show(int dest,int shift=14) {
+#ifdef USE_ESP32_HOSTED
+  if(network_open)close_network();
+#endif
   const auto request_at=clock_ms();
   await_page();
   const bool change=dest!=current;
@@ -1054,7 +1140,19 @@ static void begin(Display *display) {
   }
 #ifdef STUDY_LIVE
   text_art=static_cast<uint8_t*>(heap_caps_malloc(text_bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
-  if(!text_art || tinfl_decompress_mem_to_mem(text_art,text_bytes,packed_text,sizeof(packed_text)-1,1)!=text_bytes){
+#ifdef STUDY_EXTERNAL_TEXT
+  const void *encoded=nullptr;
+  esp_partition_mmap_handle_t text_mapping{};
+  if(!part || esp_partition_mmap(part,text_offset,text_packed_size,ESP_PARTITION_MMAP_DATA,&encoded,&text_mapping)!=ESP_OK){
+    ESP_LOGE("study","Text artwork missing");return;
+  }
+  const bool text_ok=text_art && !mbedtls_sha256(static_cast<const uint8_t*>(encoded),text_packed_size,digest,0) &&
+    !memcmp(digest,text_sha,sizeof(digest)) && tinfl_decompress_mem_to_mem(text_art,text_bytes,encoded,text_packed_size,1)==text_bytes;
+  esp_partition_munmap(text_mapping);
+#else
+  const bool text_ok=text_art && tinfl_decompress_mem_to_mem(text_art,text_bytes,packed_text,sizeof(packed_text)-1,1)==text_bytes;
+#endif
+  if(!text_ok){
     ESP_LOGE("study","Text art allocation or decoding failed");return;
   }
   control_art=static_cast<uint8_t*>(heap_caps_malloc(control_bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
@@ -1078,6 +1176,9 @@ static void begin(Display *display) {
   std::fill_n(levels,light_count,-1);
   room_start();
   load_display_choice();
+#ifdef USE_ESP32_HOSTED
+  station.restore();
+#endif
   scanout.draw_overlay=draw_diagnostic_badges;
   scanout.restore_overlay=[](Scanout::Slot *slot){copy_badge_background(slot,false);};
   if(lux_entity[0])esphome::api::global_api_server->subscribe_home_assistant_state(
@@ -1219,6 +1320,16 @@ static void touch(int x,int y) {
     wake_touch=true;blanked=false;show(wake_page,0);apply_brightness();return;
   }
   if(!moving && sheet_touch(x,y))return;
+#ifdef USE_ESP32_HOSTED
+  if(!moving && current==settings_page && (network_open || pressed==-160 || (!down && wifi_button.contains(x,y)))){
+    if(!down){down=true;pressed=-160;x0=x;y0=y;wifi_touch_scroll=wifi_scroll;}
+    dx=x-x0;dy=y-y0;
+    if(network_open && wifi_selected<0 && std::abs(dy)>12){
+      wifi_scroll=std::clamp(wifi_touch_scroll-dy,0,wifi_scroll_limit());paint_network();
+    }
+    return;
+  }
+#endif
   if(!moving && current==diagnostics_page && (pressed==-159 || (!down && (diagnostic_pass>=0 || (diagnostics_enabled && scroll_button.contains(x,y)))))){
     if(!down){down=true;pressed=-159;x0=x;y0=y;}
     dx=x-x0;dy=y-y0;return;
@@ -1352,6 +1463,13 @@ static void touch(int x,int y) {
   }
 }
 static void release() {
+#ifdef USE_ESP32_HOSTED
+  if(pressed==-160){
+    down=false;pressed=-2;
+    if(std::abs(dx)<24 && std::abs(dy)<24)network_action(x0,y0);
+    return;
+  }
+#endif
 #ifdef STUDY_LIVE
   last_activity=clock_ms();
   if(wake_touch){wake_touch=false;return;}
@@ -1540,6 +1658,9 @@ static bool start_navigation_demo(){
 }
 static void tick() {
 #ifdef STUDY_LIVE
+#ifdef USE_ESP32_HOSTED
+  network_refresh();
+#endif
   measure_refresh();
   static int reported_fps=-1,reported_connection=-1;
   if(diagnostics_enabled && !blanked && !moving && !down && diagnostic_pass<0 && current!=doorbell && page_pixels){
@@ -1557,6 +1678,12 @@ static void tick() {
   }
   const auto now=clock_ms();
   static int64_t previous=now;
+  static int64_t next_home_diagnostic=0;
+  if(current==home && diagnostics_enabled && !moving && !down && now>=next_home_diagnostic){
+    next_home_diagnostic=now+500;
+    auto message=home_diagnostic_message();
+    if(message!=last_home_diagnostic){paint_home_diagnostics(message);++revision;blit(0,0,width,height,page_pixels);}
+  }
   brightness_now+=(brightness_target-brightness_now)*(adaptive_transition_s>0?
       1-std::exp(-3*std::min(2.0,(now-previous)/1000.)/adaptive_transition_s):1);
   previous=now;

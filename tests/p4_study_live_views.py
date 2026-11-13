@@ -120,7 +120,7 @@ static void snapshot(const char *name){
   ESP_LOGI("study","LIVE_BEGIN %s %u %08x %s %d",name,unsigned(compressed_size),capture_crc,compressed_size==page_bytes?"raw":"delta",current);
 }
 static void capture_chunk(){
-  for(int lines=0;lines<4 && position<compressed_size;lines++){
+  for(int lines=0;lines<2 && position<compressed_size;lines++){
     unsigned char encoded[200];size_t n=0,chunk=std::min<size_t>(144,compressed_size-position);
     if(mbedtls_base64_encode(encoded,sizeof(encoded),&n,previous_pixels+position,chunk)!=0)return;
     ESP_LOGI("study","LIVE_PIX %u %.*s",unsigned(position),int(n),encoded);position+=chunk;

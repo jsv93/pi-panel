@@ -37,6 +37,9 @@ class Navigation {
   Cached cache_[paths]{};
   const uint8_t *header_{},*entropy_{},*maps_{};
   const uint32_t *offsets_{};
+#ifdef STUDY_PACKED_SEGMENTS
+  const uint8_t *segment_lengths_{};
+#endif
   esp_partition_mmap_handle_t mapping_{};
   uint8_t *input_{},*arena_{},*writing_{};
   size_t input_size_{},arena_size_{},used_{};
@@ -118,7 +121,14 @@ class Navigation {
   }
   uint8_t *append_raw(uint8_t *ptr,const uint32_t *ids,int begin,int end)const{
     for(int j=begin;j<end;j++){
-      auto id=ids[j];auto offset=offsets_[id];auto size=offsets_[id+1]-offset;
+      auto id=ids[j];
+#ifdef STUDY_PACKED_SEGMENTS
+      uint32_t offset=offsets_[id/16];
+      for(uint32_t n=id&~15u;n<id;n++)offset+=segment_lengths_[n];
+      const auto size=segment_lengths_[id];
+#else
+      auto offset=offsets_[id];auto size=offsets_[id+1]-offset;
+#endif
       memcpy(ptr,entropy_+offset,size);ptr+=size;
       *ptr++=0xff;*ptr++=0xd0+(j%8);
     }
@@ -252,6 +262,9 @@ class Navigation {
     run_data=static_cast<const uint8_t*>(tail);
 #endif
     offsets_=reinterpret_cast<const uint32_t*>(data);header_=data+offsets_bytes;
+#ifdef STUDY_PACKED_SEGMENTS
+    segment_lengths_=data+checkpoint_bytes;
+#endif
     entropy_=header_+header_bytes;maps_=entropy_+entropy_bytes;
     jpeg_decode_memory_alloc_cfg_t cfg{};cfg.buffer_direction=JPEG_DEC_ALLOC_INPUT_BUFFER;
     input_=static_cast<uint8_t*>(jpeg_alloc_decoder_mem(max_frame,&cfg,&input_size_));

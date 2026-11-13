@@ -17,6 +17,7 @@ def main():
     p.add_argument("--mac", required=True)
     p.add_argument("--server", required=True)
     p.add_argument("--identity-file", type=Path)
+    p.add_argument("--hosted-wifi",action="store_true",help="Include the Waveshare C6 radio and external text artwork")
     args = p.parse_args()
     if not re.fullmatch(r"[a-z0-9-]{1,60}", args.id):
         p.error("invalid panel id")
@@ -46,6 +47,7 @@ def main():
         header.append(f"constexpr {kind} {name}[]={{" + ",".join(map(json.dumps, values)) + "};")
 
     array("const char *", "room_entities", [l["entity_id"] for l in lights])
+    array("const char *", "room_light_names", [l.get("name") or l["entity_id"] for l in lights])
     for key, name, default in [("soft", "soft", 30), ("bright", "bright", 100), ("include_presets", "members", True)]:
         array("bool" if key == "include_presets" else "int", "seed_" + name, [l.pop(key, default) for l in lights])
     header.append("constexpr char layout_contract[]=" + json.dumps(json.dumps(contract, separators=(",", ":"))) + ";")
@@ -116,6 +118,15 @@ def main():
     volume_offset=(start+len(blob)+4095)&~4095
     if not volume or volume_offset+len(volume)>0x1980000:p.error("volume artwork does not fit after the navigation bank")
     volume_sha=",".join(map(str,hashlib.sha256(volume).digest()))
+    text_settings=""
+    if args.hosted_wifi:
+        if "STUDY_PACKED_SEGMENTS" not in (args.build/"navigation_assets.h").read_text():
+            p.error("regenerate the compact Study motion bank before enabling the C6")
+        packed=(args.build/"text-art.bin").read_bytes()
+        text_offset=(volume_offset+len(volume)+4095)&~4095
+        if not packed or text_offset+len(packed)>0x1980000:p.error("text artwork exceeds the Study partition")
+        text_sha=",".join(map(str,hashlib.sha256(packed).digest()))
+        text_settings=f"constexpr unsigned text_offset={text_offset},text_packed_size={len(packed)};\nconstexpr unsigned char text_sha[]={{{text_sha}}};\n"
     (args.build / "live-motion-tail.bin").write_bytes(blob)
     expected = ",".join(map(str, hashlib.sha256(blob).digest()))
     (dest / "motion_tail.h").write_text(
@@ -123,8 +134,10 @@ def main():
         f"constexpr unsigned tail_offset={start},tail_size={len(blob)};\n"
         f"constexpr unsigned char tail_sha[]={{{expected}}};\n"
         f"constexpr unsigned volume_offset={volume_offset},volume_size={len(volume)};\n"
-        f"constexpr unsigned char volume_sha[]={{{volume_sha}}};\n}}\n")
+        f"constexpr unsigned char volume_sha[]={{{volume_sha}}};\n{text_settings}}}\n")
     source = (args.build / "study.yaml").read_text(encoding="utf-8")
+    source = source.replace("          for (const auto &p : touches) {",
+                            "          study::observe_touches(touches);\n          for (const auto &p : touches) {")
     if not (args.build / "control_art.h").exists():
         p.error("generate control_art.h using esphome/study/control_art.py first")
     if not (args.build / "media_art.h").exists():
@@ -132,10 +145,49 @@ def main():
     if not (args.build / "text_art.h").exists():
         p.error("generate text_art.h using esphome/study/text_art.py first")
     shutil.copyfile(Path(__file__).parent.parent/"study/text_renderer.h",args.build/"text_renderer.h")
+    shutil.copyfile(Path(__file__).parent.parent/"study/network_screen.h",dest/"network_screen.h")
     source = source.replace("study_assets.h, study.h", "study_assets.h, control_art.h, media_art.h, text_art.h, text_renderer.h, study.h")
     source = source.replace("includes: [scanout.h", "includes: [live_runtime, scanout.h")
     source=source.replace("  includes:", "  platformio_options:\n    build_flags: [-DUSE_API_HOMEASSISTANT_ACTION_RESPONSES, -DUSE_API_HOMEASSISTANT_ACTION_RESPONSES_ERRORS, -DUSE_API_HOMEASSISTANT_ACTION_RESPONSES_JSON]\n  includes:",1)
     source+="\njson:\n"
+    if args.hosted_wifi:
+        import esphome.components.network as network_component
+        network_dir=args.build/"bench_components/network"
+        shutil.copytree(Path(network_component.__file__).parent,network_dir,dirs_exist_ok=True,ignore=shutil.ignore_patterns("__pycache__"))
+        def network_patch(filename,old,new):
+            path=network_dir/filename
+            contents=path.read_text(encoding="utf8")
+            if contents.count(old)!=1:raise ValueError(f"Unexpected ESPHome network component in {filename}")
+            path.write_text(contents.replace(old,new),encoding="utf8")
+        network_patch("util.h","namespace esphome::network {",'''#include <esp_netif.h>
+namespace esphome::network {
+inline bool study_station_ip(esp_netif_ip_info_t &info){
+  auto *netif=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+  return netif && esp_netif_is_netif_up(netif) && esp_netif_get_ip_info(netif,&info)==ESP_OK && info.ip.addr;
+}''')
+        network_patch("util.h","inline bool is_connected() {","inline bool is_connected() {\n  esp_netif_ip_info_t info{};if(study_station_ip(info))return true;")
+        network_patch("util.cpp","if (ethernet::global_eth_component != nullptr)\n    return ethernet::global_eth_component->get_ip_addresses();",'''if (ethernet::global_eth_component != nullptr && ethernet::global_eth_component->is_connected())
+    return ethernet::global_eth_component->get_ip_addresses();
+  esp_netif_ip_info_t info{};
+  if(study_station_ip(info)){
+    ip4_addr_t ip{};ip.addr=info.ip.addr;
+    network::IPAddresses addresses{};addresses[0]=network::IPAddress(&ip);return addresses;
+  }''')
+        source=source.replace("components: [mipi_dsi]","components: [mipi_dsi, network]")
+        source=source.replace("build_flags: [","build_flags: [-DSTUDY_EXTERNAL_TEXT, ",1)
+        source+="""\nesp32_hosted:
+  type: sdio
+  variant: ESP32C6
+  active_high: true
+  reset_pin: GPIO54
+  clk_pin: GPIO18
+  cmd_pin: GPIO19
+  d0_pin: GPIO14
+  d1_pin: GPIO15
+  d2_pin: GPIO16
+  d3_pin: GPIO17
+  use_psram: true
+"""
     source = source.replace("esp_driver_jpeg, esp_driver_ppa]", "esp_driver_jpeg, esp_driver_ppa, esp_http_client, json, nvs_flash]")
     source = source.replace("    sdkconfig_options:\n", '    sdkconfig_options:\n      CONFIG_MBEDTLS_CERTIFICATE_BUNDLE: "y"\n')
     source = source.replace("\napi:\n", "\napi:\n  homeassistant_services: true\n  homeassistant_states: true\n")
