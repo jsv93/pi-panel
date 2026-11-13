@@ -111,9 +111,11 @@ for selected,reference in enumerate(captures):
         raise ValueError("Scene patches do not reproduce the captured screen")
 with (D/"study_assets.h").open("w",encoding="ascii") as h:
     h.write("#pragma once\n#include <cstdint>\nnamespace study {\n")
-    h.write("static const unsigned char artwork[] =\n")
-    for start in range(0,len(packed),256):
-        h.write('"'+''.join('\\x%02x'%n for n in packed[start:start+256])+'"\n')
+    h.write(f"constexpr unsigned artwork_bytes={len(packed)};\nstatic uint8_t *artwork;\n")
+    h.write("static const unsigned char packed_pages[] =\n")
+    compressed=zlib.compress(packed,9)
+    for start in range(0,len(compressed),256):
+        h.write('"'+''.join('\\x%02x'%n for n in compressed[start:start+256])+'"\n')
     h.write(";\nstruct Sprite {unsigned offset,size; int w,h;};\n")
     h.write("constexpr Sprite digit_strips[]={"+",".join(map(sprite,digit_strips))+"};\n")
     h.write("struct Rect {int x,y,w,h; bool contains(int a,int b) const {return a>=x&&a<x+w&&b>=y&&b<y+h;}};\n")

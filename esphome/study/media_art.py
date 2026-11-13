@@ -62,11 +62,11 @@ def capture(config,states,dest):
     base_refs=[]
     for pix in bases:
         data=zlib.compress(pix.tobytes(),9);base_refs.append((len(bank),len(data)));bank.extend(data)
-    data='\n'.join('"'+''.join(f'\\x{b:02x}' for b in bank[o:o+256])+'"' for o in range(0,len(bank),256))
+    (dest/"volume-art.bin").write_bytes(bank)
     path=dest/"media_art.h"
     with path.open("w",encoding="ascii") as f:
         f.write('#pragma once\n#include "study_assets.h"\nnamespace study {\n')
-        f.write("static const unsigned char volume_art[]=\n"+data+";\n")
+        f.write("static const uint8_t *volume_art=nullptr;\n")
         f.write("struct VolumeStrip {unsigned offset;unsigned short size;};\nconstexpr VolumeStrip volume_tiles[]="+arr(refs)+";\n")
         f.write("constexpr VolumeStrip volume_bases[]="+arr(base_refs)+";\n")
         f.write("constexpr VolumeStrip volume_dictionary="+arr(palette_ref)+";\n")

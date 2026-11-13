@@ -13,7 +13,8 @@ class MediaClient {
   enum Control { shuffle, previous, play_pause, next, repeat };
   bool available=false, playing=false, shuffled=false, dirty=true;
   int repeat_mode=0,volume=-1;
-  std::string title,artist,playlist,album;
+  std::string title,artist,playlist,album,picture,queue,player_type;
+  bool paused=false;
   int duration=0;
   bool can_seek=false;
   double position()const{
@@ -40,6 +41,11 @@ class MediaClient {
     };
     text("media_title",&title);text("media_artist",&artist);
     text("media_playlist",&playlist);text("media_album_name",&album);
+    text("active_queue",&queue);text("mass_player_type",&player_type);
+    api->subscribe_home_assistant_state(speaker_,"entity_picture",[this](esphome::StringRef s){
+      auto v=s.str();if(v=="None" || v.size()>=1536)v.clear();
+      if(picture!=v){picture=std::move(v);dirty=true;}
+    });
     api->subscribe_home_assistant_state(speaker_,"media_duration",[this](esphome::StringRef s){
       auto n=esphome::parse_number<float>(s.str());duration=n && std::isfinite(*n) && *n>0 && *n<864000?std::lround(*n):0;dirty=true;
     });
@@ -65,7 +71,7 @@ class MediaClient {
     api->subscribe_home_assistant_state(speaker_,nullptr,[this](esphome::StringRef s){
       const auto state=s.str();
       available=!state.empty() && state!="unknown" && state!="unavailable";
-      playing=state=="playing";dirty=true;
+      playing=state=="playing";paused=state=="paused";dirty=true;
     });
     api->subscribe_home_assistant_state(speaker_,"shuffle",[this](esphome::StringRef s){
       shuffled=s.str()=="True" || s.str()=="true" || s.str()=="on";dirty=true;
@@ -84,7 +90,8 @@ class MediaClient {
 #ifndef STUDY_BENCH_TEST
     if(available && !esphome::api::global_api_server->is_connected_with_state_subscription()){
       available=playing=shuffled=false;repeat_mode=0;volume=-1;dirty=true;
-      title.clear();artist.clear();playlist.clear();album.clear();duration=0;can_seek=false;updated_at_=0;
+      title.clear();artist.clear();playlist.clear();album.clear();picture.clear();player_type.clear();queue.clear();
+      paused=false;duration=0;can_seek=false;updated_at_=0;
     }
 #endif
   }

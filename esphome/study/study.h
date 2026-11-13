@@ -295,10 +295,190 @@ static void display_field(int level){
 }
 static bool volume_open=false;
 static bool queue_open=false;
+static bool library_open=false;
+static int library_mode=0,library_scroll=0,library_down_scroll=0;
+static constexpr int thumbnail_side=96,thumbnail_slots=12;
+struct Thumbnail {std::string url;uint16_t *pixels=nullptr;uint32_t used=0;bool ready=false;};
+static Thumbnail thumbnails[thumbnail_slots];
+static int thumbnail_job=-1;static uint32_t thumbnail_stamp=0;
+static void load_library_thumbnail();
+static void label(const TextArea &field,const char *value);
+static void show(int dest,int shift);
+// The embedded panel has no CSS compositor. Exercise the equivalent native
+// list operations and report completed framebuffer presentations.
+static int diagnostic_pass=-1,diagnostic_frames=0,diagnostic_offset=0;
+static int64_t diagnostic_start=0;
+static int diagnostic_rates[6];
+static constexpr const char *diagnostic_cases[]={"baseline","uncached rows","all rows","no thumbnails","no text","flat rows"};
+static void paint_library(){
+  const int mode=library_mode,cols=library_steps[mode][0],step=library_steps[mode][1];
+  const auto &v=library_list;
+  text_background(page_pixels,width,scratch,{0,0,width,height},library_bases[mode][0],library_bases[mode][1]);
+  label(library_title,library.folders.empty()?"Library":library.folders.back().title.c_str());
+  std::string crumb="Library";for(const auto &f:library.folders)crumb+="  ›  "+f.title;
+  label(library_crumb,crumb.c_str());
+  if(*library.message){
+    auto field=library_crumb;field.rect.y=v.y+20;
+    text_field(page_pixels,width,scratch,field,library.message,v.y,v.y+v.h);return;
+  }
+  for(size_t i=0;i<library.items.size();i++){
+    const auto &item=library.items[i];const int variant=2*mode+(item.expand?0:1);
+    const auto &ref=library_tiles[variant];const auto &art=library_art[variant];
+    const int x=v.x+(i%cols)*library_steps[mode][2];
+    const int y=v.y+int((library.first+i)/cols)*step-library_scroll;
+    if(y>=v.y+v.h || y+ref.h<=v.y)continue;
+    const size_t bytes=2*ref.w*ref.h;
+    if(tinfl_decompress_mem_to_mem(scratch,bytes,text_art+art[0],art[1],1)!=bytes)continue;
+    for(int row=std::max(0,v.y-y);row<ref.h && row+y<v.y+v.h;row++)
+      memcpy(page_pixels+2*((y+row)*width+x),scratch+2*row*ref.w,2*ref.w);
+    if(item.expand && item.category!="directory"){
+      auto icon=library_note_rects[mode];icon.x+=x-ref.x;icon.y+=y-ref.y;
+      const auto &artwork=library_notes[mode];
+      const size_t n=2u*icon.w*icon.h;
+      if(tinfl_decompress_mem_to_mem(scratch,n,text_art+artwork[0],artwork[1],1)==n)
+        for(int j=std::max(0,v.y-icon.y);j<icon.h && icon.y+j<v.y+v.h;j++)
+          memcpy(page_pixels+2*((icon.y+j)*width+icon.x),scratch+2*j*icon.w,2*icon.w);
+    }
+    if(!item.thumbnail.empty())for(auto &thumb:thumbnails)if(thumb.ready && thumb.url==item.thumbnail){
+      auto icon=library_note_rects[mode];icon.x+=x-ref.x;icon.y+=y-ref.y;
+      for(int j=std::max(0,v.y-icon.y);j<icon.h && icon.y+j<v.y+v.h;j++){
+        auto *dst=reinterpret_cast<uint16_t*>(page_pixels)+(icon.y+j)*width+icon.x;
+        for(int col=0;col<icon.w;col++)dst[col]=thumb.pixels[(j*thumbnail_side/icon.h)*thumbnail_side+col*thumbnail_side/icon.w];
+      }
+      thumb.used=++thumbnail_stamp;break;
+    }
+    auto field=[&](TextArea area,const std::string &value){
+      area.rect.x+=x-ref.x;area.rect.y+=y-ref.y;
+      text_field(page_pixels,width,scratch,area,value.c_str(),v.y,v.y+v.h);
+    };
+    field(library_name[variant],item.title);field(library_type[variant],item.category);
+  }
+}
+static void diagnostic_scroll_frame(){
+  if(diagnostic_pass<0 || diagnostic_pass>=6)return;
+  const auto &r=library_tiles[2];
+  const auto &v=library_list;
+  const int step=library_steps[1][1],first=diagnostic_offset/step;
+  const int last=std::min(200,first+v.h/step+2);
+  const size_t bytes=2*r.w*r.h;
+  const auto &art=library_art[2];
+  auto *row_cache=previous_pixels;
+  const uint16_t background=reinterpret_cast<uint16_t*>(page_pixels)[(v.y-1)*width+v.x];
+  if(!diagnostic_frames){
+    text_background(page_pixels,width,scratch,{0,0,width,height},library_bases[1][0],library_bases[1][1]);
+    label(library_title,"Scroll test");
+    char crumb[64];snprintf(crumb,sizeof(crumb),"%s  (%d of 6)",diagnostic_cases[diagnostic_pass],diagnostic_pass+1);
+    label(library_crumb,crumb);
+    if(tinfl_decompress_mem_to_mem(row_cache,bytes,text_art+art[0],art[1],1)!=bytes){diagnostic_pass=-1;return;}
+    diagnostic_start=clock_ms();
+  }
+  auto *pixels=reinterpret_cast<uint16_t*>(page_pixels);
+  for(int y=v.y;y<v.y+v.h;y++)std::fill_n(pixels+y*width+v.x,v.w,background);
+  for(int i=diagnostic_pass==2?0:first;i<(diagnostic_pass==2?200:last);i++){
+    const int y=v.y+i*step-diagnostic_offset;
+    char title[20];snprintf(title,sizeof(title),"Row %d",i);
+    if(y+r.h<=v.y || y>=v.y+v.h)continue;
+    if(diagnostic_pass==1 && tinfl_decompress_mem_to_mem(row_cache,bytes,text_art+art[0],art[1],1)!=bytes)continue;
+    for(int j=std::max(0,v.y-y);j<r.h && j+y<v.y+v.h;j++){
+      auto *dest=pixels+(j+y)*width+v.x;
+      if(diagnostic_pass==5)std::fill_n(dest,r.w,0x18e4);
+      else{
+        memcpy(dest,row_cache+2*j*r.w,2*r.w);
+        if(diagnostic_pass==3)std::fill_n(dest+12,72,dest[90]);
+      }
+    }
+    if(diagnostic_pass!=4){
+      for(int f=0;f<2;f++){
+        auto a=f?library_type[2]:library_name[2];a.rect.y+=y-r.y;
+        text_field(page_pixels,width,scratch,a,f?"test":title,v.y,v.y+v.h,false);
+      }
+    }
+  }
+  ++revision;if(blit(0,0,width,height,page_pixels))++diagnostic_frames;
+  diagnostic_offset=(diagnostic_offset+7)%(200*step-v.h);
+  const auto elapsed=clock_ms()-diagnostic_start;
+  if(elapsed<2500)return;
+  diagnostic_rates[diagnostic_pass]=std::lround(diagnostic_frames*1000./elapsed);
+  ESP_LOGI("study","Scroll test %s %d fps",diagnostic_cases[diagnostic_pass],diagnostic_rates[diagnostic_pass]);
+  ++diagnostic_pass;diagnostic_frames=0;
+  if(diagnostic_pass!=6)return;
+  const int mode=library_mode;
+  text_background(page_pixels,width,scratch,{0,0,width,height},library_bases[mode][0],library_bases[mode][1]);
+  const auto &result_art=diagnostic_results[mode];
+  if(tinfl_decompress_mem_to_mem(scratch,page_bytes,text_art+result_art[0],result_art[1],1)==page_bytes){
+    for(size_t j=0;j<page_bytes/4;j++)reinterpret_cast<uint32_t*>(page_pixels)[j]^=reinterpret_cast<uint32_t*>(scratch)[j];
+  }
+  for(int i=0;i<6;i++){
+    char result[80];const int delta=std::lround(100.*(diagnostic_rates[i]-diagnostic_rates[0])/std::max(1,diagnostic_rates[0]));
+    if(i)snprintf(result,sizeof(result),"%d fps · %+d%%  %s",diagnostic_rates[i],delta,std::abs(delta)<25?"(within noise)":"← this one matters");
+    else snprintf(result,sizeof(result),"%d fps · baseline",diagnostic_rates[i]);
+    label(diagnostic_result_n[mode][i],diagnostic_cases[i]);label(diagnostic_result_s[mode][i],result);
+  }
+  ++revision;blit(0,0,width,height,page_pixels);
+}
+static bool speakers_open=false,speakers_dirty=false,transfer_busy=false;
+static int speaker_scroll=0,speaker_down_scroll=0,speaker_max_scroll=0;
+static uint32_t transfer_serial=0;
+static int64_t transfer_until=0;
+static const char *transfer_status=nullptr;
+static int speaker_variant(int i){
+  if(i==selected_speaker)return 0;
+  return !players[i].available?1:players[i].player_type.empty()?2:3;
+}
+static bool can_transfer(int i){
+  const auto &src=player(),&dst=players[i];
+  return !transfer_busy && i!=selected_speaker && (src.playing || src.paused) &&
+    !src.player_type.empty() && !src.queue.empty() && dst.available &&
+    !dst.player_type.empty() && dst.queue!=src.queue;
+}
+static void select_speaker(int i){
+  selected_speaker=i;player().dirty=true;
+  speakers_open=false;
+}
+static void transfer_speaker(int i){
+  if(!can_transfer(i))return;
+#ifdef STUDY_BENCH_TEST
+  player().last_service="music_assistant.transfer_queue";
+  select_speaker(i);
+#else
+  auto *api=esphome::api::global_api_server;
+  if(!api->is_connected_with_state_subscription())return;
+  using esphome::StringRef;
+  esphome::api::HomeassistantActionRequest req;
+  req.service=StringRef("music_assistant.transfer_queue");req.data.init(3);
+  auto add=[&](const char *key,const char *value){
+    auto &kv=req.data.emplace_back();kv.key=StringRef(key);kv.value=StringRef(value);
+  };
+  add("entity_id",speaker_ids[i]);add("source_player",speaker_ids[selected_speaker]);
+  add("auto_play",player().playing?"true":"false");
+  req.call_id=0x80000000u|++transfer_serial;
+  transfer_busy=true;transfer_until=clock_ms()+30000;
+  transfer_status="Transferring…";speakers_dirty=true;
+  api->register_action_response_callback(req.call_id,[i,serial=transfer_serial](const esphome::api::ActionResponse &r){
+    if(serial!=transfer_serial || !transfer_busy)return;
+    transfer_busy=false;speakers_dirty=true;
+    if(r.is_success()){
+      transfer_status=nullptr;
+      if(speakers_open){select_speaker(i);show(media,0);}
+    }
+    else transfer_status="Transfer not confirmed. Check the speakers before retrying.";
+  });
+  api->send_homeassistant_action(req);
+#endif
+}
 static uint16_t *cover_pixels=nullptr;
 static bool cover_ready=false;
 static bool mini_art_enabled=default_mini_art;
-#ifdef STUDY_BENCH_TEST
+static bool diagnostics_enabled=diagnostic_default;
+static int refresh_fps=0;
+static void measure_refresh(){
+  static int64_t previous=0;static uint32_t earlier=0;
+  const auto now=clock_ms();const auto epoch=Scanout::Panel::refresh_epoch;
+  if(previous && now-previous<1000)return;
+  if(previous)refresh_fps=std::lround((epoch-earlier)*1000./(now-previous));
+  earlier=epoch;previous=now;
+}
+#if defined(STUDY_BENCH_TEST) || defined(STUDY_LIVE_CAPTURE)
 static constexpr const char *display_namespace="p4_qa_display";
 #else
 static constexpr const char *display_namespace="p4_display";
@@ -307,11 +487,17 @@ static void load_display_choice(){
   nvs_handle_t h;
   if(nvs_open(display_namespace,NVS_READONLY,&h)!=ESP_OK)return;
   uint8_t value=0;if(nvs_get_u8(h,"mini",&value)==ESP_OK)mini_art_enabled=value!=0;
+  if(nvs_get_u8(h,"diag",&value)==ESP_OK)diagnostics_enabled=value!=0;
+  if(nvs_get_u8(h,"libview",&value)==ESP_OK)library_mode=value?1:0;
   nvs_close(h);
 }
-static bool save_display_choice(bool enabled){
+static bool save_preference(const char *key,bool enabled){
   nvs_handle_t h;if(nvs_open(display_namespace,NVS_READWRITE,&h)!=ESP_OK)return false;
-  const bool ok=nvs_set_u8(h,"mini",enabled)==ESP_OK && nvs_commit(h)==ESP_OK;nvs_close(h);
+  const bool ok=nvs_set_u8(h,key,enabled)==ESP_OK && nvs_commit(h)==ESP_OK;nvs_close(h);
+  return ok;
+}
+static bool save_display_choice(bool enabled){
+  const bool ok=save_preference("mini",enabled);
   if(ok)mini_art_enabled=enabled;
   return ok;
 }
@@ -330,6 +516,7 @@ static int volume_drag=-1;
 static int seek_drag=-1;
 static uint8_t *volume_dictionary_pixels=nullptr;
 template<size_t N> static void volume_paint(const Rect &r,const uint16_t (&ids)[N]){
+  if(!volume_art)return;
   auto &dictionary=volume_dictionary_pixels;
   if(!dictionary){
     dictionary=static_cast<uint8_t*>(heap_caps_malloc(volume_dictionary_size,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
@@ -358,7 +545,7 @@ template<size_t N> static void volume_paint(const Rect &r,const uint16_t (&ids)[
   }
 }
 static void paint_volume(){
-  const int pct=volume_drag>=0?volume_drag:std::max(0,player.volume);
+  const int pct=volume_drag>=0?volume_drag:std::max(0,player().volume);
   volume_paint(volume_button,volume_button_tiles[pct]);
   if(volume_open)volume_paint(volume_popup,volume_popup_tiles[pct]);
 }
@@ -367,13 +554,13 @@ static void playback_time(const TextArea &area,int seconds){
   char out[24];snprintf(out,sizeof(out),"%d:%02d",seconds/60,seconds%60);label(area,out);
 }
 static void progress_fields(){
-  const int pos=seek_drag>=0?seek_drag:int(std::lround(player.position())),duration=player.duration;
+  const int pos=seek_drag>=0?seek_drag:int(std::lround(player().position())),duration=player().duration;
   playback_time(elapsed_time,pos);playback_time(total_time,duration);
   const auto &r=seek_slider;
   const int end=duration?std::clamp(int(std::lround(double(pos)*r.w/duration)),0,r.w):0;
   text_background(page_pixels,width,scratch,seek_background,seek_art[0][0],seek_art[0][1]);
-  const int n=player.playing?44:1,phase=player.playing?clock_ms()*44/2800%44:0;
-  const auto &fill=seek_art[player.playing?2:1];
+  const int n=player().playing?44:1,phase=player().playing?clock_ms()*44/2800%44:0;
+  const auto &fill=seek_art[player().playing?2:1];
   if(end && tinfl_decompress_mem_to_mem(scratch,2*n*r.h,text_art+fill[0],fill[1],1)==size_t(2*n*r.h)){
     for(int y=0;y<r.h;y++){
       auto *dst=reinterpret_cast<uint16_t*>(page_pixels)+(r.y+y)*width+r.x;
@@ -386,12 +573,12 @@ static void progress_fields(){
 }
 static void home_player(){
   const bool cover=cover_ready && mini_art_enabled;
-  const auto &art=home_strip_art[player.playing?(cover?2:1):0];
+  const auto &art=home_strip_art[player().playing?(cover?2:1):0];
   text_background(page_pixels,width,scratch,home_strip,art[0],art[1]);
-  if(player.playing){
+  if(player().playing){
     if(cover)draw_cover(mini_album_rect);
-    label(cover?home_cover_title:home_title,player.title.empty()?"Music":player.title.c_str());
-    label(cover?home_cover_artist:home_artist,player.title.empty()?"Nothing playing":player.artist.empty()?"Playing":player.artist.c_str());
+    label(cover?home_cover_title:home_title,player().title.empty()?"Music":player().title.c_str());
+    label(cover?home_cover_artist:home_artist,player().title.empty()?"Nothing playing":player().artist.empty()?"Playing":player().artist.c_str());
   }
 }
 static void status_fields(){
@@ -406,37 +593,68 @@ static void status_fields(){
     }
     label(menu_date,date);
   }else if(current==diagnostics_page){
-    label(ha_status,ha_lights.receiving()?"• connected":"• disconnected");
-    label(net_status,esphome::network::is_connected()?"Ethernet":"Disconnected");
-    label(backlight_status,applied_brightness>=0?"• running":"• unavailable");
+    if(diagnostics_enabled){
+      text_background(page_pixels,width,scratch,{0,0,width,height},diagnostic_on[0],diagnostic_on[1]);
+      char value[24];snprintf(value,sizeof(value),"%d fps",refresh_fps);label(diag_fps,value);
+      label(diag_connection,ha_lights.receiving()?"connected":"disconnected");
+    }
+    label(diagnostics_enabled?diag_ha:ha_status,ha_lights.receiving()?"• connected":"• disconnected");
+    label(diagnostics_enabled?diag_net:net_status,esphome::network::is_connected()?"Ethernet":"Disconnected");
+    label(diagnostics_enabled?diag_backlight:backlight_status,applied_brightness>=0?"• running":"• unavailable");
     const auto minutes=clock_ms()/60000;
     char uptime[32];
     if(minutes>=60)snprintf(uptime,sizeof(uptime),"%lldh %lldm",minutes/60,minutes%60);
     else snprintf(uptime,sizeof(uptime),"%lldm",minutes);
-    label(up_status,uptime);
+    label(diagnostics_enabled?diag_uptime:up_status,uptime);
   }
 }
 static void transport_fields(){
+  if(library_open){paint_library();return;}
+  if(speakers_open){
+    text_background(page_pixels,width,scratch,{0,0,width,height},speaker_base[0],speaker_base[1]);
+    label(speaker_now,transfer_status?transfer_status:speaker_labels[selected_speaker]);
+    int total=0;
+    for(int i=0;i<speaker_count;i++)total+=speaker_rows[i][speaker_variant(i)][2];
+    speaker_max_scroll=std::max(0,total-(speaker_end-speaker_top));
+    speaker_scroll=std::clamp(speaker_scroll,0,speaker_max_scroll);
+    int y=speaker_top-speaker_scroll;
+    for(int i=0;i<speaker_count;i++){
+      const auto *r=speaker_rects[i],*art=speaker_rows[i][speaker_variant(i)];
+      const int h=art[2],x=r[0],w=r[1],ax=r[2];
+      auto draw=[&](const unsigned *a,int left,int sw){
+        const size_t bytes=2*sw*h;
+        if(tinfl_decompress_mem_to_mem(scratch,bytes,text_art+a[0],a[1],1)!=bytes)return;
+        for(int row=std::max(0,speaker_top-y);row<h && y+row<speaker_end;row++)
+          memcpy(page_pixels+2*((y+row)*width+left),scratch+2*row*sw,2*sw);
+      };
+      if(y<speaker_end && y+h>speaker_top){
+        draw(art,x,w);
+        if(can_transfer(i))draw(speaker_arrows[i],x+ax,w-ax);
+      }
+      y+=h;
+    }
+    return;
+  }
   if(queue_open){
-    const auto &list=player.playlist.empty()?player.album:player.playlist;
-    const int mask=int(!player.title.empty())+2*int(!list.empty());
+    const auto &list=player().playlist.empty()?player().album:player().playlist;
+    const int mask=int(!player().title.empty())+2*int(!list.empty());
     text_background(page_pixels,width,scratch,queue_patches[0],queue_pages[0][0],queue_pages[0][1]);
     if(mask)text_background(page_pixels,width,scratch,queue_patches[mask],queue_pages[mask][0],queue_pages[mask][1]);
     if(mask&1){
-      std::string track=player.title;
-      if(!player.artist.empty())track+="  ·  "+player.artist;
+      std::string track=player().title;
+      if(!player().artist.empty())track+="  ·  "+player().artist;
       label(queue_track,track.c_str());
     }
     if(mask&2)label(mask==2?queue_playlist_2:queue_playlist_3,("Playlist: "+list).c_str());
     return;
   }
-  label(song_title,player.title.empty()?"Nothing playing":player.title.c_str());
+  label(song_title,player().title.empty()?"Nothing playing":player().title.c_str());
   draw_cover(album_rect);
-  label(song_artist,player.title.empty()?"Browse your music library":player.artist.empty()?initial_speaker_name:player.artist.c_str());
+  label(song_artist,player().title.empty()?"Browse your music library":player().artist.empty()?speaker_labels[selected_speaker]:player().artist.c_str());
   progress_fields();
-  control_patch(page_pixels,shuffle_modes[player.shuffled],transport_buttons[0]);
-  control_patch(page_pixels,play_modes[player.playing],transport_buttons[2]);
-  control_patch(page_pixels,repeat_modes[player.repeat_mode],transport_buttons[4]);
+  control_patch(page_pixels,shuffle_modes[player().shuffled],transport_buttons[0]);
+  control_patch(page_pixels,play_modes[player().playing],transport_buttons[2]);
+  control_patch(page_pixels,repeat_modes[player().repeat_mode],transport_buttons[4]);
   paint_volume();
 }
 static int transport_hit(int x,int y){
@@ -631,6 +849,7 @@ static void paint_level(int value,bool update_display=true) {
 }
 static void animate() {
 #ifdef STUDY_LIVE
+  if(diagnostic_pass>=0){diagnostic_scroll_frame();return;}
   extern void present_bell_video();
   present_bell_video();
   if(current==idle || current==doorbell)return;
@@ -688,8 +907,10 @@ static void show(int dest,int shift=14) {
   await_page();
   const bool change=dest!=current;
 #ifdef STUDY_LIVE
+  diagnostic_pass=-1;
   light_sheet=LightSheet::closed;sheet_drag=-1;
-  volume_open=false;queue_open=false;volume_drag=-1;seek_drag=-1;
+  volume_open=false;queue_open=false;speakers_open=false;volume_drag=-1;seek_drag=-1;
+  if(library_open){library.close();library_open=false;}
   if(change && current==doorbell)bell_client.close();
 #endif
   playback_direction=-1;last_phase=-1;
@@ -789,6 +1010,30 @@ static void go(int dest) {
 }
 static void begin(Display *display) {
   lcd=display;
+#ifdef STUDY_LIVE
+  const auto *part=esp_partition_find_first(ESP_PARTITION_TYPE_DATA,static_cast<esp_partition_subtype_t>(0x40),"motion");
+  static esp_partition_mmap_handle_t volume_mapping;
+  const void *mapped=nullptr;unsigned char digest[32];
+  if(part && esp_partition_mmap(part,volume_offset,volume_size,ESP_PARTITION_MMAP_DATA,&mapped,&volume_mapping)==ESP_OK &&
+     !mbedtls_sha256(static_cast<const uint8_t*>(mapped),volume_size,digest,0) && !memcmp(digest,volume_sha,sizeof(digest)))
+    volume_art=static_cast<const uint8_t*>(mapped);
+  else ESP_LOGE("study","Volume art verification failed");
+#endif
+  artwork=static_cast<uint8_t*>(heap_caps_malloc(artwork_bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+  if(!artwork || tinfl_decompress_mem_to_mem(artwork,artwork_bytes,packed_pages,sizeof(packed_pages)-1,1)!=artwork_bytes){
+    ESP_LOGE("study","Page art allocation or decoding failed");return;
+  }
+#ifdef STUDY_LIVE
+  text_art=static_cast<uint8_t*>(heap_caps_malloc(text_bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+  if(!text_art || tinfl_decompress_mem_to_mem(text_art,text_bytes,packed_text,sizeof(packed_text)-1,1)!=text_bytes){
+    ESP_LOGE("study","Text art allocation or decoding failed");return;
+  }
+  control_art=static_cast<uint8_t*>(heap_caps_malloc(control_bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+  if(!control_art || tinfl_decompress_mem_to_mem(control_art,control_bytes,packed_controls,sizeof(packed_controls)-1,1)!=control_bytes){
+    ESP_LOGE("study","Control art allocation or decoding failed");
+    return;
+  }
+#endif
   scratch=page_buffer();
   if(lcd) {
     room_pixels=page_buffer();
@@ -829,6 +1074,9 @@ static void begin(Display *display) {
       ESP_LOGI("study","Lamp frame cache %s",timeline?"allocated":"unavailable");
     }
     ESP_LOGI("study","Study page animation %s",blender?"ready":"unavailable");
+#ifdef STUDY_LIVE
+    if(bell_enabled && !bell_client.reserve_frames())ESP_LOGW("study","Camera buffer reservation failed");
+#endif
     if(scanout.active && blender)nav.begin();
     if(scanout.active && blender){
       page_done=xSemaphoreCreateBinary();
@@ -940,6 +1188,38 @@ static void touch(int x,int y) {
     wake_touch=true;blanked=false;show(wake_page,0);apply_brightness();return;
   }
   if(!moving && sheet_touch(x,y))return;
+  if(!moving && current==diagnostics_page && (pressed==-159 || (!down && (diagnostic_pass>=0 || (diagnostics_enabled && scroll_button.contains(x,y)))))){
+    if(!down){down=true;pressed=-159;x0=x;y0=y;}
+    dx=x-x0;dy=y-y0;return;
+  }
+  if(!moving && current==diagnostics_page && (pressed==-158 || (!down && (diagnostics_enabled?diagnostic_on_button:diagnostic_button).contains(x,y)))){
+    if(!down){down=true;pressed=-158;x0=x;y0=y;}
+    dx=x-x0;dy=y-y0;return;
+  }
+  if(!moving && current==media && !volume_open && !queue_open && !speakers_open &&
+      (pressed==-157 || (!down && (browse_button.contains(x,y) || (library_open && y<speaker_end))))){
+    if(!down){down=true;pressed=-157;x0=x;y0=y;library_down_scroll=library_scroll;}
+    dx=x-x0;dy=y-y0;
+    if(library_open && y0>=library_list.y && std::abs(dy)>8 && !library.waiting){
+      const int cols=library_steps[library_mode][0],step=library_steps[library_mode][1];
+      const int max_scroll=std::max(0,int((library.total+cols-1)/cols)*step-library_list.h);
+      library_scroll=std::clamp(library_down_scroll-dy,0,max_scroll);
+      const size_t first=(library_scroll/step)*cols,offset=first/library.batch*library.batch;
+      if(library.total && (first<library.first || first>=library.first+library.batch))library.get(offset);
+      paint_library();++revision;blit(0,0,width,height,page_pixels);
+    }
+    return;
+  }
+  if(!moving && current==media && !volume_open && !queue_open &&
+     (pressed==-156 || (!down && (speaker_button.contains(x,y) || (speakers_open && y<speaker_end))))){
+    if(!down){x0=x;y0=y;down=true;pressed=-156;speaker_down_scroll=speaker_scroll;}
+    dx=x-x0;dy=y-y0;
+    if(speakers_open && y0>=speaker_top && std::abs(dy)>8){
+      speaker_scroll=std::clamp(speaker_down_scroll-dy,0,speaker_max_scroll);
+      transport_fields();++revision;blit(0,0,width,height,page_pixels);
+    }
+    return;
+  }
   if(!moving && current==settings_page && (!down || pressed==-154 || pressed==-155)){
     if(!down && (mini_button.contains(x,y) || reload_button.contains(x,y))){
       down=true;pressed=mini_button.contains(x,y)?-154:-155;x0=x;y0=y;dx=dy=0;return;
@@ -950,19 +1230,19 @@ static void touch(int x,int y) {
     if(!down){x0=x;y0=y;down=true;pressed=-153;}
     dx=x-x0;dy=y-y0;return;
   }
-  if(!down && current==home && player.playing && home_strip.contains(x,y)){
+  if(!down && current==home && player().playing && home_strip.contains(x,y)){
     down=true;pressed=home_play.contains(x,y)?-151:-152;x0=x;y0=y;dx=dy=0;return;
   }
   if(pressed==-151 || pressed==-152){dx=x-x0;dy=y-y0;return;}
   if(!volume_open && current==media && !moving &&
-     (seek_drag>=0 || (!down && player.available && player.can_seek && player.duration && seek_slider.contains(x,y)))){
-    down=true;pressed=-2;seek_drag=std::clamp(int(std::lround(double(x-seek_slider.x)*player.duration/seek_slider.w)),0,player.duration);
+     (seek_drag>=0 || (!down && player().available && player().can_seek && player().duration && seek_slider.contains(x,y)))){
+    down=true;pressed=-2;seek_drag=std::clamp(int(std::lround(double(x-seek_slider.x)*player().duration/seek_slider.w)),0,player().duration);
     progress_fields();++revision;blit(0,0,width,height,page_pixels);return;
   }
   if(current==media && !moving && (volume_open || (!down && volume_button.contains(x,y)) || pressed==-150)){
     if(!down){
       down=true;x0=x;y0=y;pressed=-150;
-      if(volume_open && volume_slider.contains(x,y))volume_drag=std::max(0,player.volume);
+      if(volume_open && volume_slider.contains(x,y))volume_drag=std::max(0,player().volume);
     }
     dx=x-x0;dy=y-y0;
     if(volume_drag>=0){
@@ -1045,6 +1325,66 @@ static void release() {
   last_activity=clock_ms();
   if(wake_touch){wake_touch=false;return;}
   if(sheet_release())return;
+  if(pressed==-159){
+    pressed=-2;down=false;
+    if(std::abs(dx)>=24 || std::abs(dy)>=24)return;
+    if(diagnostic_pass>=0){if(browse_back.contains(x0,y0))show(diagnostics_page,0);}
+    else if(previous_pixels && scroll_button.contains(x0,y0)){diagnostic_pass=0;diagnostic_frames=0;diagnostic_offset=0;}
+    return;
+  }
+  if(pressed==-158){
+    down=false;pressed=-2;
+    if(std::abs(dx)<24 && std::abs(dy)<24 && save_preference("diag",!diagnostics_enabled)){
+      diagnostics_enabled=!diagnostics_enabled;show(diagnostics_page,0);
+    }
+    return;
+  }
+  if(pressed==-157){
+    down=false;pressed=-2;
+    if(std::abs(dx)>24 || std::abs(dy)>24)return;
+    const int x=x0+dx,y=y0+dy;
+    if(!library_open){
+      if(!browse_button.contains(x,y))return;
+      library_scroll=0;library_open=true;library.open(speaker_ids[selected_speaker]);
+    }else if(browse_back.contains(x,y)){
+      if(library.folders.empty()){show(media,0);return;}
+      library_scroll=0;library.up();
+    }else if(browse_switch.contains(x,y)){
+      library_mode=1-library_mode;save_preference("libview",library_mode!=0);library_scroll=0;if(library.first)library.get(0);
+    }else if(library_list.contains(x,y) && !library.waiting){
+      const int cols=library_steps[library_mode][0],step=library_steps[library_mode][1];
+      const int row=(y-library_list.y+library_scroll)/step;
+      const int col=cols==1?0:(x-library_list.x)/int(library_steps[library_mode][2]);
+      const size_t pos=row*cols+col;
+      if(pos>=library.first && pos-library.first<library.items.size()){
+        const size_t i=pos-library.first;bool play=!library.items[i].expand && library.items[i].play;
+        library.choose(i);if(play){show(media,0);return;}library_scroll=0;
+      }
+    }
+    paint_library();++revision;blit(0,0,width,height,page_pixels);return;
+  }
+  if(pressed==-156){
+    down=false;pressed=-2;
+    if(std::abs(dx)>24 || std::abs(dy)>24)return;
+    const int x=x0+dx,y=y0+dy;
+    if(!speakers_open){
+      if(!speaker_button.contains(x,y))return;
+      speakers_open=true;speaker_scroll=0;if(!transfer_busy)transfer_status=nullptr;
+    }else if(speaker_back.contains(x,y)){show(media,0);return;}
+    else if(y>=speaker_top && y<speaker_end && !transfer_busy){
+      int top=speaker_top-speaker_scroll;
+      for(int i=0;i<speaker_count;i++){
+        const int h=speaker_rows[i][speaker_variant(i)][2];const auto *r=speaker_rects[i];
+        if(y>=top && y<top+h && x>=int(r[0]) && x<int(r[0]+r[1])){
+          if(x>=int(r[0]+r[2]))transfer_speaker(i);else select_speaker(i);
+          break;
+        }
+        top+=h;
+      }
+    }
+    if(!speakers_open){cover_ready=false;show(media,0);return;}
+    transport_fields();++revision;blit(0,0,width,height,page_pixels);return;
+  }
   if(pressed==-154 || pressed==-155){
     const bool preference=pressed==-154;
     down=false;pressed=-2;
@@ -1065,18 +1405,18 @@ static void release() {
     return;
   }
   if(seek_drag>=0){
-    player.seek(seek_drag);seek_drag=-1;down=false;pressed=-2;return;
+    player().seek(seek_drag);seek_drag=-1;down=false;pressed=-2;return;
   }
   if(pressed==-151 || pressed==-152){
     const bool toggle=pressed==-151;down=false;pressed=-2;
     if(std::abs(dx)<40 && std::abs(dy)<40){
-      if(toggle)player.press(p4_runtime::MediaClient::play_pause);else go(media);
+      if(toggle)player().press(p4_runtime::MediaClient::play_pause);else go(media);
     }
     dx=dy=0;return;
   }
   if(current==media && pressed==-150){
     down=false;pressed=-2;
-    if(volume_drag>=0){player.set_volume(volume_drag);volume_drag=-1;}
+    if(volume_drag>=0){player().set_volume(volume_drag);volume_drag=-1;}
     else if(!volume_open && volume_button.contains(x0+dx,y0+dy))volume_open=true;
     else if(volume_open && (volume_close.contains(x0+dx,y0+dy) || !volume_popup.contains(x0+dx,y0+dy))){
       show(media,0);return;
@@ -1113,7 +1453,7 @@ static void release() {
       else if(current==climate_page && (pressed==-80 || pressed==-81))
         thermostat.set(thermostat.target+(pressed==-80?1:-1)*thermostat.step);
       else if(pressed<=-100 && pressed>=-101-light_count)edit_scene(-100-pressed);
-      else if(pressed<=-120 && pressed>=-124)player.press(static_cast<p4_runtime::MediaClient::Control>(-120-pressed));
+      else if(pressed<=-120 && pressed>=-124)player().press(static_cast<p4_runtime::MediaClient::Control>(-120-pressed));
 #endif
       else go(pressed);
     }
@@ -1169,6 +1509,7 @@ static bool start_navigation_demo(){
 }
 static void tick() {
 #ifdef STUDY_LIVE
+  measure_refresh();
   if(bell_enabled){
     bell_client.listen();
     const bool test=bell_client.test_ring.exchange(false);
@@ -1199,19 +1540,34 @@ static void tick() {
   }
   apply_brightness();
   ha_lights.tick();
+  for(int i=0;i<speaker_count;i++){
+    players[i].tick();
+    if(i!=selected_speaker && players[i].dirty){speakers_dirty=true;players[i].dirty=false;}
+  }
+  if(transfer_busy && now>=transfer_until){
+    transfer_busy=false;transfer_status="Transfer not confirmed. Check the speakers before retrying.";
+    speakers_dirty=true;
+  }
+  if(speakers_dirty){if(speakers_open)player().dirty=true;speakers_dirty=false;}
+  if(library_open){library.tick();if(library.dirty){player().dirty=true;library.dirty=false;}}
+#ifndef STUDY_BENCH_TEST
+  album_client.select(speaker_ids[selected_speaker],player().picture);
+#endif
   if(!moving && !down && current!=doorbell && !bench_demo)update_cover();
-  player.tick();
-  if(player.dirty && !moving && !down){
-    player.dirty=false;
+#ifndef STUDY_BENCH_TEST
+  if(library_open && !library.waiting && !moving && !down)load_library_thumbnail();
+#endif
+  if(player().dirty && !moving && !down){
+    player().dirty=false;
     if(current==media && page_pixels){transport_fields();++revision;blit(0,0,width,height,page_pixels);}
     if(current==home && page_pixels){home_player();++revision;blit(0,0,width,height,page_pixels);}
   }
   static int64_t next_progress=0;
-  if(current==media && player.playing && player.duration && !down && !moving && !volume_open && !queue_open && now>=next_progress){
+  if(current==media && player().playing && player().duration && !down && !moving && !volume_open && !queue_open && !speakers_open && !library_open && now>=next_progress){
     progress_fields();++revision;blit(0,0,width,height,page_pixels);next_progress=now+125;
   }
   static int64_t next_status=0;
-  if(!down && !moving && page_pixels && (current==room_menu_page || current==diagnostics_page) && now>=next_status){
+  if(!down && !moving && diagnostic_pass<0 && page_pixels && (current==room_menu_page || current==diagnostics_page) && now>=next_status){
     status_fields();next_status=now+5000;++revision;blit(0,0,width,height,page_pixels);
   }
   if(current==display_page && page_pixels && !down && !moving && screen_level()!=shown_brightness){
@@ -1317,6 +1673,50 @@ static size_t camera_bitstream(uint8_t *jpg,size_t size){
   return 0;
 }
 #ifdef STUDY_LIVE
+static bool decode_library_thumbnail(const p4_runtime::AlbumClient::Frame &f,Thumbnail &out){
+  if(!f.data || !previous_pixels || !scratch)return false;
+  memcpy(scratch,f.data,f.size);
+  const auto size=camera_bitstream(scratch,f.size);
+  jpeg_decode_picture_info_t info{};
+  if(!size || jpeg_decoder_get_info(scratch,size,&info)!=ESP_OK || !info.width || !info.height)return false;
+  const int mx=info.sample_method==JPEG_DOWN_SAMPLING_YUV420 || info.sample_method==JPEG_DOWN_SAMPLING_YUV422?16:8;
+  const int stride=(info.width+mx-1)&~(mx-1);
+  if(2ull*stride*((info.height+15)&~15u)>page_bytes)return false;
+  jpeg_decode_cfg_t cfg{};cfg.output_format=JPEG_DECODE_OUT_FORMAT_RGB565;cfg.rgb_order=panel_jpeg_order;
+  uint32_t written=0;auto engine=decoder();
+  if(!engine || jpeg_decoder_process(engine,&cfg,scratch,size,previous_pixels,page_bytes,&written)!=ESP_OK ||
+     written<2u*stride*info.height)return false;
+  if(!out.pixels)out.pixels=static_cast<uint16_t*>(heap_caps_malloc(2*thumbnail_side*thumbnail_side,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+  if(!out.pixels)return false;
+  const int side=std::min(info.width,info.height);
+  const auto *source=reinterpret_cast<const uint16_t*>(previous_pixels);
+  for(int y=0;y<thumbnail_side;y++){
+    const auto *row=source+((info.height-side)/2+y*side/thumbnail_side)*stride+(info.width-side)/2;
+    for(int x=0;x<thumbnail_side;x++)out.pixels[y*thumbnail_side+x]=row[x*side/thumbnail_side];
+  }
+  return true;
+}
+static void load_library_thumbnail(){
+  if(!thumbnail_client.initialized())return;
+  if(thumbnail_job>=0){
+    p4_runtime::AlbumClient::Frame f;
+    if(!thumbnail_client.take(f))return;
+    auto &thumb=thumbnails[thumbnail_job];
+    thumb.ready=f.version==thumbnail_client.generation() && decode_library_thumbnail(f,thumb);
+    if(thumb.ready){player().dirty=true;ESP_LOGD("study","Music library thumbnail decoded");}
+    heap_caps_free(f.data);thumbnail_job=-1;
+  }
+  const int cols=library_steps[library_mode][0],step=library_steps[library_mode][1];
+  for(size_t i=0;i<library.items.size();i++){
+    const auto &url=library.items[i].thumbnail;
+    const int y=int((library.first+i)/cols)*step-library_scroll;
+    if(url.empty() || url.size()>=1536 || y>=library_list.h || y+step<=0)continue;
+    if(std::any_of(thumbnails,thumbnails+thumbnail_slots,[&](const Thumbnail &t){return t.url==url;}))continue;
+    auto *slot=std::min_element(thumbnails,thumbnails+thumbnail_slots,[](const Thumbnail &a,const Thumbnail &b){return a.used<b.used;});
+    slot->url=url;slot->ready=false;slot->used=++thumbnail_stamp;thumbnail_job=slot-thumbnails;
+    thumbnail_client.select("",url);return;
+  }
+}
 static void update_cover(){
   const bool previously=cover_ready;
   bool changed=false;
@@ -1353,7 +1753,7 @@ static void update_cover(){
     }
     heap_caps_free(f.data);
   }
-  if((!changed && previously==cover_ready) || (current!=home && current!=media) || volume_open || queue_open)return;
+  if((!changed && previously==cover_ready) || (current!=home && current!=media) || volume_open || queue_open || speakers_open || library_open)return;
   show(current,0);
 }
 #endif

@@ -291,12 +291,17 @@ def capture(config, states, dest):
             table("Sprite",name+"[]",images)
     capture_advanced(config,states,table,sprite,box)
     bank=pack(bank,tables)
-    lines = ['#pragma once', '#include "study_assets.h"', 'namespace study {',
-             'static const unsigned char control_art[]=']
-    for off in range(0, len(bank), 256):
-        lines.append('"' + "".join(f"\\x{x:02x}" for x in bank[off:off+256]) + '"')
-    (dest / "control_art.h").write_text("\n".join(lines + [";", "struct NumberGlyph {unsigned pos,size;int x,y,w,h,advance;};", *tables, "}"]), encoding="ascii")
+    write_bank(dest,bank,["struct NumberGlyph {unsigned pos,size;int x,y,w,h,advance;};",*tables,"}"])
     print(f"Captured {n} light rows, 102 levels, {len(bank):,} bytes")
+
+def write_bank(dest,bank,tables):
+    packed=zlib.compress(bank,9)
+    lines = ['#pragma once', '#include "study_assets.h"', 'namespace study {',
+             f'constexpr size_t control_bytes={len(bank)};', 'static uint8_t *control_art;',
+             'static const unsigned char packed_controls[]=']
+    for off in range(0,len(packed),256):
+        lines.append('"'+''.join(f"\\x{x:02x}" for x in packed[off:off+256])+'"')
+    (dest/"control_art.h").write_text("\n".join(lines+[";",*tables]),encoding="ascii")
 
 
 if __name__ == "__main__":

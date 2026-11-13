@@ -22,7 +22,7 @@ Each P4 needs its own fleet identity and ESPHome encryption key. Run `python esp
 
 The candidate downloads authenticated, signed configurations, keeps the last verified room profile in NVS and subscribes directly to HA light states. It can apply changes to Soft, Bright and preset participation. A configuration change that requires new artwork needs a new render. The worker starts after Ethernet connects. Touch navigation starts locally.
 
-The normal ESPHome upload writes only the application images. This target also needs its matching motion bank and acceleration table. The fixed layout has two 3 MiB application slots, a motion partition starting at 0x610000 and NVS at 0x1f90000. The generated `live_runtime/motion_tail.h` gives the byte offset of `live-motion-tail.bin` within the motion partition. Verify the identity, partition table, space and image digests before installing. Preserve the previous working image.
+The normal ESPHome upload writes only the application images. This target also needs its matching motion bank, acceleration table and volume artwork. The fixed layout has two 3 MiB application slots, a motion partition starting at 0x610000 and NVS at 0x1f90000. The generated `live_runtime/motion_tail.h` gives the offsets of `live-motion-tail.bin` and `volume-art.bin` relative to the start of the motion partition. Provision the volume bank at `0x610000 + volume_offset` and verify its SHA-256 against `volume_sha`. The previous paired build does not use those sectors. Verify the device, partition layout and digests before installing. Preserve the previous working image.
 
 ## Coverage
 
@@ -36,7 +36,11 @@ The relay preserves the camera aspect ratio. The P4 fits each frame into the vid
 
 The Home player and Music screen use the configured speaker’s HA title, artist, position and duration. The seek action is available when the speaker reports support. The queue shows the current track and reported playlist or album. The panel can decode baseline JPEG cover art from the configured HA host, including a Music Assistant image endpoint on that host. The Home artwork preference persists on the device.
 
-The room menu date and diagnostic connection, Ethernet, backlight and uptime readings are generated on the panel. The music library, speaker selection and transfer, alternate themes and palettes, Wi-Fi setup and diagnostic actions still require implementation and verification.
+The Music screen lists the configured speakers and switches its transport, volume, timeline and artwork to the selection. Queue transfer uses the Music Assistant action and waits for Home Assistant to confirm. The destination needs an available Music Assistant player with a different queue. The library browses Home Assistant directly, pages through large folders, and offers tile and list views. Selecting a playable track sends it to the selected speaker. The library view preference persists locally. Visible items can load baseline JPEG thumbnails over HTTPS or from the HA host. PNG, signed relative thumbnail paths and unsupported image sizes retain the kiosk fallback icon.
+
+The room menu date, Home Assistant connection, network, backlight, display refresh and uptime readings come from the P4. The diagnostics toggle persists across restarts. Its scroll test measures completed presentations across six native list-rendering workloads and shows the results on the panel. Browser compositor workloads and native renderer workloads measure different operations.
+
+The asset generator accepts all six Architectural palettes for individual builds. In-panel palette switching, the Default and Ambient layouts, and Wi-Fi setup remain open. The working room uses Architectural and Linen over Ethernet.
 
 ## Hardware test
 

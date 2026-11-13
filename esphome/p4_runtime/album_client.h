@@ -10,25 +10,29 @@ class AlbumClient {
   struct Frame {uint8_t *data=nullptr;size_t size=0;uint32_t version=0;};
   static constexpr size_t limit=384*1024;
   uint32_t generation()const{return generation_;}
-  void start(const char *entity,const char *origin){
-    entity_=entity;origin_=origin;
-    if(!*entity || !*origin)return;
+  bool initialized()const{return jobs_ && result_;}
+  void start(const char *origin,bool library_thumbnails=false){
+    origin_=origin;
+    thumbnails_=library_thumbnails;
+    if(!*origin)return;
     jobs_=xQueueCreate(1,sizeof(Job));result_=xQueueCreate(1,sizeof(Frame));
-    if(!jobs_ || !result_)return;
-    esphome::api::global_api_server->subscribe_home_assistant_state(entity,"entity_picture",[this](esphome::StringRef s){
-      auto value=s.str();if(value==last_)return;
-      const uint32_t version=++generation_;
-      Job job{};job.version=version;
-      if(value.size()<sizeof(job.url)){last_=value;memcpy(job.url,value.data(),value.size());}else last_.clear();
-      xQueueOverwrite(jobs_,&job);
-      if(!worker_)xTaskCreate([](void *p){static_cast<AlbumClient*>(p)->run();},"study_art",8192,this,1,&worker_);
-    });
+  }
+  void select(const char *entity,const std::string &value){
+    if(!jobs_ || !result_ || (entity==last_entity_ && value==last_))return;
+    last_entity_=entity;
+    const uint32_t version=++generation_;
+    Job job{};job.version=version;job.entity=entity;
+    last_=value;
+    if(value.size()<sizeof(job.url))memcpy(job.url,value.data(),value.size());
+    xQueueOverwrite(jobs_,&job);
+    if(!worker_)xTaskCreate([](void *p){static_cast<AlbumClient*>(p)->run();},"study_art",8192,this,1,&worker_);
   }
   bool take(Frame &f){return result_ && xQueueReceive(result_,&f,0)==pdTRUE;}
  private:
-  struct Job {uint32_t version;char url[1536];};
+  struct Job {uint32_t version;const char *entity;char url[1536];};
   std::atomic<uint32_t> generation_{0};
-  const char *entity_="",*origin_="";
+  bool thumbnails_=false;
+  const char *last_entity_="",*origin_="";
   std::string last_;
   QueueHandle_t jobs_{},result_{};
   TaskHandle_t worker_{};
@@ -44,12 +48,15 @@ class AlbumClient {
     const auto name=authority.substr(0,port);
     return name.find_first_not_of("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-")==std::string::npos?name:"";
   }
-  std::string trusted_url(std::string picture)const{
+  std::string trusted_url(std::string picture,const char *entity)const{
     if(picture.find_first_of("\r\n\\#")!=std::string::npos)return {};
-    const std::string proxy="/api/media_player_proxy/"+std::string(entity_)+"?";
+    const std::string proxy="/api/media_player_proxy/"+std::string(entity)+"?";
     if(picture.compare(0,proxy.size(),proxy)==0)return std::string(origin_)+picture;
     const auto source=host(picture),ha=host(origin_);
     if(source.empty() || ha.empty())return {};
+    // HA supplies absolute HTTPS media thumbnails. This client sends no
+    // credentials, rejects redirects and verifies the server certificate.
+    if(thumbnails_ && picture.rfind("https://",0)==0)return picture;
     if(source==ha)return picture;
     // HA may advertise its numeric LAN address for the Music Assistant image
     // service while the panel uses its mDNS name. Never attach a fleet token.
@@ -64,7 +71,7 @@ class AlbumClient {
   }
   Frame fetch(const Job &job){
     Frame f{};f.version=job.version;
-    const auto url=trusted_url(job.url);if(url.empty())return f;
+    const auto url=trusted_url(job.url,job.entity);if(url.empty())return f;
     esp_http_client_config_t cfg{};cfg.url=url.c_str();cfg.timeout_ms=5000;
     cfg.disable_auto_redirect=true;cfg.crt_bundle_attach=esp_crt_bundle_attach;
     auto h=esp_http_client_init(&cfg);if(!h)return f;

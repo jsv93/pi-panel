@@ -6,6 +6,7 @@
 #include "media_client.h"
 #include "doorbell_client.h"
 #include "album_client.h"
+#include "library_client.h"
 #include "live_settings.h"
 
 namespace study {
@@ -17,9 +18,12 @@ struct RoomProfile {
 static p4_runtime::FleetClient<RoomProfile> fleet;
 static p4_runtime::LightClient<light_count> ha_lights;
 static p4_runtime::ClimateClient thermostat;
-static p4_runtime::MediaClient player;
+static p4_runtime::MediaClient players[speaker_count?speaker_count:1];
+static int selected_speaker=0;
+static p4_runtime::MediaClient &player(){return players[selected_speaker];}
 static p4_runtime::DoorbellClient bell_client;
-static p4_runtime::AlbumClient album_client;
+static p4_runtime::AlbumClient album_client,thumbnail_client;
+static p4_runtime::LibraryClient library;
 static RoomProfile factory_profile(){
   RoomProfile p;
   for(int i=0;i<light_count;i++){
@@ -61,9 +65,10 @@ static int last_on[light_count]{};
 static void room_start(){
   fleet.begin(fleet_settings,decode_room,factory_profile());
   thermostat.start(temperature_entity,humidity_entity,climate_entity);
-  player.start(initial_speaker);
+  for(int i=0;i<speaker_count;i++)players[i].start(speaker_ids[i]);
 #ifndef STUDY_BENCH_TEST
-  album_client.start(initial_speaker,ha_origin);
+  album_client.start(ha_origin);
+  thumbnail_client.start(ha_origin,true);
 #endif
   if(bell_enabled)bell_client.begin(fleet_settings,bell_trigger,bell_camera,ha_origin);
   ha_lights.start(room_entities,[](size_t i,int value){

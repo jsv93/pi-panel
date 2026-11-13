@@ -51,6 +51,7 @@ def main():
     header.append("constexpr char layout_contract[]=" + json.dumps(json.dumps(contract, separators=(",", ":"))) + ";")
     fields = [args.server.rstrip("/"), args.id, args.mac, args.id, identity["token"], identity["sign_key"]]
     display=config["display"]
+    header.append("constexpr bool diagnostic_default="+json.dumps(bool(display.get("diagnostics",False)))+";")
     header.append("constexpr bool default_mini_art="+json.dumps(bool(display.get("mini_art",True)))+";")
     for name,default in [("idle_timeout_s",45),("backlight_off_s",0),("backlight_default",100),("backlight_min",5),
                          ("adaptive_min_pct",10),("adaptive_max_pct",100),("adaptive_dark_lux",5),
@@ -86,6 +87,11 @@ def main():
         p.error("invalid media player entity")
     header.append("constexpr char initial_speaker[]="+json.dumps(speakers[0] if speakers else "")+";")
     header.append("constexpr char initial_speaker_name[]="+json.dumps(media.get("default_speaker_name") or "")+";")
+    labels={s["entity_id"]:s.get("name") for s in media.get("speakers",[]) if isinstance(s,dict) and s.get("entity_id")}
+    labels.setdefault(default,media.get("default_speaker_name"))
+    header.append("constexpr const char *speaker_ids[]={"+",".join(map(json.dumps,speakers or [""]))+"};")
+    header.append("constexpr const char *speaker_labels[]={"+",".join(json.dumps(labels.get(s) or s.partition(".")[2]) for s in speakers or [""])+"};")
+    header.append(f"constexpr int speaker_count={len(speakers)};")
     for role in ("temperature","humidity","climate"):
         entity=config.get("sensors",{}).get(role,"") or ""
         if entity and not re.fullmatch(r"[a-z0-9_]+\.[a-z0-9_]+",entity):
@@ -104,12 +110,20 @@ def main():
     start = ((args.build / "study-motion.bin").stat().st_size + 65535) & ~65535
     if not blob or start + len(blob) > 0x1980000:
         p.error("navigation table does not fit the reserved Study partition")
+    volume_file=args.build/"volume-art.bin"
+    if not volume_file.exists():p.error("regenerate media_art.h and volume-art.bin with media_art.py")
+    volume=volume_file.read_bytes()
+    volume_offset=(start+len(blob)+4095)&~4095
+    if not volume or volume_offset+len(volume)>0x1980000:p.error("volume artwork does not fit after the navigation bank")
+    volume_sha=",".join(map(str,hashlib.sha256(volume).digest()))
     (args.build / "live-motion-tail.bin").write_bytes(blob)
     expected = ",".join(map(str, hashlib.sha256(blob).digest()))
     (dest / "motion_tail.h").write_text(
         "#pragma once\nnamespace study {\n"
         f"constexpr unsigned tail_offset={start},tail_size={len(blob)};\n"
-        f"constexpr unsigned char tail_sha[]={{{expected}}};\n}}\n")
+        f"constexpr unsigned char tail_sha[]={{{expected}}};\n"
+        f"constexpr unsigned volume_offset={volume_offset},volume_size={len(volume)};\n"
+        f"constexpr unsigned char volume_sha[]={{{volume_sha}}};\n}}\n")
     source = (args.build / "study.yaml").read_text(encoding="utf-8")
     if not (args.build / "control_art.h").exists():
         p.error("generate control_art.h using esphome/study/control_art.py first")
@@ -120,6 +134,8 @@ def main():
     shutil.copyfile(Path(__file__).parent.parent/"study/text_renderer.h",args.build/"text_renderer.h")
     source = source.replace("study_assets.h, study.h", "study_assets.h, control_art.h, media_art.h, text_art.h, text_renderer.h, study.h")
     source = source.replace("includes: [scanout.h", "includes: [live_runtime, scanout.h")
+    source=source.replace("  includes:", "  platformio_options:\n    build_flags: [-DUSE_API_HOMEASSISTANT_ACTION_RESPONSES, -DUSE_API_HOMEASSISTANT_ACTION_RESPONSES_ERRORS, -DUSE_API_HOMEASSISTANT_ACTION_RESPONSES_JSON]\n  includes:",1)
+    source+="\njson:\n"
     source = source.replace("esp_driver_jpeg, esp_driver_ppa]", "esp_driver_jpeg, esp_driver_ppa, esp_http_client, json, nvs_flash]")
     source = source.replace("    sdkconfig_options:\n", '    sdkconfig_options:\n      CONFIG_MBEDTLS_CERTIFICATE_BUNDLE: "y"\n')
     source = source.replace("\napi:\n", "\napi:\n  homeassistant_services: true\n  homeassistant_states: true\n")

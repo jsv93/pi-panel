@@ -47,17 +47,21 @@ class DoorbellClient {
     xTaskCreate([](void *self){static_cast<DoorbellClient*>(self)->wait_loop();},
                 "bell_wait",6144,this,1,&listener_);
   }
+  bool reserve_frames(){
+    if(!free_)free_=xQueueCreate(2,sizeof(Frame));
+    if(!ready_)ready_=xQueueCreate(2,sizeof(Frame));
+    if(!free_ || !ready_)return false;
+    for(auto &slot:slots_)if(!slot){
+      slot=static_cast<uint8_t*>(heap_caps_malloc(frame_limit,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+      if(!slot)return false;
+      Frame frame{slot,0,0};xQueueSend(free_,&frame,0);
+    }
+    return true;
+  }
   void open(bool use_server){
     prefer_server_=use_server;
     if(!worker_){
-      if(!free_)free_=xQueueCreate(2,sizeof(Frame));
-      if(!ready_)ready_=xQueueCreate(2,sizeof(Frame));
-      if(!free_ || !ready_)return;
-      for(auto &slot:slots_)if(!slot){
-        slot=static_cast<uint8_t*>(heap_caps_malloc(frame_limit,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
-        if(!slot){failed_=true;return;}
-        Frame frame{slot,0,0};xQueueSend(free_,&frame,0);
-      }
+      if(!reserve_frames()){failed_=true;ESP_LOGW("study","Camera frame buffers unavailable");return;}
       xTaskCreate([](void *self){static_cast<DoorbellClient*>(self)->stream_loop();},
                   "bell_stream",8192,this,1,&worker_);
     }

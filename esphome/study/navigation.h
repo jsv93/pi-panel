@@ -67,7 +67,7 @@ class Navigation {
     auto intersects=[=](const Rect &r){
       return x<r.x+r.w && x+16>r.x && y<r.y+r.h && y+8>r.y;
     };
-    if(page==home)return intersects(number_rects[0]) || (player.playing && intersects(home_strip));
+    if(page==home)return intersects(number_rects[0]) || (player().playing && intersects(home_strip));
     if(page==room_menu_page)return intersects(menu_date.rect);
     if(page==settings_page)return intersects(mini_choice.rect);
     if(page==diagnostics_page)return intersects(net_status.rect) || intersects(ha_status.rect) || intersects(up_status.rect) || intersects(backlight_status.rect);

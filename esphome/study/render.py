@@ -29,7 +29,7 @@ def rgb565(im, x=0, y=0):
 
 
 @contextmanager
-def fixture_page(cfg, states):
+def fixture_page(cfg, states, browse_children=None):
     cfg={**cfg, "display": {**cfg["display"], "idle_timeout_s":3600}}
     # Only fixture sockets exist in this context. Buttons cannot operate the house.
     fake = """
@@ -39,14 +39,15 @@ def fixture_page(cfg, states):
       emit(m){this.onmessage?.({data:JSON.stringify(m)})}
       send(raw){if(!this.ha)return;const m=JSON.parse(raw);
         queueMicrotask(()=>this.emit(m.type==='auth'?{type:'auth_ok'}:
-          {type:'result',id:m.id,success:true,result:m.type==='get_states'?window.fixtureStates:{}}));}
+          {type:'result',id:m.id,success:true,result:m.type==='get_states'?window.fixtureStates:
+           m.type==='media_player/browse_media'?{children:window.fixtureLibrary}: {}}));}
       close(){this.readyState=3}
     };"""
     with sync_playwright() as pw:
         browser = pw.chromium.launch(channel="msedge", headless=True)
         page = browser.new_page(viewport={"width": W, "height": H}, device_scale_factor=1,
                                 locale="en-AU", timezone_id="Australia/Brisbane")
-        page.add_init_script("window.fixtureStates="+json.dumps(states)+";"+fake)
+        page.add_init_script("window.fixtureStates="+json.dumps(states)+";window.fixtureLibrary="+json.dumps(browse_children or [])+";"+fake)
         def route(r):
             url = r.request.url
             if not url.startswith(ORIGIN+"/"):
@@ -169,6 +170,9 @@ if __name__=="__main__":
     p.add_argument("config",type=Path);p.add_argument("states",type=Path);p.add_argument("destination",type=Path)
     a=p.parse_args()
     cfg=json.loads(a.config.read_bytes())["config"]
-    assert cfg["display"]["theme"]=="architectural" and cfg["display"]["palette"]=="linen"
+    if cfg["display"]["theme"]!="architectural":
+        p.error("this native layout uses the Architectural screen geometry")
+    if cfg["display"].get("palette","linen") not in ("midnight","ember","slate","heath","mono","linen"):
+        p.error("unknown kiosk palette")
     assert cfg["display"]["screen_width"]==W and cfg["display"]["screen_height"]==H
     generate(cfg,json.loads(a.states.read_bytes()),a.destination)

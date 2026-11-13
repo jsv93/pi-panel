@@ -1,6 +1,7 @@
 """Capture text backgrounds, metrics and glyph masks from the Study kiosk."""
 import io,json,sys,zlib
 import copy
+import numpy as np
 from pathlib import Path
 from PIL import Image,ImageChops
 from render import fixture_page,rgb565
@@ -9,7 +10,7 @@ from control_art import box
 
 def capture(config,states,dest):
     # Include the punctuation used by the HA player and the dashboard.
-    chars="".join(chr(i) for i in range(32,127))+" °·éèëàáäöóñüß–—‘’“”…•"
+    chars="".join(chr(i) for i in range(32,127))+" °·éèëàáäöóñüß–—‘’“”…•←›"
     bank=bytearray();offsets={};fonts={};fields=[]
     def put(data):
         if data not in offsets:offsets[data]=len(bank);bank.extend(data)
@@ -20,7 +21,9 @@ def capture(config,states,dest):
             state["state"]="playing"
             attrs=state.setdefault("attributes",{})
             attrs.update(media_title="Track",media_artist="Artist");attrs.pop("entity_picture",None)
-    with fixture_page(config,samples) as page:
+    library_fixture=[dict(title=f"Folder {i}",media_class="directory" if i%2==0 else "track",
+                          can_expand=i%2==0,can_play=i%2!=0,media_content_id=str(i),media_content_type="music") for i in range(8)]
+    with fixture_page(config,samples,library_fixture) as page:
         def click(sel):page.locator(sel).first.evaluate("e=>e.click()");page.wait_for_timeout(350)
         def field(name,sel,kind="full",alignment=None,subset=chars):
             el=page.locator(sel)
@@ -115,6 +118,67 @@ def capture(config,states,dest):
             x,y,r,b=bounds;queue_rects.append((x,y,r-x,b-y))
             queue_frames.append(put(zlib.compress(rgb565(pic.crop(bounds),x,y),9)))
         click("#ovQueue [data-ov-back]")
+        speaker_button=box(page,"#icoSpk")
+        click("#icoSpk")
+        speaker_back=box(page,"#ovSpk [data-ov-back]")
+        # A fixed chrome image, followed by scrollable device rows. Paint row
+        # contents from live HA state using the kiosk's own pixels.
+        card=page.locator("#ovSpk .ov-card")
+        card.evaluate("e=>e.scrollTop=0")
+        speaker_top=box(page,"#spkList")[1]
+        speaker_end=box(page,".nav")[1]
+        speaker_rows=[];speaker_rects=[];speaker_arrows=[]
+        rows=page.locator("#spkList .dev")
+        for i in range(rows.count()):
+            row=rows.nth(i)
+            scroll=card.evaluate("(e,i)=>{e.scrollTop=Math.max(0,e.querySelectorAll('.dev')[i].getBoundingClientRect().y+e.scrollTop-400);return e.scrollTop}",i)
+            def row_box():
+                b=row.bounding_box();return (int(b["x"]),round(b["y"]),round(b["width"]),round(b["height"]))
+            variants=[]
+            for sub in ("Current speaker","Unavailable","Control only · transfer unavailable",""):
+                row.locator(".sub").evaluate("(e,t)=>e.textContent=t",sub)
+                row.locator(".spk-transfer").evaluate("e=>e.disabled=true")
+                x,y,w,h=row_box()
+                variants.append((*region((x,y,w,h)),h))
+            ax=box(page,f"#spkList .dev:nth-child({i+1}) .spk-transfer")[0]-x
+            row.locator(".spk-transfer").evaluate("e=>e.disabled=false")
+            speaker_arrows.append(region((x+ax,y,w-ax,h)))
+            speaker_rows.append(variants);speaker_rects.append((x,w,ax))
+        card.evaluate("e=>e.scrollTop=0")
+        field("speaker_now","#spkNow")
+        page.locator("#spkList").evaluate("e=>e.style.visibility='hidden'")
+        speaker_base=region((0,0,720,1280))
+        click("#ovSpk [data-ov-back]")
+        browse_button=box(page,"#icoSearch");click("#icoSearch")
+        browse_back=box(page,"#bBack");browse_switch=box(page,"#bView")
+        field("library_title","#bTitle");field("library_crumb","#bCrumb")
+        list_area=box(page,"#bList")
+        lib_templates=[];lib_regions=[];lib_steps=[];lib_bases=[];note_icons=[];note_rects=[]
+        for mode in range(2):
+            if mode:click("#bView")
+            items=page.locator("#bList .bitem")
+            cols=2 if page.locator("#bList").evaluate("e=>e.classList.contains('tiles')") else 1
+            tile_areas=[box(page,f"#bList .bitem:nth-child({i+1})") for i in range(3)]
+            lib_steps.append((cols,tile_areas[cols][1]-tile_areas[0][1],tile_areas[1][0]-tile_areas[0][0]))
+            for i in range(2):
+                base=f"#bList .bitem:nth-child({i+1})"
+                for suffix,selector in (("name",".n"),("type",".s")):
+                    field(f"library_{suffix}_{mode}_{i}",base+" "+selector)
+                if i==0:
+                    folder_icon=items.nth(0).locator(".bthumb")
+                    note=items.nth(1).locator(".bthumb").inner_html()
+                    original=folder_icon.inner_html()
+                    folder_icon.evaluate("(e,html)=>e.innerHTML=html",note)
+                    icon_rect=box(page,base+" .bthumb")
+                    note_icons.append(region(icon_rect));note_rects.append(icon_rect)
+                    folder_icon.evaluate("(e,html)=>e.innerHTML=html",original)
+                items.nth(i).locator(".bmeta").evaluate("e=>e.style.visibility='hidden'")
+                lib_templates.append(region(tile_areas[i]));lib_regions.append(tile_areas[i])
+            page.locator("#bList").evaluate("e=>e.style.visibility='hidden'")
+            lib_bases.append(region((0,0,720,1280)))
+            page.locator("#bList").evaluate("e=>e.style.visibility=''")
+            page.locator("#bList .bmeta").evaluate_all("xs=>xs.forEach(e=>e.style.visibility='')")
+        click("#bBack")
         click("#archMenu")
         field("menu_date","#archDate")
         click('#archRoomLinks [data-sheet="settings"]')
@@ -123,6 +187,34 @@ def capture(config,states,dest):
         click('#archSettingsLinks [data-sheet="diagnostics"]')
         for name,sel in (("ha_status","#stHA"),("backlight_status","#stBL"),("net_status","#stNet"),("up_status","#sUp")):
             field(name,sel,"right","right")
+        diagnostic_button=box(page,"#diagRow")
+        if not page.locator("body").evaluate("e=>e.classList.contains('diag')"):click("#diagRow")
+        diagnostic_on_button=box(page,"#diagRow");scroll_button=box(page,"#scrollTestRow")
+        page.locator("#stGL").evaluate("e=>e.textContent='ESP32-P4 · MIPI DSI'")
+        page.locator("#fps").evaluate("e=>e.textContent='55 fps'")
+        field("diag_fps","#fps",subset="0123456789 fps?")
+        field("diag_connection","#conn")
+        diagnostic_on=region((0,0,720,1280))
+        for name,sel in (("diag_ha","#stHA"),("diag_backlight","#stBL"),("diag_net","#stNet"),("diag_uptime","#sUp")):
+            field(name,sel,"right","right")
+        click("#scrollTestRow")
+        page.wait_for_function("document.querySelector('#bCrumb').textContent.includes('reopen')",timeout=35000)
+        diagnostic_results=[]
+        for mode in range(2):
+            tiles=lib_steps[mode][0]>1
+            page.locator("#bList").evaluate("(e,b)=>e.classList.toggle('tiles',b)",tiles)
+            page.locator("#bList .bitem").evaluate_all("xs=>xs.forEach((e,i)=>{e.querySelector('.n').textContent='Case';e.querySelector('.s').textContent='00 fps · baseline'})")
+            for i in range(6):
+                for kind in ("n","s"):field(f"diagnostic_result_{mode}_{i}_{kind}",f"#bList .bitem:nth-child({i+1}) .{kind}")
+            page.locator("#bList .bmeta").evaluate_all("xs=>xs.forEach(el=>el.style.visibility='hidden')")
+            bg_offset,bg_len=lib_bases[mode]
+            baseline=zlib.decompress(bank[bg_offset:bg_offset+bg_len])
+            current=rgb565(Image.open(io.BytesIO(page.screenshot())))
+            diagnostic_results.append(put(zlib.compress(np.bitwise_xor(np.frombuffer(baseline,np.uint8),np.frombuffer(current,np.uint8)).tobytes(),9)))
+            page.locator("#bList .bmeta").evaluate_all("xs=>xs.forEach(el=>el.style.visibility='')")
+        click("#bBack")
+        click("#archMenu");click('#archRoomLinks [data-sheet="settings"]');click('#archSettingsLinks [data-sheet="diagnostics"]')
+        click("#diagRow")
         bell=config.get("doorbell") or {}
         page.evaluate("""([title,seconds])=>{
           document.querySelector('#doorbellPopup').hidden=false;
@@ -145,8 +237,10 @@ def capture(config,states,dest):
             bell_foot.append(region(footer))
     def c(v):return "{"+",".join(c(x) if isinstance(x,(list,tuple)) else str(x) for x in v)+"}"
     with (dest/"text_art.h").open("w",encoding="ascii") as f:
-        f.write('#pragma once\n#include "study_assets.h"\nnamespace study {\nstatic const uint8_t text_art[]=\n')
-        for o in range(0,len(bank),256):f.write('"'+''.join(f'\\x{b:02x}' for b in bank[o:o+256])+'"\n')
+        f.write('#pragma once\n#include "study_assets.h"\nnamespace study {\n')
+        f.write(f'constexpr size_t text_bytes={len(bank)};\nstatic uint8_t *text_art;\nstatic const uint8_t packed_text[]=\n')
+        compressed=zlib.compress(bank,9)
+        for o in range(0,len(compressed),256):f.write('"'+''.join(f'\\x{b:02x}' for b in compressed[o:o+256])+'"\n')
         f.write(';\nstruct TextGlyph{uint16_t code,advance;int16_t x,y;uint16_t w,h;uint32_t offset,size;};\n')
         starts=[0];flat=[]
         for records in fonts.values():flat.extend(records);starts.append(len(flat))
@@ -161,10 +255,25 @@ def capture(config,states,dest):
         f.write("constexpr Rect queue_button="+c(queue_open)+",queue_back="+c(queue_back)+";\n")
         f.write("constexpr unsigned queue_pages[][2]="+c(queue_frames)+";\n")
         f.write("constexpr Rect queue_patches[]="+c(queue_rects)+";\n")
+        f.write("constexpr Rect speaker_button="+c(speaker_button)+",speaker_back="+c(speaker_back)+";\n")
+        f.write(f"constexpr int speaker_top={speaker_top},speaker_end={speaker_end};\n")
+        f.write("constexpr unsigned speaker_base[]="+c(speaker_base)+";\n")
+        f.write("constexpr unsigned speaker_rows[][4][3]="+c(speaker_rows or [[[0,0,0]]*4])+",speaker_rects[][3]="+c(speaker_rects or [[0,0,0]])+",speaker_arrows[][2]="+c(speaker_arrows or [[0,0]])+";\n")
         f.write("constexpr Rect bell_viewport="+c(viewport)+",bell_header="+c(header)+",bell_footer="+c(footer)+";\n")
+        f.write("constexpr Rect diagnostic_button="+c(diagnostic_button)+",diagnostic_on_button="+c(diagnostic_on_button)+",scroll_button="+c(scroll_button)+";\n")
+        f.write("constexpr unsigned diagnostic_on[]="+c(diagnostic_on)+";\n")
         f.write("constexpr unsigned bell_empty_video[]="+c(video_bg)+",bell_headers[][2]="+c(bell_head)+",bell_footers[][2]="+c(bell_foot)+";\n")
         for name,rect,bg,col,font,baseline,spacing,align in fields:
             f.write("constexpr TextArea "+name+"="+c((rect,*bg,col,font,baseline,spacing,align))+";\n")
+        f.write("constexpr Rect browse_button="+c(browse_button)+",browse_back="+c(browse_back)+",browse_switch="+c(browse_switch)+",library_list="+c(list_area)+";\n")
+        f.write("constexpr unsigned library_bases[][2]="+c(lib_bases)+",library_art[][2]="+c(lib_templates)+",library_steps[][3]="+c(lib_steps)+";\n")
+        f.write("constexpr Rect library_note_rects[]="+c(note_rects)+";\n")
+        f.write("constexpr unsigned library_notes[][2]="+c(note_icons)+",diagnostic_results[][2]="+c(diagnostic_results)+";\n")
+        for kind in ("n","s"):
+            f.write("constexpr TextArea diagnostic_result_"+kind+"[][6]={"+",".join("{"+",".join(f"diagnostic_result_{m}_{i}_{kind}" for i in range(6))+"}" for m in range(2))+"};\n")
+        f.write("constexpr Rect library_tiles[]="+c(lib_regions)+";\n")
+        for kind in ("name","type"):
+            f.write("constexpr TextArea library_"+kind+"[]={"+",".join(f"library_{kind}_{m}_{i}" for m in range(2) for i in range(2))+"};\n")
         f.write("}\n")
     print("Kiosk text bank",len(bank),"bytes")
 

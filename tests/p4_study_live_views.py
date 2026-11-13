@@ -38,12 +38,38 @@ def generate(build):
             for x,y in paths[name]:steps.append(f"tap({x},{y});")
         steps.append(f'if(current!={i}){{ESP_LOGE("study","LIVE_WRONG_SCREEN {name}");return;}}')
         capture(name)
+        if name=="diagnostics":
+            steps.append("tap_box(diagnostics_enabled?diagnostic_on_button:diagnostic_button);")
+            steps.append("if(!diagnostics_enabled)tap_box(diagnostic_button);")
+            capture("diagnostics-on")
+            steps.append("tap_box(scroll_button);")
+            steps.append('if(diagnostic_pass>=0 && diagnostic_pass<6){--step;return;}if(diagnostic_pass!=6)ESP_LOGE("study","LIVE_WRONG_SCREEN diagnostics scroll");')
+            capture("diagnostics-scroll")
+            steps.append("tap_box(browse_back);")
+            steps.append("tap_box(diagnostic_on_button);")
         if re.fullmatch(r"light\d+",name):
             light=int(name[5:]);steps.append("tap_box(more_open);");capture("more"+str(light))
             if light==2:
                 steps.append("tap_box(colour_open[2]);");capture("colour");steps.append("tap_box(colour_back[2]);")
             steps.append(f"tap_box(more_back[{light}]);")
         if name=="media":
+            steps.append("tap_box(speaker_button);")
+            capture("speakers")
+            steps.append("if(speaker_count>1){tap(speaker_rects[1][0]+30,speaker_top+speaker_rows[0][speaker_variant(0)][2]+35);}")
+            steps.append('if(speaker_count>1 && selected_speaker!=1)ESP_LOGE("study","LIVE_WRONG_SCREEN speaker selection");')
+            steps.append("if(speaker_count>1){tap_box(speaker_button);tap(speaker_rects[0][0]+30,speaker_top+35);}else tap_box(speaker_back);")
+            steps.append('if(selected_speaker!=0 || speakers_open)ESP_LOGE("study","LIVE_WRONG_SCREEN speaker return");')
+            steps.append("tap_box(browse_button);")
+            steps.append('if(library.waiting){--step;return;}if(library.items.empty())ESP_LOGE("study","LIVE_WRONG_SCREEN library unavailable");')
+            capture("library")
+            steps.append("tap_box(browse_switch);")
+            capture("library-alternate")
+            steps.append("tap_box(browse_switch);tap(library_list.x+32,library_list.y+32);")
+            steps.append('if(library.waiting){--step;return;}if(library.folders.empty())ESP_LOGE("study","LIVE_WRONG_SCREEN library folder");')
+            steps.append('static int64_t entered=0;if(!entered)entered=clock_ms();if(clock_ms()-entered<3000){--step;return;}')
+            capture("library-folder")
+            steps.append("tap_box(browse_back);")
+            steps.append("if(library.waiting){--step;return;}tap_box(browse_back);")
             steps.append("tap_box(volume_button);");capture("volume");steps.append("tap_box(volume_close);")
             steps.append("tap_box(queue_button);");capture("queue");steps.append("tap_box(queue_back);")
     steps.append('close_ring();depth=0;show(home,0);ESP_LOGI("study","LIVE_VIEWS_DONE");')
@@ -89,7 +115,7 @@ static void snapshot(const char *name){
   ESP_LOGI("study","LIVE_BEGIN %s %u %08x %s %d",name,unsigned(compressed_size),capture_crc,compressed_size==page_bytes?"raw":"delta",current);
 }
 static void capture_chunk(){
-  for(int lines=0;lines<8 && position<compressed_size;lines++){
+  for(int lines=0;lines<4 && position<compressed_size;lines++){
     unsigned char encoded[200];size_t n=0,chunk=std::min<size_t>(144,compressed_size-position);
     if(mbedtls_base64_encode(encoded,sizeof(encoded),&n,previous_pixels+position,chunk)!=0)return;
     ESP_LOGI("study","LIVE_PIX %u %.*s",unsigned(position),int(n),encoded);position+=chunk;

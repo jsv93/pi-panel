@@ -61,7 +61,7 @@ def extract_live(build, log, destination):
             chunk = re.search(r"LIVE_PIX (\d+) ([A-Za-z0-9+/=]+)$", line)
             if chunk:
                 if not active or int(chunk[1]) != len(data):
-                    raise ValueError("Missing or misplaced USB data")
+                    raise ValueError(f"Missing or misplaced USB data on {active}, expected {len(data)}, received {chunk[1]}")
                 data.extend(base64.b64decode(chunk[2], validate=True))
                 if len(data) > size:
                     raise ValueError("USB capture exceeded declared size")
