@@ -29,7 +29,7 @@ def rgb565(im, x=0, y=0):
 
 
 @contextmanager
-def fixture_page(cfg, states, browse_children=None):
+def fixture_page(cfg, states, browse_children=None, *, chromium_cdp=None):
     cfg={**cfg, "display": {**cfg["display"], "idle_timeout_s":3600}}
     # Only fixture sockets exist in this context. Buttons cannot operate the house.
     fake = """
@@ -44,7 +44,7 @@ def fixture_page(cfg, states, browse_children=None):
       close(){this.readyState=3}
     };"""
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(channel="msedge", headless=True)
+        browser = pw.chromium.connect_over_cdp(chromium_cdp) if chromium_cdp else pw.chromium.launch(channel="msedge", headless=True)
         page = browser.new_page(viewport={"width": W, "height": H}, device_scale_factor=1,
                                 locale="en-AU", timezone_id="Australia/Brisbane")
         page.add_init_script("window.fixtureStates="+json.dumps(states)+";window.fixtureLibrary="+json.dumps(browse_children or [])+";"+fake)
@@ -68,7 +68,10 @@ def fixture_page(cfg, states, browse_children=None):
         try:
             yield page
         finally:
-            browser.close()
+            if chromium_cdp:
+                page.context.close()
+            else:
+                browser.close()
 
 def generate(cfg, states, dest):
     dest.mkdir(parents=True, exist_ok=True)

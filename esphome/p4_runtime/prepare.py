@@ -18,6 +18,7 @@ def main():
     p.add_argument("--server", required=True)
     p.add_argument("--identity-file", type=Path)
     p.add_argument("--hosted-wifi",action="store_true",help="Include the Waveshare C6 radio and external text artwork")
+    p.add_argument("--card-assets",type=Path,help="Directory containing the generated card_assets.h and card_lights.h for this room")
     args = p.parse_args()
     if not re.fullmatch(r"[a-z0-9-]{1,60}", args.id):
         p.error("invalid panel id")
@@ -53,6 +54,7 @@ def main():
     header.append("constexpr char layout_contract[]=" + json.dumps(json.dumps(contract, separators=(",", ":"))) + ";")
     fields = [args.server.rstrip("/"), args.id, args.mac, args.id, identity["token"], identity["sign_key"]]
     display=config["display"]
+    header.append("constexpr char card_room_label[]="+json.dumps(config.get("room_label") or "Room")+";")
     points=min(5,max(2,int(display.get("touch_points",3))))
     hold=min(1500,max(600,int(display.get("touch_hold_ms",600))))
     header.append(f"constexpr int gesture_points={points if display.get('touch_gesture','off') != 'off' else 0},gesture_hold_ms={hold};")
@@ -209,11 +211,36 @@ inline bool study_station_ip(esp_netif_ip_info_t &info){
   use_psram: true
 """
     source = source.replace("esp_driver_jpeg, esp_driver_ppa]", "esp_driver_jpeg, esp_driver_ppa, esp_http_client, json, nvs_flash]")
+    if args.card_assets:
+        study=Path(__file__).parent.parent/"study"
+        for name in ("card_assets.h","card_lights.h"):
+            path=args.card_assets/name
+            if not path.is_file():p.error(f"Missing generated artwork index {name}")
+            shutil.copyfile(path,dest/name)
+        routes=args.card_assets/"card_routes.h"
+        if not routes.is_file():p.error("Missing generated card_routes.h from the CM5 capture")
+        shutil.copyfile(routes,dest/routes.name)
+        for name in ("card_art.h","card_screen.h","card_light_controls.h","card_lights_page.h"):
+            shutil.copyfile(study/name,dest/name)
+        extended=[(args.card_assets/name).is_file() for name in ("card_presets.h","card_fields.h")]
+        if any(extended) and not all(extended):p.error("Provide both the card_presets.h and card_fields.h indexes")
+        if all(extended):
+            for name in ("card_presets.h","card_fields.h"):
+                shutil.copyfile(args.card_assets/name,dest/name)
+            for name in ("card_text.h","card_presets_page.h"):
+                shutil.copyfile(study/name,dest/name)
+            source=source.replace("build_flags: [","build_flags: [-DSTUDY_CARD_FIELDS, ",1)
+        source=source.replace("build_flags: [","build_flags: [-DSTUDY_CARD_ART, ",1)
+        source=source.replace("json, nvs_flash]","json, nvs_flash, fatfs, sdmmc, esp_driver_sdmmc]")
+        source=source.replace("    advanced:\n","    advanced:\n      disable_fatfs: false\n      disable_vfs_support_dir: false\n",1)
+        source=source.replace("    sdkconfig_options:\n",'    sdkconfig_options:\n      CONFIG_FATFS_LFN_NONE: "n"\n      CONFIG_FATFS_LFN_HEAP: "y"\n',1)
     source = source.replace("    sdkconfig_options:\n", '    sdkconfig_options:\n      CONFIG_MBEDTLS_CERTIFICATE_BUNDLE: "y"\n')
     source = source.replace("\napi:\n", "\napi:\n  homeassistant_services: true\n  homeassistant_states: true\n")
     source = source.replace("    - action: ring\n","    - action: ring_live_camera\n      then:\n        - lambda: 'if(study::bell_enabled)study::camera_ring(false);'\n        - api.respond:\n            success: !lambda 'return study::bell_enabled;'\n    - action: ring\n")
     source += "\ntime:\n  - platform: homeassistant\n    id: study_clock\n"
     source = source.replace("study::begin(id(panel_display)", "study::screen_callbacks([](){auto t=id(study_clock).now();return t.is_valid()?int(t.hour)*60+t.minute:-1;}, [](int level){return id(backlight_ctrl).write_byte(0x96, (level*255+50)/100);}); study::begin(id(panel_display)")
+    if "-DSTUDY_CARD_FIELDS" in source:
+        source=source.replace("study::screen_callbacks(", "study::card_date_now=[](){auto t=id(study_clock).now(); std::string room=study::card_room_label; return t.is_valid()?t.strftime(\"%a, \")+std::to_string(t.day_of_month)+t.strftime(\" %b\")+\"  ·  \"+room:room;}; study::screen_callbacks(",1)
     (args.build / "study-live.yaml").write_text(source, encoding="utf-8")
 
 

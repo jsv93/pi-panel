@@ -6,6 +6,14 @@
 #include "media_art.h"
 #include "text_renderer.h"
 #include "live_runtime/study_profile.h"
+#ifdef STUDY_CARD_ART
+#include "live_runtime/card_lights_page.h"
+#include "live_runtime/card_routes.h"
+#ifdef STUDY_CARD_FIELDS
+#include "live_runtime/card_text.h"
+#include "live_runtime/card_presets_page.h"
+#endif
+#endif
 #ifdef STUDY_BENCH_TEST
 #include "esp_rom_crc.h"
 #endif
@@ -67,6 +75,50 @@ static uint8_t *room_pixels, *page_pixels, *previous_pixels, *mixed_pixels, *lig
 static void control_patch(uint8_t *target,const Sprite &s,const Rect &area);
 #endif
 static Scanout scanout;
+#ifdef STUDY_CARD_ART
+static CardArt card_frames_file,card_levels_file;
+static CardScreen card_screens;
+static CardLightControls card_sliders;
+static CardLightsPage card_lights_page(card_screens,card_sliders);
+static bool card_page_visible=false,card_finger=false,card_switching=false;
+static int card_theme=0;
+static int card_mode=0;
+static CardPage card_page=CardPage::lights;
+#ifdef STUDY_CARD_FIELDS
+static CardArt card_field_file,card_preset_file;
+static CardText card_text;
+static CardPresetsPage card_presets;
+static std::string (*card_date_now)();
+static int card_scene_mask=-1;
+static int card_minute=-2;
+static std::string card_date;
+#endif
+enum class CardState {idle,loading,ready,failed};
+static std::atomic<CardState> card_state{CardState::idle};
+static bool card_assets_ready(){
+  auto state=card_state.load();
+  if(state==CardState::ready)return true;
+  if(state==CardState::loading)return false;
+  static int64_t retry_at=0;
+  if(clock_ms()<retry_at)return false;
+  retry_at=clock_ms()+30000;
+  card_state.store(CardState::loading);
+  if(xTaskCreate([](void*){
+        const bool ready=card_frames_file.mount() && card_screens.attach(card_frames_file) && card_sliders.attach(card_levels_file)
+#ifdef STUDY_CARD_FIELDS
+          && card_text.attach(card_field_file) && card_presets.attach(card_preset_file)
+#endif
+          ;
+        card_state.store(ready?CardState::ready:CardState::failed);
+        ESP_LOGI("study_card","Theme artwork %s",ready?"ready":"unavailable");
+        vTaskDelete(nullptr);
+      },"study_card",6144,nullptr,1,nullptr)!=pdPASS){
+    ESP_LOGW("study_card","Could not allocate the artwork verification task");
+    card_state.store(CardState::failed);
+  }
+  return false;
+}
+#endif
 #if defined(STUDY_LIVE) && __has_include("palette_assets.h")
 }
 #define STUDY_PALETTE_PICKER
@@ -78,6 +130,9 @@ static void restore_media_colours(uint8_t *frame,const Rect &paint);
 #endif
 static uint32_t revision=1;
 static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
+#ifdef STUDY_CARD_ART
+  if(card_switching)return true;
+#endif
   if(!lcd)return true;
   if(!scanout.active){
     lcd->draw_pixels_at(x,y,w,h,pixels,esphome::display::COLOR_ORDER_RGB,
@@ -97,7 +152,11 @@ static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
   slot->page=revision;
   slot->lamp_background=current==lights || current==light0;
 #ifdef STUDY_PALETTE_PICKER
-  if(!picker_open && current!=doorbell && palette.selection()){
+  if(!picker_open && current!=doorbell && palette.selection()
+#ifdef STUDY_CARD_ART
+     && !card_page_visible
+#endif
+  ){
     if(!full && !seed && stride)
       for(int row=0;row<h;row++)memcpy(slot->pixels+2*((y+row)*width+x),pixels+2*row*stride,2*w);
     const Rect paint=full || seed?Rect{0,0,width,height}:Rect{x,y,w,h};
@@ -588,6 +647,9 @@ static void copy_badge_background(Scanout::Slot *slot,bool save){
   slot->has_overlay=save;
 }
 static void draw_diagnostic_badges(Scanout::Slot *slot,int &first_y,int &end_y){
+#ifdef STUDY_CARD_FIELDS
+  if(card_page_visible)return;
+#endif
   if(!diagnostics_enabled || blanked || current==doorbell || !scratch)return;
   if(!slot->overlay_background){
     const size_t size=2*(diag_disconnected.rect.w*diag_disconnected.rect.h+diag_fps.rect.w*diag_fps.rect.h);
@@ -1132,6 +1194,10 @@ static void animate() {
   ++motion_frames;
 }
 static void show(int dest,int shift=14) {
+#ifdef STUDY_CARD_ART
+  card_page_visible=card_finger=false;
+  card_lights_page.cancel();
+#endif
 #ifdef STUDY_PALETTE_PICKER
   picker_open=false;
   if(palette.selection())palette.page(dest);
@@ -1247,6 +1313,56 @@ static void go(int dest) {
   history[depth++]=current;
   show(dest);
 }
+#ifdef STUDY_CARD_ART
+static bool show_card_lights(int theme,int mode){
+  if(theme<0 || theme>1 || mode<0 || mode>=6 || !lcd || !previous_pixels || !page_pixels || !scratch || !card_assets_ready())return false;
+  await_page();
+  // Decode off-screen. A failed read must leave the current visible frame usable.
+  if(!card_lights_page.open(theme,mode,previous_pixels,scratch,page_bytes,ha_lights))return false;
+  // Clear overlays and release any active camera or media session through normal navigation.
+  card_switching=true;
+  show(lights,0);
+  card_switching=false;
+  std::swap(page_pixels,previous_pixels);
+  card_theme=theme;card_mode=mode;card_page=CardPage::lights;card_page_visible=true;card_finger=false;last_activity=clock_ms();++revision;
+  if(blit(0,0,width,height,page_pixels))return true;
+  show(lights,0);return false;
+}
+#ifdef STUDY_CARD_FIELDS
+static bool paint_card_scene(int theme,int mode,CardPage page,uint8_t *pixels,bool force){
+  const int mask=scene_matches();
+  bool changed=false;
+  if(force || mask!=card_scene_mask){
+    if(!card_presets.paint(theme,mode,page==CardPage::scenes,mask,pixels,scratch,page_bytes))return false;
+    changed=true;card_scene_mask=mask;
+  }
+  if(page==CardPage::home){
+    int minute=minutes_now?minutes_now():-1;
+    std::string date=card_date_now?card_date_now():"";
+    if(force || minute!=card_minute || date!=card_date){
+      char value[8]="--:--";
+      if(minute>=0)snprintf(value,sizeof(value),"%02d:%02d",minute/60,minute%60);
+      for(const auto &f:card_fields){
+        if(f.theme!=theme || f.palette!=mode || f.page!=page || (f.id!=FieldId::clock && f.id!=FieldId::datestr))continue;
+        if(!card_text.paint(f,f.id==FieldId::clock?value:date.c_str(),pixels,scratch,page_bytes))return false;
+      }
+      changed=true;card_minute=minute;card_date=std::move(date);
+    }
+  }
+  return changed;
+}
+static bool show_card_scene(int theme,int mode,CardPage page){
+  if((page!=CardPage::home && page!=CardPage::scenes) || !lcd || !previous_pixels || !page_pixels || !card_assets_ready())return false;
+  await_page();
+  if(!card_screens.read(theme,mode,page,previous_pixels,page_bytes) || !paint_card_scene(theme,mode,page,previous_pixels,true))return false;
+  card_switching=true;show(page==CardPage::home?home:scenes,0);card_switching=false;
+  std::swap(page_pixels,previous_pixels);
+  card_theme=theme;card_mode=mode;card_page=page;card_page_visible=true;last_activity=clock_ms();++revision;
+  if(blit(0,0,width,height,page_pixels))return true;
+  show(home,0);return false;
+}
+#endif
+#endif
 static void begin(Display *display) {
   lcd=display;
 #ifdef STUDY_LIVE
@@ -1319,6 +1435,9 @@ static void begin(Display *display) {
 #endif
   const int64_t start=clock_ms();
   show(home);
+#ifdef STUDY_CARD_ART
+  if(lcd)card_assets_ready();
+#endif
   ESP_LOGI("study","Study home unpacked in %lld ms; display %s",clock_ms()-start,lcd?"attached":"absent");
   if(lcd){
     esphome::App.set_loop_interval(8);
@@ -1541,6 +1660,18 @@ static void touch(int x,int y) {
 #ifdef STUDY_LIVE
   last_activity=clock_ms();
   if(wake_touch)return;
+#ifdef STUDY_CARD_ART
+  if(card_page_visible){
+    if(!down){x0=x;y0=y;}
+    down=true;dx=x-x0;dy=y-y0;
+    if(card_page==CardPage::lights && (card_finger || card_lights_page.slider_at(x0,y0))){
+      if(card_lights_page.touch(x,y,ha_lights)){
+        card_finger=true;++revision;blit(0,0,width,height,page_pixels);
+      }
+    }
+    return;
+  }
+#endif
   if(current==idle){
     wake_touch=true;blanked=false;show(wake_page,0);apply_brightness();return;
   }
@@ -1726,6 +1857,40 @@ static void release() {
 #ifdef STUDY_LIVE
   last_activity=clock_ms();
   if(wake_touch){wake_touch=false;return;}
+#ifdef STUDY_CARD_ART
+  if(card_page_visible){
+    if(card_finger)card_lights_page.release(ha_lights);
+    else if(down && std::abs(dx)<24 && std::abs(dy)<24){
+      auto *link=card_hit(card_theme,card_page,x0,y0);
+      if(link)switch(link->action){
+#ifdef STUDY_CARD_FIELDS
+        case CardAction::back:show_card_scene(card_theme,card_mode,CardPage::home);break;
+        case CardAction::open_scenes:show_card_scene(card_theme,card_mode,CardPage::scenes);break;
+        case CardAction::open_lights:show_card_lights(card_theme,card_mode);break;
+        case CardAction::preset:{
+          const auto &p=fleet.active();
+          for(int i=0;i<light_count;++i)if(p.members[i])ha_lights.request(i,link->arg==0?p.soft[i]:link->arg==2?p.bright[i]:0);
+          break;
+        }
+        case CardAction::spDown:case CardAction::spUp:
+          if(thermostat.can_adjust())thermostat.set(thermostat.target+(link->action==CardAction::spUp?1:-1)*thermostat.step);
+          break;
+        case CardAction::open_settings:go(settings_page);break;
+        case CardAction::open_scene_edit:go(edit_page);break;
+#else
+        case CardAction::back:show(home,0);break;
+        case CardAction::open_scenes:go(scenes);break;
+#endif
+        case CardAction::light:if(link->arg>=0 && link->arg<light_count)go(light0+link->arg);break;
+        case CardAction::open_climate:go(climate_page);break;
+        case CardAction::open_blinds:go(climate_page+1);break;
+        case CardAction::open_media:go(media);break;
+        default:break;
+      }
+    }
+    down=card_finger=false;pressed=-2;return;
+  }
+#endif
   if(sheet_release())return;
   if(pressed==-159){
     pressed=-2;down=false;
@@ -1933,7 +2098,11 @@ static void tick() {
   const auto now=clock_ms();
   static int64_t previous=now;
   static int64_t next_home_diagnostic=0;
-  if(current==home && diagnostics_enabled && !moving && !down && now>=next_home_diagnostic){
+  if(current==home && diagnostics_enabled && !moving && !down && now>=next_home_diagnostic
+#ifdef STUDY_CARD_FIELDS
+     && !card_page_visible
+#endif
+  ){
     next_home_diagnostic=now+500;
     auto message=home_diagnostic_message();
     if(message!=last_home_diagnostic){paint_home_diagnostics(message);++revision;blit(0,0,width,height,page_pixels);}
@@ -1981,7 +2150,11 @@ static void tick() {
   if(player().dirty && !moving && !down){
     player().dirty=false;
     if(current==media && page_pixels){transport_fields();++revision;blit(0,0,width,height,page_pixels);}
-    if(current==home && page_pixels){home_player();++revision;blit(0,0,width,height,page_pixels);}
+    if(current==home && page_pixels
+#ifdef STUDY_CARD_FIELDS
+       && !card_page_visible
+#endif
+    ){home_player();++revision;blit(0,0,width,height,page_pixels);}
   }
   static int64_t next_progress=0;
   if(current==media && player().playing && player().duration && !down && !moving && !volume_open && !queue_open && !speakers_open && !library_open && now>=next_progress){
@@ -2001,7 +2174,11 @@ static void tick() {
   thermostat.tick();
   if(thermostat.dirty && !down && !moving){
     thermostat.dirty=false;
-    if(current==home || current==climate_page){climate_field();++revision;blit(0,0,width,height,page_pixels);}
+    if((current==home || current==climate_page)
+#ifdef STUDY_CARD_FIELDS
+       && !card_page_visible
+#endif
+    ){climate_field();++revision;blit(0,0,width,height,page_pixels);}
   }
   const bool updated=fleet.tick(ha_lights.receiving());
   const int result=fleet.result();
@@ -2030,14 +2207,29 @@ static void tick() {
       draw_light_list(lights_pixels);
       scanout.invalidate_lamp();
       prepared_level=-2;
-      if(current==lights){
+      if(current==lights
+#ifdef STUDY_CARD_ART
+         && !card_page_visible
+#endif
+      ){
         memcpy(page_pixels,lights_pixels,page_bytes);
         ++revision;blit(0,0,width,height,page_pixels);
       }
     }
-    if(current==scenes && scene_matches()!=painted_scene){
+    if(current==scenes && scene_matches()!=painted_scene
+#ifdef STUDY_CARD_FIELDS
+       && !card_page_visible
+#endif
+    ){
       scene_fields();++revision;blit(0,0,width,height,page_pixels);
     }
+#ifdef STUDY_CARD_ART
+    if(card_page_visible && card_page==CardPage::lights && card_lights_page.refresh(ha_lights)){++revision;blit(0,0,width,height,page_pixels);}
+#ifdef STUDY_CARD_FIELDS
+    if(card_page_visible && (card_page==CardPage::home || card_page==CardPage::scenes) &&
+       paint_card_scene(card_theme,card_mode,card_page,page_pixels,false)){++revision;blit(0,0,width,height,page_pixels);}
+#endif
+#endif
   }
 #endif
   if(bench_demo && !moving && int32_t(uint32_t(clock_ms())-demo_at)>=0){
@@ -2179,6 +2371,9 @@ static void update_cover(){
     heap_caps_free(f.data);
   }
   if((!changed && previously==cover_ready) || (current!=home && current!=media) || volume_open || queue_open || speakers_open || library_open)return;
+#ifdef STUDY_CARD_FIELDS
+  if(card_page_visible)return;
+#endif
   show(current,0);
 }
 #endif

@@ -16,6 +16,14 @@ Use Python 3.11 with ESPHome 2026.6.5, NumPy, Pillow and Playwright with Microso
 
 The export contains a top-level `config` object. The renderer takes a JSON array of HA state objects. Rendering uses an isolated browser with fixture sockets. Keep private firmware, state exports and provisioning files out of Git.
 
+### Card-backed artwork in the candidate
+
+The Default and Ambient comparison uses 720 × 1280 RGB565 captures from Chromium on the CM5. For each theme and palette, `card_art.py` reads `screens.bin` and `screens.json`, plus the theme's `geometry.json` measured at the same viewport. `card_light_art.py` renders brightness tracks and percentages at every level from 0 through 100. Its `--chromium-cdp` option accepts a loopback SSH forward to an isolated Chromium instance on the CM5. Use the same browser and fonts for both captures.
+
+Use the same private destination for the generators. `card_scene_art.py` captures the active and inactive Home and Scenes preset buttons. `card_fields.py` captures the backgrounds and font data for live text. Copy the generated `pi-panel` directory onto the microSD card and pass the destination containing the generated headers to `prepare.py --card-assets`. The card can contain other files. The firmware mounts its existing FAT filesystem with formatting disabled and verifies each artwork file against its compiled SHA-256 digest.
+
+The test build binds the Lights sliders to HA, the preset buttons to the room’s configured lamp levels, and the Home clock to HA time. Complete alternative-theme selection in the production panel still requires the other controls and on-device comparisons.
+
 ## Device and server
 
 Each P4 needs its own fleet identity and ESPHome encryption key. Run `python esphome/p4_runtime/enroll.py PRIVATE_BUILD/fleet-identity.json --ip DEVICE_IP` to register it with the server. Use an authenticated HTTPS origin for enrollment when available. The existing HTTP deployment requires a trusted provisioning network. Claim the new P4 in the dashboard and import the Study configuration used for rendering. Home Assistant needs a native ESPHome connection with the generated encryption key and permission to perform HA actions.
