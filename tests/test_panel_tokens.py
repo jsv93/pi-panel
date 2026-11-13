@@ -184,6 +184,8 @@ def run(tmp):
         ("config", lambda h: c.get(f"/api/config/{pid}", headers=h)),
         ("display write", lambda h: c.post(f"/api/panel/{pid}/display",
                                            json={"theme": "ambient"}, headers=h)),
+        ("mini album art change", lambda h: c.post(f"/api/panel/{pid}/display",
+                                                  json={"mini_art": False}, headers=h)),
     ):
         check(f"{label}: no token refused", fn({}).status_code, 401)
         check(f"{label}: wrong token refused", fn(bad).status_code, 401)
