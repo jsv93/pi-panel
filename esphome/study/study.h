@@ -310,13 +310,59 @@ static int diagnostic_pass=-1,diagnostic_frames=0,diagnostic_offset=0;
 static int64_t diagnostic_start=0;
 static int diagnostic_rates[6];
 static constexpr const char *diagnostic_cases[]={"baseline","uncached rows","all rows","no thumbnails","no text","flat rows"};
-static void paint_library(){
+// A scroll moves the existing list pixels. Repaint only the newly exposed
+// band, using the kiosk's own four-row RGB565 dither as its ground.
+static uint16_t library_ground[2][4][library_list.w];
+static int8_t library_ground_ok[2]={-1,-1};
+static void paint_library(int movement=0){
   const int mode=library_mode,cols=library_steps[mode][0],step=library_steps[mode][1];
   const auto &v=library_list;
-  text_background(page_pixels,width,scratch,{0,0,width,height},library_bases[mode][0],library_bases[mode][1]);
-  label(library_title,library.folders.empty()?"Library":library.folders.back().title.c_str());
-  std::string crumb="Library";for(const auto &f:library.folders)crumb+="  ›  "+f.title;
-  label(library_crumb,crumb.c_str());
+  int top=v.y,end=v.y+v.h;
+  auto *pixels=reinterpret_cast<uint16_t*>(page_pixels);
+  const size_t row_bytes=size_t(v.w)*sizeof(*pixels);
+  if(movement && std::abs(movement)<v.h && library_ground_ok[mode]==1 && !library.dirty && !*library.message){
+    const int delta=std::abs(movement);
+    for(int n=0;n<v.h-delta;n++){
+      const int y=movement>0?top+n:end-1-n;
+      memcpy(pixels+y*width+v.x,pixels+(y+movement)*width+v.x,row_bytes);
+    }
+    if(movement>0)top=end-delta;else end=top+delta;
+    for(int y=top;y<end;y++)memcpy(pixels+y*width+v.x,library_ground[mode][(y-v.y)%4],row_bytes);
+    // The gutters stay fixed to the glass, while the dither inside a card
+    // moves with that card. Recover the original phase in the exposed gaps.
+    if(movement%4){
+      const auto &tile=library_tiles[mode*2];
+      const int spacing=cols==1?tile.w:int(library_steps[mode][2]);
+      for(int y=v.y;y<v.y+v.h;y++){
+        if(y>=top && y<end)continue;
+        const int position=y-v.y+library_scroll;
+        const size_t first=size_t(position/step)*cols;
+        int last_x=0;
+        const auto *ground=library_ground[mode][(y-v.y)%4];
+        auto *dst=pixels+y*width+v.x;
+        if(position%step<tile.h)for(int col=0;col<cols;col++){
+          const size_t index=first+col;
+          if(index<library.first || index-library.first>=library.items.size())continue;
+          const int x=col*spacing;
+          if(x>last_x)memcpy(dst+last_x,ground+last_x,2*(x-last_x));
+          last_x=x+tile.w;
+        }
+        if(last_x<v.w)memcpy(dst+last_x,ground+last_x,2*(v.w-last_x));
+      }
+    }
+  }else{
+    text_background(page_pixels,width,scratch,{0,0,width,height},library_bases[mode][0],library_bases[mode][1]);
+    if(library_ground_ok[mode]<0){
+      for(int y=0;y<4;y++)memcpy(library_ground[mode][y],pixels+(v.y+y)*width+v.x,row_bytes);
+      library_ground_ok[mode]=1;
+      for(int y=4;y<v.h;y++)if(memcmp(library_ground[mode][y%4],pixels+(v.y+y)*width+v.x,row_bytes)){
+        library_ground_ok[mode]=0;break;
+      }
+    }
+    label(library_title,library.folders.empty()?"Library":library.folders.back().title.c_str());
+    std::string crumb="Library";for(const auto &f:library.folders)crumb+="  ›  "+f.title;
+    label(library_crumb,crumb.c_str());
+  }
   if(*library.message){
     auto field=library_crumb;field.rect.y=v.y+20;
     text_field(page_pixels,width,scratch,field,library.message,v.y,v.y+v.h);return;
@@ -326,22 +372,22 @@ static void paint_library(){
     const auto &ref=library_tiles[variant];const auto &art=library_art[variant];
     const int x=v.x+(i%cols)*library_steps[mode][2];
     const int y=v.y+int((library.first+i)/cols)*step-library_scroll;
-    if(y>=v.y+v.h || y+ref.h<=v.y)continue;
+    if(y>=end || y+ref.h<=top)continue;
     const size_t bytes=2*ref.w*ref.h;
     if(tinfl_decompress_mem_to_mem(scratch,bytes,text_art+art[0],art[1],1)!=bytes)continue;
-    for(int row=std::max(0,v.y-y);row<ref.h && row+y<v.y+v.h;row++)
+    for(int row=std::max(0,top-y);row<ref.h && row+y<end;row++)
       memcpy(page_pixels+2*((y+row)*width+x),scratch+2*row*ref.w,2*ref.w);
     if(item.expand && item.category!="directory"){
-      auto icon=library_note_rects[mode];icon.x+=x-ref.x;icon.y+=y-ref.y;
+      auto icon=library_note_rects[mode];icon.x+=x-library_tiles[2*mode].x;icon.y+=y-library_tiles[2*mode].y;
       const auto &artwork=library_notes[mode];
       const size_t n=2u*icon.w*icon.h;
       if(tinfl_decompress_mem_to_mem(scratch,n,text_art+artwork[0],artwork[1],1)==n)
-        for(int j=std::max(0,v.y-icon.y);j<icon.h && icon.y+j<v.y+v.h;j++)
+        for(int j=std::max(0,top-icon.y);j<icon.h && icon.y+j<end;j++)
           memcpy(page_pixels+2*((icon.y+j)*width+icon.x),scratch+2*j*icon.w,2*icon.w);
     }
     if(!item.thumbnail.empty())for(auto &thumb:thumbnails)if(thumb.ready && thumb.url==item.thumbnail){
-      auto icon=library_note_rects[mode];icon.x+=x-ref.x;icon.y+=y-ref.y;
-      for(int j=std::max(0,v.y-icon.y);j<icon.h && icon.y+j<v.y+v.h;j++){
+      auto icon=library_note_rects[mode];icon.x+=x-library_tiles[2*mode].x;icon.y+=y-library_tiles[2*mode].y;
+      for(int j=std::max(0,top-icon.y);j<icon.h && icon.y+j<end;j++){
         auto *dst=reinterpret_cast<uint16_t*>(page_pixels)+(icon.y+j)*width+icon.x;
         for(int col=0;col<icon.w;col++)dst[col]=thumb.pixels[(j*thumbnail_side/icon.h)*thumbnail_side+col*thumbnail_side/icon.w];
       }
@@ -349,7 +395,7 @@ static void paint_library(){
     }
     auto field=[&](TextArea area,const std::string &value){
       area.rect.x+=x-ref.x;area.rect.y+=y-ref.y;
-      text_field(page_pixels,width,scratch,area,value.c_str(),v.y,v.y+v.h);
+      text_field(page_pixels,width,scratch,area,value.c_str(),top,end,false);
     };
     field(library_name[variant],item.title);field(library_type[variant],item.category);
   }
@@ -1176,9 +1222,6 @@ static void begin(Display *display) {
   std::fill_n(levels,light_count,-1);
   room_start();
   load_display_choice();
-#ifdef USE_ESP32_HOSTED
-  station.restore();
-#endif
   scanout.draw_overlay=draw_diagnostic_badges;
   scanout.restore_overlay=[](Scanout::Slot *slot){copy_badge_background(slot,false);};
   if(lux_entity[0])esphome::api::global_api_server->subscribe_home_assistant_state(
@@ -1345,10 +1388,12 @@ static void touch(int x,int y) {
     if(library_open && y0>=library_list.y && std::abs(dy)>8 && !library.waiting){
       const int cols=library_steps[library_mode][0],step=library_steps[library_mode][1];
       const int max_scroll=std::max(0,int((library.total+cols-1)/cols)*step-library_list.h);
+      const int previous=library_scroll;
       library_scroll=std::clamp(library_down_scroll-dy,0,max_scroll);
+      if(previous==library_scroll)return;
       const size_t first=(library_scroll/step)*cols,offset=first/library.batch*library.batch;
       if(library.total && (first<library.first || first>=library.first+library.batch))library.get(offset);
-      paint_library();++revision;blit(0,0,width,height,page_pixels);
+      paint_library(library_scroll-previous);++revision;blit(0,0,width,height,page_pixels);
     }
     return;
   }

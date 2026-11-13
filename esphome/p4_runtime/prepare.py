@@ -175,6 +175,9 @@ inline bool study_station_ip(esp_netif_ip_info_t &info){
   }''')
         source=source.replace("components: [mipi_dsi]","components: [mipi_dsi, network]")
         source=source.replace("build_flags: [","build_flags: [-DSTUDY_EXTERNAL_TEXT, ",1)
+        # Display setup runs at 400. The default network event loop is created
+        # later at 300, and the hosted radio must also finish setup first.
+        source=source.replace("  on_boot:\n","  on_boot:\n    - priority: -100\n      then:\n        - lambda: 'study::station.restore();'\n",1)
         source+="""\nesp32_hosted:
   type: sdio
   variant: ESP32C6
