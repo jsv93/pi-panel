@@ -7,14 +7,13 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
-#include <vector>
 
 extern "C" size_t tinfl_decompress_mem_to_mem(void *,size_t,const void *,size_t,int);
 namespace study {
 class PaletteRenderer {
   static constexpr int width=720,height=1280,page_bytes=width*height*2;
   struct Key {uint16_t colour,first;};
-  struct Table {std::vector<Key> keys;std::vector<uint16_t> colours;};
+  struct Table {Key *keys=nullptr;uint16_t *colours=nullptr;size_t count=0,rows=0;};
   const uint8_t *data_=nullptr;
   esp_partition_mmap_handle_t mapping_{};
   std::array<Table,16> tables_;
@@ -39,7 +38,7 @@ class PaletteRenderer {
   bool choose(int mode,uint8_t *temporary){
     if(mode<0 || mode>5 || !data_ || !temporary)return false;
     if(!mode){
-      for(auto &table:tables_)table=Table{};
+      for(auto &table:tables_){heap_caps_free(table.keys);heap_caps_free(table.colours);table=Table{};}
       heap_caps_free(ranks_);ranks_=nullptr;selected_=0;page_=-1;return true;
     }
     if(mode==selected_)return true;
@@ -52,8 +51,12 @@ class PaletteRenderer {
       const unsigned n=values[0],rows=values[1];
       if(!n || !rows || block.raw!=4+4*n+10*rows)return false;
       auto &table=tables_[i];
-      table.keys.resize(n);memcpy(table.keys.data(),values+2,4*n);
-      table.colours.resize(rows);values+=2+2*n;
+      if(!table.keys)table.keys=static_cast<Key*>(heap_caps_malloc(n*sizeof(Key),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+      if(!table.colours)table.colours=static_cast<uint16_t*>(heap_caps_malloc(2*rows,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+      if(!table.keys || !table.colours)return false;
+      table.count=n;table.rows=rows;
+      memcpy(table.keys,values+2,4*n);
+      values+=2+2*n;
       for(unsigned j=0;j<rows;j++)table.colours[j]=values[j*5+mode-1];
     }
     page_=-1;selected_=mode;return true;
@@ -75,9 +78,10 @@ class PaletteRenderer {
       const unsigned position=row*width+column;
       auto &pixel=frame[position];
       const auto &t=tables_[(row%4)*4+column%4];
-      auto key=std::lower_bound(t.keys.begin(),t.keys.end(),pixel,[](const Key &k,uint16_t colour){return k.colour<colour;});
-      if(key==t.keys.end() || key->colour!=pixel)continue;
-      const size_t first=key->first,limit=key+1==t.keys.end()?t.colours.size():(key+1)->first;
+      auto end=t.keys+t.count;
+      auto key=std::lower_bound(t.keys,end,pixel,[](const Key &k,uint16_t colour){return k.colour<colour;});
+      if(key==end || key->colour!=pixel)continue;
+      const size_t first=key->first,limit=key+1==end?t.rows:(key+1)->first;
       const size_t wanted=first+(exact && page_>=0?ranks_[position]:0);
       pixel=t.colours[wanted<limit?wanted:first];
     }
