@@ -3,6 +3,7 @@
 #include "motion_tail.h"
 #include "esp_partition.h"
 #include "esp_heap_caps.h"
+#include "esphome/core/application.h"
 #include "mbedtls/sha256.h"
 #include <algorithm>
 #include <array>
@@ -95,8 +96,10 @@ class PaletteRenderer {
       table.make_index();
       values+=2+2*n;
       for(unsigned j=0;j<rows;j++)table.colours[j]=values[j*5+mode-1];
+      esphome::App.feed_wdt();
     }
-    page_=-1;selected_=mode;return true;
+    // The rank map identifies source pixels and is shared by all five palettes.
+    selected_=mode;return true;
   }
   bool page(int index){
     if(!selected_ || page_==index)return true;
@@ -111,16 +114,19 @@ class PaletteRenderer {
   }
   void render(uint16_t *frame,int x,int y,int w,int h,bool exact)const{
     if(!selected_)return;
-    for(int row=y;row<y+h;row++)for(int column=x;column<x+w;column++){
-      const unsigned position=row*width+column;
-      auto &pixel=frame[position];
-      const auto &t=tables_[(row%4)*4+column%4];
-      auto end=t.keys+t.count;
-      const auto *key=t.find(pixel);
-      if(!key)continue;
-      const size_t first=key->first,limit=key+1==end?t.rows:(key+1)->first;
-      const size_t wanted=first+(exact && page_>=0?ranks_[position]:0);
-      pixel=t.colours[wanted<limit?wanted:first];
+    for(int row=y;row<y+h;row++){
+      if((row&63)==0)esphome::App.feed_wdt();
+      for(int column=x;column<x+w;column++){
+        const unsigned position=row*width+column;
+        auto &pixel=frame[position];
+        const auto &t=tables_[(row%4)*4+column%4];
+        auto end=t.keys+t.count;
+        const auto *key=t.find(pixel);
+        if(!key)continue;
+        const size_t first=key->first,limit=key+1==end?t.rows:(key+1)->first;
+        const size_t wanted=first+(exact && page_>=0?ranks_[position]:0);
+        pixel=t.colours[wanted<limit?wanted:first];
+      }
     }
   }
 };

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.26.1
+
+- Stream P4 doorbell video from Home Assistant Core using a ticket scoped to the configured camera when the add-on uses Supervisor authentication.
+
+## 0.26.0
+
+- Enrolled ESP32-P4 Study panels can cache their signed room configuration and synchronize display preferences.
+- The doorbell test can ring a paired P4. The server sizes frames from the configured Home Assistant MJPEG camera for the panel.
+- The CM5 kiosk also supports Home Assistant MJPEG camera playback.
+
 ## 0.25.0
 
 - Add an optional Save power while asleep setting under Display. While fully blanked, limit CPU speed to its existing minimum and restore the original ceiling on wake or doorbell playback.

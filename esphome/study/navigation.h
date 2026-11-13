@@ -47,9 +47,19 @@ class Navigation {
   uint8_t *chunks_{};
   uint32_t *chunk_offsets_{};
   uint16_t prepare_chunks_[blocks/8],play_chunks_[blocks/8];
+  // Rebuild the optional run cache between input events when a palette
+  // releases and later returns its memory to Architectural.
+  int warm_chunk_=-1;
+  size_t warm_bytes_=0;
+  bool chunks_ready_=false;
   int owner_=-1,route_=-1,phase_=-1,prepare_route_=0,prepare_phase_=0,part_=0;
   int clip_{};
   bool from_variant_{},to_variant_{};
+  // Source geometry for each eight-line strip. Pixel blending still uses
+  // the exact tile intersections for the phase's sub-tile translation.
+  static constexpr int tile_columns=width/16;
+  static_assert(tile_columns+2<64);
+  uint64_t overlay_rows_[doorbell+1][height/8]{};
   int64_t tap_at_{},first_at_{};
   TaskHandle_t producer_{};
   SemaphoreHandle_t ready_{};
@@ -65,12 +75,12 @@ class Navigation {
     int i=p-light0;
     return i>=0 && i<light_count && levels[i]!=initial[i];
   }
-  static bool affected(int page,int x,int y){
+  static bool affected(int page,int x,int y,bool include_player=false){
 #ifdef STUDY_LIVE
     auto intersects=[=](const Rect &r){
       return x<r.x+r.w && x+16>r.x && y<r.y+r.h && y+8>r.y;
     };
-    if(page==home)return intersects(number_rects[0]) || (player().playing && intersects(home_strip));
+    if(page==home)return intersects(number_rects[0]) || ((include_player || player().playing) && intersects(home_strip));
     if(page==room_menu_page)return intersects(menu_date.rect);
     if(page==settings_page)return intersects(mini_choice.rect);
     if(page==diagnostics_page)return intersects(net_status.rect) || intersects(ha_status.rect) || intersects(up_status.rect) || intersects(backlight_status.rect);
@@ -94,24 +104,40 @@ class Navigation {
     }
     return false;
   }
-  void overlay(uint16_t *out,int phase)const{
+  void overlay(uint16_t *out,int phase,int &first_y,int &end_y)const{
     if(!from_variant_ && !to_variant_)return;
     const auto &p=nav_paths[route_];
     const auto pose=nav_pose[p.travel==14?0:p.travel==24?1:2][phase];
     const unsigned a=pose.alpha,b=32-a;
     auto *bg=reinterpret_cast<uint16_t*>(previous_pixels),*fg=reinterpret_cast<uint16_t*>(page_pixels);
-    for(int y=0;y<height;y+=8)for(int x=0;x<width;x+=16){
-      if(!(from_variant_ && y<clip_ && affected(p.from,x,y)) &&
-         !(to_variant_ && (affected(p.to,x-pose.shift,y)||(y+8>clip_ && affected(p.to,x,y)))))continue;
-      for(int row=y;row<y+8;row++){
-        int pos=row*width+x;
-        if(row>=clip_){memcpy(out+pos,fg+pos,32);continue;}
-        for(int i=0;i<16;i++,pos++){
-          unsigned old=bg[pos];
-          if(unsigned(x+i-pose.shift)>=width){out[pos]=old;continue;}
-          unsigned next=fg[pos-pose.shift];
-          out[pos]=((((old&0xf81f)*b+(next&0xf81f)*a)>>5)&0xf81f) |
-                   ((((old&0x07e0)*b+(next&0x07e0)*a)>>5)&0x07e0);
+    for(int y=0;y<height;y+=8){
+      uint64_t tiles=from_variant_ && y<clip_?overlay_rows_[p.from][y/8]:0;
+      if(to_variant_){
+        const auto base=overlay_rows_[p.to][y/8];
+        const unsigned distance=unsigned(std::abs(pose.shift));
+        const unsigned whole=distance/16;
+        const auto shifted=pose.shift>=0?base<<whole:base>>whole;
+        tiles|=shifted;
+        if(distance%16)tiles|=pose.shift>=0?shifted<<1:shifted>>1;
+        if(y+8>clip_)tiles|=base;
+      }
+      tiles&=(uint64_t(1)<<tile_columns)-1;
+      while(tiles){
+        const int x=16*__builtin_ctzll(tiles);
+        tiles&=tiles-1;
+        if(!(from_variant_ && y<clip_ && affected(p.from,x,y)) &&
+           !(to_variant_ && (affected(p.to,x-pose.shift,y)||(y+8>clip_ && affected(p.to,x,y)))))continue;
+        first_y=std::min(first_y,y);end_y=std::max(end_y,y+8);
+        for(int row=y;row<y+8;row++){
+          int pos=row*width+x;
+          if(row>=clip_){memcpy(out+pos,fg+pos,32);continue;}
+          for(int i=0;i<16;i++,pos++){
+            unsigned old=bg[pos];
+            if(unsigned(x+i-pose.shift)>=width){out[pos]=old;continue;}
+            unsigned next=fg[pos-pose.shift];
+            out[pos]=((((old&0xf81f)*b+(next&0xf81f)*a)>>5)&0xf81f) |
+                     ((((old&0x07e0)*b+(next&0x07e0)*a)>>5)&0x07e0);
+          }
         }
       }
     }
@@ -144,28 +170,37 @@ class Navigation {
     }
     return ptr;
   }
-  void make_chunks(){
+  void free_chunks(){
+    heap_caps_free(chunks_);heap_caps_free(chunk_offsets_);chunks_=nullptr;chunk_offsets_=nullptr;
+    warm_chunk_=-1;warm_bytes_=0;chunks_ready_=false;
+  }
+  bool allocate_chunks(){
+    if(!prepare_ids_)return false;
     chunks_=static_cast<uint8_t*>(heap_caps_malloc(chunk_bytes,MALLOC_CAP_SPIRAM));
     chunk_offsets_=static_cast<uint32_t*>(heap_caps_malloc((chunk_count+1)*4,MALLOC_CAP_SPIRAM));
-    if(chunks_ && chunk_offsets_){
-      uint8_t *p=chunks_;
-      for(unsigned i=0;i<chunk_count;i+=128){
-        const auto &recipe=chunk_recipes[i/128];
-        const unsigned n=std::min(128u,chunk_count-i),bytes=n*8*4;
-        if(tinfl_decompress_mem_to_mem(play_ids_,bytes,run_data+recipe.offset,recipe.size,1)!=bytes)break;
-        for(unsigned j=0;j<n;j++){
-          chunk_offsets_[i+j]=p-chunks_;
-          p=append_raw(p,play_ids_+8*j,0,8);
-        }
-        if(i+n==chunk_count && size_t(p-chunks_)==chunk_bytes){
-          chunk_offsets_[chunk_count]=chunk_bytes;return;
-        }
-      }
+    if(!chunks_ || !chunk_offsets_){free_chunks();return false;}
+    warm_chunk_=0;warm_bytes_=0;return true;
+  }
+  void warm_chunks(){
+    if(warm_chunk_<0)return;
+    const unsigned i=warm_chunk_,n=std::min(128u,chunk_count-i),bytes=n*8*4;
+    const auto &recipe=chunk_recipes[i/128];
+    if(tinfl_decompress_mem_to_mem(prepare_ids_,bytes,run_data+recipe.offset,recipe.size,1)!=bytes){free_chunks();return;}
+    auto *p=chunks_+warm_bytes_;
+    for(unsigned j=0;j<n;++j){
+      chunk_offsets_[i+j]=p-chunks_;p=append_raw(p,prepare_ids_+8*j,0,8);
     }
-    heap_caps_free(chunks_);heap_caps_free(chunk_offsets_);chunks_=nullptr;chunk_offsets_=nullptr;
+    warm_bytes_=p-chunks_;warm_chunk_+=n;
+    if(unsigned(warm_chunk_)==chunk_count){
+      if(warm_bytes_!=chunk_bytes){free_chunks();return;}
+      chunk_offsets_[chunk_count]=chunk_bytes;chunks_ready_=true;warm_chunk_=-1;
+    }
+  }
+  void make_chunks(){
+    if(allocate_chunks())while(warm_chunk_>=0)warm_chunks();
   }
   bool load_chunks(int route,int phase,uint16_t *out)const{
-    if(!chunks_)return false;
+    if(!chunks_ready_)return false;
     const auto &b=chunk_maps[route*10+phase];
     return tinfl_decompress_mem_to_mem(out,sizeof(play_chunks_),run_data+b.offset,b.size,1)==sizeof(play_chunks_);
   }
@@ -255,12 +290,15 @@ class Navigation {
 #ifdef STUDY_PALETTE_PICKER
   void use_palette_memory(){
     release_job();route_=-1;part_=0;
-    heap_caps_free(chunks_);chunks_=nullptr;
-    heap_caps_free(chunk_offsets_);chunk_offsets_=nullptr;
+    free_chunks();
   }
-  void restore_chunks(){if(!chunks_ && input_ && play_ids_)make_chunks();}
+  void restore_chunks(){if(!chunks_ && input_ && prepare_ids_){part_=0;allocate_chunks();}}
 #endif
   void begin(){
+    for(int page=home;page<=doorbell;++page)
+      for(int y=0;y<height;y+=8)
+        for(int x=0;x<width;x+=16)
+          if(affected(page,x,y,true))overlay_rows_[page][y/8]|=uint64_t(1)<<(x/16);
     const auto *part=esp_partition_find_first(ESP_PARTITION_TYPE_DATA,static_cast<esp_partition_subtype_t>(0x40),"motion");
     const void *base=nullptr;
     if(!part || esp_partition_mmap(part,0,motion_bytes,ESP_PARTITION_MMAP_DATA,&base,&mapping_)!=ESP_OK ||
@@ -309,6 +347,7 @@ class Navigation {
     ESP_LOGI("study","Navigation decoder ready: %d routes, %u KiB runs, %u KiB cache, %u KiB free PSRAM",paths,chunks_?chunk_bytes/1024:0,unsigned(arena_size_/1024),unsigned(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)/1024));
   }
   void prepare(int page){
+    if(warm_chunk_>=0){warm_chunks();return;}
     release_job();
     if(!arena_ || !input_ || down || page==doorbell || page==idle)return;
     if(owner_!=page){
@@ -358,7 +397,8 @@ class Navigation {
     auto *slot=scanout.acquire(false);
     if(!slot)return false;
     const auto &p=nav_paths[route_];
-    if(phase==10){release_job();await_page();memcpy(slot->pixels,page_pixels,page_bytes);}
+    int first_y=height,end_y=0;
+    if(phase==10){release_job();await_page();memcpy(slot->pixels,page_pixels,page_bytes);first_y=0;end_y=height;}
     else{
       const auto &b=p.phases[phase];
       if(queued_>=0){
@@ -373,10 +413,13 @@ class Navigation {
       if(jpeg_decoder_process(decoder(),&cfg,input_,b.bytes,slot->pixels,page_bytes,&written)!=ESP_OK || written!=page_bytes){
         ESP_LOGW("study","Navigation decode failed");release_job();route_=-1;return false;
       }
-      overlay(reinterpret_cast<uint16_t*>(slot->pixels),phase);
+      overlay(reinterpret_cast<uint16_t*>(slot->pixels),phase,first_y,end_y);
     }
     slot->lamp_background=false;
-    if(!scanout.present(slot,0,(phase==10 || from_variant_ || to_variant_)?height:1))return false;
+    // The decoder wrote directly to the scanout frame. Only CPU-painted
+    // rows need a writeback before selecting it at the refresh boundary.
+    if(end_y==0){first_y=0;end_y=1;}
+    if(!scanout.present(slot,first_y,end_y))return false;
     slot->page=phase==10?revision:0;phase_=phase;++motion_frames;
     if(!first_at_)first_at_=clock_ms();
     if(phase!=10)return false;

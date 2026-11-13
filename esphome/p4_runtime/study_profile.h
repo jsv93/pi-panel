@@ -9,8 +9,11 @@
 #include "library_client.h"
 #include "live_settings.h"
 
+#if defined(STUDY_CARD_PLAYER) || defined(STUDY_ARCHITECTURAL_ONLY)
+#define STUDY_SCREEN_OPTIONS
+#endif
 namespace study {
-#ifdef STUDY_CARD_PLAYER
+#ifdef STUDY_SCREEN_OPTIONS
 constexpr const char *theme_keys[]={"default","ambient","architectural"};
 constexpr const char *palette_keys[]={"linen","midnight","ember","slate","heath","mono"};
 struct ScreenChoices {uint8_t theme=2,palette=0;bool diagnostics=false,tiles=false,mini_art=true;};
@@ -27,6 +30,9 @@ static bool read_screen_choices(cJSON *display,ScreenChoices &screen){
   int theme=index("theme",theme_keys,0);
   int palette=index("palette",palette_keys,theme==2?0:theme==1?2:1);
   if(theme<0 || palette<0)return false;
+#ifdef STUDY_ARCHITECTURAL_ONLY
+  theme=2;
+#endif
   screen.theme=theme;screen.palette=palette;
   auto *diag=cJSON_GetObjectItemCaseSensitive(display,"diagnostics");
   auto *mini=cJSON_GetObjectItemCaseSensitive(display,"mini_art");
@@ -43,7 +49,7 @@ struct RoomProfile {
   int version=0;
   int soft[light_count]{},bright[light_count]{};
   bool members[light_count]{};
-#ifdef STUDY_CARD_PLAYER
+#ifdef STUDY_SCREEN_OPTIONS
   ScreenChoices screen;
 #endif
 };
@@ -58,7 +64,7 @@ static p4_runtime::AlbumClient album_client,thumbnail_client;
 static p4_runtime::LibraryClient library;
 static RoomProfile factory_profile(){
   RoomProfile p;
-#ifdef STUDY_CARD_PLAYER
+#ifdef STUDY_SCREEN_OPTIONS
   p4_runtime::Json factory(cJSON_Parse(layout_contract),cJSON_Delete);
   if(factory)read_screen_choices(cJSON_GetObjectItemCaseSensitive(factory.get(),"display"),p.screen);
 #endif
@@ -75,7 +81,7 @@ static bool decode_room(const cJSON *doc,RoomProfile &out){
   const auto *version=cJSON_GetObjectItemCaseSensitive(doc,"_version");
   if(!cJSON_IsNumber(version)||version->valuedouble<1||version->valuedouble!=version->valueint)return false;
   out.version=version->valueint;
-#ifdef STUDY_CARD_PLAYER
+#ifdef STUDY_SCREEN_OPTIONS
   auto *actual_display=cJSON_GetObjectItemCaseSensitive(shape.get(),"display");
   auto *expected_display=cJSON_GetObjectItemCaseSensitive(expected.get(),"display");
   if(!read_screen_choices(actual_display,out.screen))return false;

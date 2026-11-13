@@ -8,7 +8,7 @@ from render import fixture_page,rgb565
 from control_art import box
 
 
-def capture(config,states,dest):
+def capture(config,states,dest,architectural_only=False):
     # Include the punctuation used by the HA player and the dashboard.
     chars="".join(chr(i) for i in range(32,127))+" °·éèëàáäöóñüß–—‘’“”…•←›✓✗▂▄▆█"
     bank=bytearray();offsets={};fonts={};fields=[]
@@ -226,6 +226,8 @@ def capture(config,states,dest):
         diagnostic_button=box(page,"#diagRow")
         if not page.locator("body").evaluate("e=>e.classList.contains('diag')"):click("#diagRow")
         diagnostic_on_button=box(page,"#diagRow");scroll_button=box(page,"#scrollTestRow")
+        if architectural_only:
+            page.locator("#scrollTestRow").evaluate("e=>e.style.visibility='hidden'")
         page.locator("#stGL").evaluate("e=>e.textContent='ESP32-P4 · MIPI DSI'")
         page.locator("#fps").evaluate("e=>e.textContent='55 fps'")
         field("diag_fps","#fps",subset="0123456789 fps?")
@@ -236,22 +238,23 @@ def capture(config,states,dest):
         diagnostic_on=region((0,0,720,1280))
         for name,sel in (("diag_ha","#stHA"),("diag_backlight","#stBL"),("diag_net","#stNet"),("diag_uptime","#sUp")):
             field(name,sel,"right","right")
-        click("#scrollTestRow")
-        page.wait_for_function("document.querySelector('#bCrumb').textContent.includes('reopen')",timeout=35000)
-        diagnostic_results=[]
-        for mode in range(2):
-            tiles=lib_steps[mode][0]>1
-            page.locator("#bList").evaluate("(e,b)=>e.classList.toggle('tiles',b)",tiles)
-            page.locator("#bList .bitem").evaluate_all("xs=>xs.forEach((e,i)=>{e.querySelector('.n').textContent='Case';e.querySelector('.s').textContent='00 fps · baseline'})")
-            for i in range(6):
-                for kind in ("n","s"):field(f"diagnostic_result_{mode}_{i}_{kind}",f"#bList .bitem:nth-child({i+1}) .{kind}")
-            page.locator("#bList .bmeta").evaluate_all("xs=>xs.forEach(el=>el.style.visibility='hidden')")
-            bg_offset,bg_len=lib_bases[mode]
-            baseline=zlib.decompress(bank[bg_offset:bg_offset+bg_len])
-            current=rgb565(Image.open(io.BytesIO(page.screenshot())))
-            diagnostic_results.append(put(zlib.compress(np.bitwise_xor(np.frombuffer(baseline,np.uint8),np.frombuffer(current,np.uint8)).tobytes(),9)))
-            page.locator("#bList .bmeta").evaluate_all("xs=>xs.forEach(el=>el.style.visibility='')")
-        click("#bBack")
+        if not architectural_only:
+            click("#scrollTestRow")
+            page.wait_for_function("document.querySelector('#bCrumb').textContent.includes('reopen')",timeout=35000)
+            diagnostic_results=[]
+            for mode in range(2):
+                tiles=lib_steps[mode][0]>1
+                page.locator("#bList").evaluate("(e,b)=>e.classList.toggle('tiles',b)",tiles)
+                page.locator("#bList .bitem").evaluate_all("xs=>xs.forEach((e,i)=>{e.querySelector('.n').textContent='Case';e.querySelector('.s').textContent='00 fps · baseline'})")
+                for i in range(6):
+                    for kind in ("n","s"):field(f"diagnostic_result_{mode}_{i}_{kind}",f"#bList .bitem:nth-child({i+1}) .{kind}")
+                page.locator("#bList .bmeta").evaluate_all("xs=>xs.forEach(el=>el.style.visibility='hidden')")
+                bg_offset,bg_len=lib_bases[mode]
+                baseline=zlib.decompress(bank[bg_offset:bg_offset+bg_len])
+                current=rgb565(Image.open(io.BytesIO(page.screenshot())))
+                diagnostic_results.append(put(zlib.compress(np.bitwise_xor(np.frombuffer(baseline,np.uint8),np.frombuffer(current,np.uint8)).tobytes(),9)))
+                page.locator("#bList .bmeta").evaluate_all("xs=>xs.forEach(el=>el.style.visibility='')")
+            click("#bBack")
         page.locator("#conn,#fps").evaluate_all("els=>els.forEach(e=>e.style.visibility='')")
         page.reload()
         page.wait_for_function("document.body.classList.contains('diag') && document.querySelector('#pDiag').textContent.includes('config v')")
@@ -323,9 +326,11 @@ def capture(config,states,dest):
         f.write("constexpr Rect browse_button="+c(browse_button)+",browse_back="+c(browse_back)+",browse_switch="+c(browse_switch)+",library_list="+c(list_area)+";\n")
         f.write("constexpr unsigned library_bases[][2]="+c(lib_bases)+",library_art[][2]="+c(lib_templates)+",library_steps[][3]="+c(lib_steps)+";\n")
         f.write("constexpr Rect library_note_rects[]="+c(note_rects)+";\n")
-        f.write("constexpr unsigned library_notes[][2]="+c(note_icons)+",diagnostic_results[][2]="+c(diagnostic_results)+";\n")
-        for kind in ("n","s"):
-            f.write("constexpr TextArea diagnostic_result_"+kind+"[][6]={"+",".join("{"+",".join(f"diagnostic_result_{m}_{i}_{kind}" for i in range(6))+"}" for m in range(2))+"};\n")
+        f.write("constexpr unsigned library_notes[][2]="+c(note_icons)+";\n")
+        if not architectural_only:
+            f.write("constexpr unsigned diagnostic_results[][2]="+c(diagnostic_results)+";\n")
+            for kind in ("n","s"):
+                f.write("constexpr TextArea diagnostic_result_"+kind+"[][6]={"+",".join("{"+",".join(f"diagnostic_result_{m}_{i}_{kind}" for i in range(6))+"}" for m in range(2))+"};\n")
         f.write("constexpr Rect library_tiles[]="+c(lib_regions)+";\n")
         for kind in ("name","type"):
             f.write("constexpr TextArea library_"+kind+"[]={"+",".join(f"library_{kind}_{m}_{i}" for m in range(2) for i in range(2))+"};\n")
@@ -334,5 +339,9 @@ def capture(config,states,dest):
 
 
 if __name__=="__main__":
-    cfg,states,dest=map(Path,sys.argv[1:])
-    capture(json.loads(cfg.read_bytes())["config"],json.loads(states.read_bytes()),dest)
+    import argparse
+    parser=argparse.ArgumentParser(description=__doc__)
+    for arg in ("snapshot","states","dest"):parser.add_argument(arg,type=Path)
+    parser.add_argument("--architectural-only",action="store_true")
+    args=parser.parse_args()
+    capture(json.loads(args.snapshot.read_bytes())["config"],json.loads(args.states.read_bytes()),args.dest,args.architectural_only)

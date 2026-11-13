@@ -18,9 +18,12 @@ def main():
     p.add_argument("--server", required=True)
     p.add_argument("--identity-file", type=Path)
     p.add_argument("--production", action="store_true", help="Omit touchscreen demonstration actions from the paired build")
+    p.add_argument("--architectural-only", action="store_true", help="Use the onboard Architectural layout and its six palettes")
     p.add_argument("--hosted-wifi",action="store_true",help="Include the Waveshare C6 radio and external text artwork")
     p.add_argument("--card-assets",type=Path,help="Directory containing the generated card_assets.h and card_lights.h for this room")
     args = p.parse_args()
+    if args.architectural_only and (args.card_assets or not args.hosted_wifi):
+        p.error("Architectural-only builds use the onboard artwork and hosted Wi-Fi")
     if not re.fullmatch(r"[a-z0-9-]{1,60}", args.id):
         p.error("invalid panel id")
     if not re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", args.mac):
@@ -136,6 +139,8 @@ def main():
         text_settings=f"constexpr unsigned text_offset={text_offset},text_packed_size={len(packed)};\nconstexpr unsigned char text_sha[]={{{text_sha}}};\n"
     (args.build / "live-motion-tail.bin").write_bytes(blob)
     palette_file=args.build/"palette-art.bin"
+    if args.architectural_only and not palette_file.is_file():
+        p.error("Architectural-only builds require the rendered palette bank")
     if palette_file.is_file():
         if not (args.build/"palette_assets.h").is_file() or not args.hosted_wifi or not text_settings:
             p.error("native palettes require palette_assets.h and the compact hosted-Wi-Fi build")
@@ -170,6 +175,15 @@ def main():
     if palette_file.is_file():
         source=source.replace(", study.h",", palette_assets.h, study.h",1)
     source=source.replace("  includes:", "  platformio_options:\n    build_flags: [-DUSE_API_HOMEASSISTANT_ACTION_RESPONSES, -DUSE_API_HOMEASSISTANT_ACTION_RESPONSES_ERRORS, -DUSE_API_HOMEASSISTANT_ACTION_RESPONSES_JSON]\n  includes:",1)
+    if args.architectural_only:
+        source=source.replace("build_flags: [","build_flags: [-DSTUDY_ARCHITECTURAL_ONLY,",1)
+        # The motion and palette banks remain memory mapped from NOR. During
+        # an NVS erase, both cores must stop reading NOR, including the page
+        # decoder on the second core. IDF's PSRAM XiP profile skips that guard.
+        source=source.replace('CONFIG_SPIRAM_XIP_FROM_PSRAM: "y"', 'CONFIG_SPIRAM_XIP_FROM_PSRAM: "n"')
+        # The hosted C6 pool has a 1600-byte stride. Every TX block must
+        # meet the SDMMC driver's external-memory cache-line alignment.
+        source=source.replace('CONFIG_CACHE_L2_CACHE_LINE_128B: "y"', 'CONFIG_CACHE_L2_CACHE_LINE_64B: "y"')
     source+="\njson:\n"
     if args.hosted_wifi:
         import esphome.components.network as network_component

@@ -163,7 +163,7 @@ class DoorbellClient {
       ESP_LOGW("study","Direct camera is waiting for its Home Assistant subscription");return;
     }
     const std::string url=std::string(origin_)+"/api/camera_proxy_stream/"+camera_+"?token="+t.value;
-    Request req(url,6000);
+    Request req(url,10000);
     const int status=req.start();
     ESP_LOGI("study","Direct camera HTTP status %d",status);
     if(status!=200)return;
@@ -196,6 +196,7 @@ class DoorbellClient {
       const auto session=generation_.load();
       Request r(settings_,"video",9000);
       if(prefer_server_ && r.start()==200){
+        bool first=true;
         while(running_ && generation_==session){
           Frame f;
           if(xQueueReceive(free_,&f,pdMS_TO_TICKS(50))!=pdTRUE)continue;
@@ -208,10 +209,20 @@ class DoorbellClient {
           }
           f.generation=session;
           xQueueSend(ready_,&f,0);
+          if(first){ESP_LOGI("study","Panel Server camera received %u bytes",unsigned(f.size));first=false;}
         }
       }
-      if(running_ && generation_==session)direct_stream(session);
-      if(running_ && generation_==session)failed_=true;
+      // A camera can wake after the popup opens. Refresh the scoped HA
+      // ticket on each connection attempt while the same ring is visible.
+      unsigned retry_ms=1000;
+      while(running_ && generation_==session){
+        direct_stream(session);
+        if(!running_ || generation_!=session)break;
+        failed_=true;
+        for(unsigned elapsed=0;elapsed<retry_ms && running_ && generation_==session;elapsed+=100)
+          vTaskDelay(pdMS_TO_TICKS(100));
+        retry_ms=std::min(4000u,retry_ms*2);
+      }
     }
   }
 };

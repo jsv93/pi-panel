@@ -105,6 +105,10 @@ static uint8_t *room_pixels, *page_pixels, *previous_pixels, *mixed_pixels, *lig
 static void control_patch(uint8_t *target,const Sprite &s,const Rect &area);
 #endif
 static Scanout scanout;
+#ifdef STUDY_ARCHITECTURAL_ONLY
+static constexpr int selected_theme=2;
+static int card_mode=0;
+#endif
 #ifdef STUDY_CARD_ART
 static CardArt card_frames_file,card_levels_file;
 static CardScreen card_screens;
@@ -626,6 +630,7 @@ static void paint_library(int movement=0){
     field(library_name[variant],item.title);field(library_type[variant],item.category);
   }
 }
+#ifndef STUDY_ARCHITECTURAL_ONLY
 static void diagnostic_scroll_frame(){
   if(diagnostic_pass<0 || diagnostic_pass>=6)return;
 #ifdef STUDY_CARD_LIBRARY
@@ -691,6 +696,7 @@ static void diagnostic_scroll_frame(){
   }
   ++revision;blit(0,0,width,height,page_pixels);
 }
+#endif
 static bool speakers_open=false,speakers_dirty=false,transfer_busy=false;
 static int speaker_scroll=0,speaker_down_scroll=0,speaker_max_scroll=0;
 static uint32_t transfer_serial=0;
@@ -848,7 +854,7 @@ static bool save_preference(const char *key,uint8_t enabled){
   const bool ok=nvs_set_u8(h,key,enabled)==ESP_OK && nvs_commit(h)==ESP_OK;nvs_close(h);
   return ok;
 }
-#ifdef STUDY_CARD_PLAYER
+#ifdef STUDY_SCREEN_OPTIONS
 // A local touch overrides the same server default until that default changes.
 // Store the baseline alongside each choice to handle a later offline restart.
 static bool remember_screen(const char *key,uint8_t value,uint8_t base){
@@ -885,7 +891,7 @@ static void report_screen(bool include_mini=false){
 }
 #endif
 static bool save_display_choice(bool enabled){
-#ifdef STUDY_CARD_PLAYER
+#ifdef STUDY_SCREEN_OPTIONS
   const bool ok=remember_screen("mini",enabled,fleet.active().screen.mini_art);
   if(ok){mini_art_enabled=enabled;report_screen(true);}
 #else
@@ -897,7 +903,7 @@ static bool save_display_choice(bool enabled){
 #ifdef STUDY_PALETTE_PICKER
 static bool choose_palette(int value){
   if(value==palette.selection()){
-#ifdef STUDY_CARD_PLAYER
+#ifdef STUDY_SCREEN_OPTIONS
     card_mode=value;
 #endif
     return true;
@@ -905,7 +911,7 @@ static bool choose_palette(int value){
   const int before=palette.selection();
   if(!before)nav.use_palette_memory();
   if(!palette.choose(value,scratch) ||
-#ifdef STUDY_CARD_PLAYER
+#ifdef STUDY_SCREEN_OPTIONS
      !remember_screen("palette",value,fleet.active().screen.palette)
 #else
      !save_preference("palette",value)
@@ -916,11 +922,11 @@ static bool choose_palette(int value){
     return false;
   }
   if(!value
-#ifdef STUDY_CARD_PLAYER
+#ifdef STUDY_SCREEN_OPTIONS
      && selected_theme==2
 #endif
   )nav.restore_chunks();
-#ifdef STUDY_CARD_PLAYER
+#ifdef STUDY_SCREEN_OPTIONS
   card_mode=value;report_screen();
 #endif
   return true;
@@ -1387,7 +1393,9 @@ static void paint_level(int value,bool update_display=true) {
 }
 static void animate() {
 #ifdef STUDY_LIVE
+#ifndef STUDY_ARCHITECTURAL_ONLY
   if(diagnostic_pass>=0){diagnostic_scroll_frame();return;}
+#endif
   extern void present_bell_video();
   present_bell_video();
   if(current==idle || current==doorbell)return;
@@ -2317,7 +2325,7 @@ static bool open_theme_picker(){
   card_page_visible=true;++revision;return blit(0,0,width,height,page_pixels);
 }
 static bool select_theme(int theme){
-  if(theme<0 || theme>2)return false;
+  if(theme<0 || theme>2 || !card_assets_ready())return false;
   if(theme==2){
     if(!remember_screen("theme",2,fleet.active().screen.theme))return false;
     selected_theme=2;depth=0;report_screen();show(display_page,0);
@@ -2333,6 +2341,12 @@ static bool select_theme(int theme){
   }
   depth=0;selected_theme=theme;report_screen();return true;
 }
+
+#endif
+#endif
+#endif
+#endif
+#ifdef STUDY_SCREEN_OPTIONS
 static void apply_screen_profile(const ScreenChoices &screen,bool render){
   const int old_theme=selected_theme,old_palette=palette.selection(),old_library=library_mode;
   const bool old_diagnostics=diagnostics_enabled,old_mini=mini_art_enabled;
@@ -2346,7 +2360,9 @@ static void apply_screen_profile(const ScreenChoices &screen,bool render){
     if(screen.tiles==reported_screen.tiles && library_mode!=base)remember_screen("libview",library_mode,base);
     if(screen.mini_art==reported_screen.mini_art && mini_art_enabled!=screen.mini_art)remember_screen("mini",mini_art_enabled,screen.mini_art);
   }
+#ifndef STUDY_ARCHITECTURAL_ONLY
   selected_theme=local_screen("theme",screen.theme,2);
+#endif
   card_mode=local_screen("palette",screen.palette,5);
   diagnostics_enabled=local_screen("diag",screen.diagnostics,1);
   mini_art_enabled=local_screen("mini",screen.mini_art,1);
@@ -2360,9 +2376,6 @@ static void apply_screen_profile(const ScreenChoices &screen,bool render){
   if(!card_mode && selected_theme==2)nav.restore_chunks();
   if(current!=doorbell && current!=idle){depth=0;show(home,0);}
 }
-#endif
-#endif
-#endif
 #endif
 static void begin(Display *display) {
   lcd=display;
@@ -2420,7 +2433,7 @@ static void begin(Display *display) {
   std::fill_n(levels,light_count,-1);
   room_start();
   load_display_choice();
-#ifdef STUDY_CARD_PLAYER
+#ifdef STUDY_SCREEN_OPTIONS
   apply_screen_profile(fleet.active().screen,false);
 #endif
   scanout.draw_overlay=draw_diagnostic_badges;
@@ -2458,7 +2471,7 @@ static void begin(Display *display) {
 #endif
     if(scanout.active && blender)nav.begin();
 #ifdef STUDY_PALETTE_PICKER
-#ifdef STUDY_CARD_PLAYER
+#ifdef STUDY_SCREEN_OPTIONS
     apply_screen_profile(fleet.active().screen,true);
 #else
     nvs_handle_t prefs;
@@ -2782,10 +2795,12 @@ static void touch(int x,int y) {
     return;
   }
 #endif
+#ifndef STUDY_ARCHITECTURAL_ONLY
   if(!moving && current==diagnostics_page && (pressed==-159 || (!down && (diagnostic_pass>=0 || (diagnostics_enabled && scroll_button.contains(x,y)))))){
     if(!down){down=true;pressed=-159;x0=x;y0=y;}
     dx=x-x0;dy=y-y0;return;
   }
+#endif
   if(!moving && current==diagnostics_page && (pressed==-158 || (!down && (diagnostics_enabled?diagnostic_on_button:diagnostic_button).contains(x,y)))){
     if(!down){down=true;pressed=-158;x0=x;y0=y;}
     dx=x-x0;dy=y-y0;return;
@@ -3242,14 +3257,14 @@ static void release() {
   if(pressed==-158){
     down=false;pressed=-2;
     if(std::abs(dx)<24 && std::abs(dy)<24 &&
-#ifdef STUDY_CARD_PLAYER
+#ifdef STUDY_SCREEN_OPTIONS
        remember_screen("diag",!diagnostics_enabled,fleet.active().screen.diagnostics)
 #else
        save_preference("diag",!diagnostics_enabled)
 #endif
     ){
       diagnostics_enabled=!diagnostics_enabled;show(diagnostics_page,0);
-#ifdef STUDY_CARD_PLAYER
+#ifdef STUDY_SCREEN_OPTIONS
       report_screen();
 #endif
     }
@@ -3267,7 +3282,7 @@ static void release() {
       library_scroll=0;library.up();
     }else if(browse_switch.contains(x,y)){
       library_mode=1-library_mode;
-#ifdef STUDY_CARD_PLAYER
+#ifdef STUDY_SCREEN_OPTIONS
       remember_screen("libview",library_mode,(library_steps[0][0]>1)==fleet.active().screen.tiles?0:1);
       report_screen();
 #else
@@ -3631,7 +3646,7 @@ static void tick() {
   const bool updated=fleet.tick(ha_lights.receiving());
   const bool display_result=fleet.display_pending();
   const int result=fleet.result();
-#ifdef STUDY_CARD_PLAYER
+#ifdef STUDY_SCREEN_OPTIONS
   static ScreenChoices applied=factory_profile().screen;
   if(updated){
     const auto next=fleet.active().screen;

@@ -16,6 +16,8 @@ Use Python 3.11 with ESPHome 2026.6.5, NumPy, Pillow and Playwright with Microso
 
 The export contains a top-level `config` object. The renderer takes a JSON array of HA state objects. Rendering uses an isolated browser with fixture sockets. Keep private firmware, state exports and provisioning files out of Git.
 
+For a paired Architectural-only panel, render the text artwork with `text_art.py --architectural-only`, build the six-palette bank described below, and pass `--hosted-wifi --architectural-only --production` to `prepare.py`. All six palettes and the room artwork reside in onboard flash. The diagnostics page retains its live readings and connection badges. The standalone scroll benchmark is omitted. Generate the artwork for the same room export used for enrollment.
+
 ### Card-backed artwork in the candidate
 
 The Default and Ambient comparison uses 720 × 1280 RGB565 captures from Chromium on the CM5. For each theme and palette, `card_art.py` reads `screens.bin` and `screens.json`, plus the theme's `geometry.json` measured at the same viewport. `card_light_art.py` renders brightness tracks and percentages at every level from 0 through 100. Its `--chromium-cdp` option accepts a loopback SSH forward to an isolated Chromium instance on the CM5. Use the same browser and fonts for both captures.
