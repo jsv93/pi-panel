@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.26.1
+
+- Stream P4 doorbell video from Home Assistant Core using a ticket scoped to the configured camera when the add-on uses Supervisor authentication.
+
 ## 0.26.0
 
 - Enrolled ESP32-P4 Study panels can cache their signed room configuration and synchronize display preferences.

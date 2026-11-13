@@ -35,6 +35,17 @@ async def run(main,db,video):
         response=httpx.Response(200,headers={"Content-Type":f"multipart/x-mixed-replace; boundary={boundary}"},stream=Chunks())
         assert [part async for part in video.jpeg_parts(response)]==[jpg]
     data=video.encode(jpg)
+    scoped="/api/camera_proxy/camera.study?token=playback_42"
+    def state(request):
+        assert str(request.url)=="http://supervisor/core/api/states/camera.study"
+        assert request.headers["Authorization"]=="Bearer supervisor-test"
+        return httpx.Response(200,json={"attributes":{"entity_picture":scoped}})
+    client=httpx.AsyncClient(transport=httpx.MockTransport(state))
+    async def native_stream(url,headers):
+        assert url=="http://homeassistant:8123/api/camera_proxy_stream/camera.study?token=playback_42" and not headers
+        yield data
+    with patch.object(video.ha,"url",return_value="http://supervisor/core"),patch.object(video.ha,"token",return_value="supervisor-test"),patch.object(video.httpx,"AsyncClient",return_value=client),patch.object(video,"frames_from_url",native_stream):
+        assert [packet async for packet in video.video("camera.study")]==[data]
     assert Image.open(io.BytesIO(data)).size==(320,240)
     portrait=io.BytesIO()
     Image.effect_noise((640,1024),100).convert("RGB").save(portrait,"JPEG",quality=95)

@@ -1,6 +1,7 @@
 """Transcode one configured Home Assistant MJPEG camera for a paired Study P4."""
 import asyncio
 import io
+import re
 import struct
 import time
 from email.message import Message
@@ -72,9 +73,27 @@ async def jpeg_parts(response):
             yield frame
 
 
-def video(camera):
-    return frames_from_url(f"{ha.url()}/api/camera_proxy_stream/{camera}",
-                           {"Authorization":f"Bearer {ha.token()}"})
+async def video(camera):
+    origin=ha.url()
+    headers={"Authorization":f"Bearer {ha.token()}"}
+    path=f"/api/camera_proxy_stream/{camera}"
+    if origin=="http://supervisor/core":
+        # The Supervisor buffers multipart responses. Get the current camera's
+        # scoped ticket through its authenticated API and stream from Core.
+        async with httpx.AsyncClient(timeout=5,follow_redirects=False,trust_env=False) as client:
+            state=await client.get(f"{origin}/api/states/{camera}",headers=headers)
+            state.raise_for_status()
+            picture=state.json().get("attributes",{}).get("entity_picture","")
+        prefix=f"/api/camera_proxy/{camera}?token="
+        if not isinstance(picture,str) or not picture.startswith(prefix) or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}",picture[len(prefix):]):
+            raise ValueError("Missing scoped camera playback ticket")
+        path+="?token="+picture[len(prefix):]
+        # The add-on network gives Core this host name. Never forward the
+        # Supervisor bearer onto it or to a URL supplied in entity state.
+        origin="http://homeassistant:8123"
+        headers={}
+    async for frame in frames_from_url(origin+path,headers):
+        yield frame
 
 
 async def frames_from_url(url,headers):
