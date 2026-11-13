@@ -48,6 +48,24 @@ class AlbumClient {
     const auto name=authority.substr(0,port);
     return name.find_first_not_of("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-")==std::string::npos?name:"";
   }
+  std::string local_picture(const std::string &url)const{
+    const size_t scheme=url.find("://");
+    const size_t path=scheme==std::string::npos?std::string::npos:url.find('/',scheme+3);
+    if(path==std::string::npos || url.compare(path,12,"/imageproxy/")!=0)return url;
+    // Music Assistant accepts a discrete set of sizes. Its inspected
+    // image URLs contain only size and format options, including size=0
+    // for an unbounded original. Leave signed and unknown queries intact.
+    const size_t query=url.find('?',path);
+    if(query==std::string::npos)return url;
+    for(size_t start=query+1;start<=url.size();){
+      const size_t end=url.find('&',start);
+      const auto pair=url.substr(start,end-start);
+      if(pair.compare(0,5,"size=")!=0 && pair.compare(0,4,"fmt=")!=0)return url;
+      if(end==std::string::npos)break;
+      start=end+1;
+    }
+    return url.substr(0,query)+(thumbnails_?"?size=160&fmt=jpg":"?size=512&fmt=jpg");
+  }
   std::string trusted_url(std::string picture,const char *entity)const{
     if(picture.find_first_of("\r\n\\#")!=std::string::npos)return {};
     const std::string proxy="/api/media_player_proxy/"+std::string(entity)+"?";
@@ -56,8 +74,8 @@ class AlbumClient {
     if(source.empty() || ha.empty())return {};
     // HA supplies absolute HTTPS media thumbnails. This client sends no
     // credentials, rejects redirects and verifies the server certificate.
+    if(source==ha)return local_picture(picture);
     if(thumbnails_ && picture.rfind("https://",0)==0)return picture;
-    if(source==ha)return picture;
     // HA may advertise its numeric LAN address for the Music Assistant image
     // service while the panel uses its mDNS name. Never attach a fleet token.
     struct in_addr ip{};
@@ -67,7 +85,7 @@ class AlbumClient {
     bool same=false;
     for(auto *a=addresses;a;a=a->ai_next)
       if(reinterpret_cast<sockaddr_in*>(a->ai_addr)->sin_addr.s_addr==ip.s_addr)same=true;
-    freeaddrinfo(addresses);return same?picture:std::string{};
+    freeaddrinfo(addresses);return same?local_picture(picture):std::string{};
   }
   Frame fetch(const Job &job){
     Frame f{};f.version=job.version;
