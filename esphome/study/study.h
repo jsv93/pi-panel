@@ -536,10 +536,6 @@ static bool cover_ready=false;
 static bool mini_art_enabled=default_mini_art;
 static bool diagnostics_enabled=diagnostic_default;
 static int observed_touches=0;
-template<class Touches> static void observe_touches(const Touches &touches){
-  const int active=std::count_if(touches.begin(),touches.end(),[](const auto &p){return p.state==1 || p.state==2;});
-  observed_touches=std::max(observed_touches,active);
-}
 static int refresh_fps=0;
 static bool ha_connected(){
   const auto *api=esphome::api::global_api_server;
@@ -730,9 +726,8 @@ static std::string home_diagnostic_message(){
     details+=" · "+std::string(room_light_names[i])+" "+(level<0?"unseen":std::to_string(level)+"%")+
       " want "+std::to_string(profile.soft[i])+"/"+std::to_string(profile.bright[i])+(profile.members[i]?"":" EXCLUDED");
   }
-  // The GT911 driver accepts up to five contacts. The single-touch Study
-  // renderer does not bind a multi-finger gesture.
-  return "touch: reports 5 points, seen "+std::to_string(observed_touches)+" · gesture off\n"+
+  return "touch: reports 5 points, seen "+std::to_string(observed_touches)+" · gesture "+
+    (gesture_points?std::to_string(gesture_points)+"-finger":std::string("off"))+"\n"+
     notes+"\nconfig v"+std::to_string(profile.version)+details;
 }
 static std::string last_home_diagnostic;
@@ -1417,6 +1412,95 @@ static bool sheet_release(){
   }
   return true;
 }
+// GT911 reports the full active contact set on each update. Once a chord is
+// armed, no remaining finger may release a slider or tap a control underneath.
+static bool chord_armed=false,chord_blocked=false,chord_dim=false;
+static int64_t chord_start=0,chord_next=0;
+static int chord_direction=-1,chord_peak=0,chord_level=0;
+static std::array<int,light_count> chord_weights{},chord_last{},chord_memory{};
+static std::array<int,5> chord_ids{},chord_x{},chord_y{};
+static bool chord_loaded=false;
+static void remember_chord(const std::array<int,light_count> &values){
+  if(!gesture_remember || std::none_of(values.begin(),values.end(),[](int v){return v>0;}) || chord_memory==values)return;
+  chord_memory=values;
+  nvs_handle_t h;
+  if(nvs_open(display_namespace,NVS_READWRITE,&h)==ESP_OK){
+    if(nvs_set_blob(h,"light_chord",values.data(),sizeof(values))==ESP_OK)nvs_commit(h);
+    nvs_close(h);
+  }
+}
+static void load_chord(){
+  if(chord_loaded)return;
+  chord_loaded=true;nvs_handle_t h;
+  if(gesture_remember && nvs_open(display_namespace,NVS_READONLY,&h)==ESP_OK){
+    size_t n=sizeof(chord_memory);
+    if(nvs_get_blob(h,"light_chord",chord_memory.data(),&n)!=ESP_OK || n!=sizeof(chord_memory))chord_memory.fill(0);
+    nvs_close(h);
+  }
+}
+static void finish_chord(bool tap){
+  if(chord_dim){chord_direction=-chord_direction;remember_chord(chord_last);}
+  else if(tap){
+    std::array<int,light_count> previous{};
+    const auto &p=fleet.active();
+    for(int i=0;i<light_count;i++)if(p.members[i])previous[i]=std::max(0,ha_lights.confirmed(i));
+    const bool any=std::any_of(previous.begin(),previous.end(),[](int value){return value>0;});
+    if(any)remember_chord(previous);
+    for(int i=0;i<light_count;i++)if(p.members[i] && ha_lights.confirmed(i)>=0)
+      ha_lights.request(i,any?0:gesture_remember && chord_memory[i]>0?chord_memory[i]:p.bright[i]);
+  }
+  chord_armed=false;chord_dim=false;chord_blocked=true;
+}
+static void chord_tick(){
+  if(!chord_armed || clock_ms()<chord_next)return;
+  if(!ha_connected()){finish_chord(false);return;}
+  if(!chord_dim){
+    chord_dim=true;chord_peak=0;chord_last.fill(0);chord_weights.fill(0);
+    const auto &p=fleet.active();
+    for(int i=0;i<light_count;i++)if(p.members[i] && ha_lights.detail(i).dimmable && ha_lights.confirmed(i)>=0){
+      chord_weights[i]=std::max(0,ha_lights.confirmed(i));chord_peak=std::max(chord_peak,chord_weights[i]);
+    }
+    chord_level=chord_peak;
+    if(!chord_peak){
+      for(int i=0;i<light_count;i++)if(p.members[i] && ha_lights.detail(i).dimmable && ha_lights.confirmed(i)>=0){
+        chord_weights[i]=gesture_remember && chord_memory[i]>0?chord_memory[i]:p.bright[i]>0?p.bright[i]:100;
+        chord_peak=std::max(chord_peak,chord_weights[i]);
+      }
+      chord_level=1;
+    }
+    if(chord_level<=1)chord_direction=1;else if(chord_level>=100)chord_direction=-1;
+  }
+  if(!chord_peak){chord_next=INT64_MAX;return;}
+  chord_level=std::clamp(chord_level+chord_direction*4,1,100);
+  for(int i=0;i<light_count;i++)if(chord_weights[i]){
+    const int level=std::max(1,int(std::lround(double(chord_weights[i])*chord_level/chord_peak)));
+    if(level!=chord_last[i] && ha_lights.confirmed(i)>=0)ha_lights.request(i,level);
+    chord_last[i]=level;
+  }
+  last_activity=clock_ms();chord_next=(chord_level==1 || chord_level==100)?INT64_MAX:last_activity+200;
+}
+template<class Touches> static bool observe_touches(const Touches &touches){
+  int active=0;
+  for(const auto &point:touches)if(point.state==1 || point.state==2)++active;
+  observed_touches=std::max(observed_touches,active);
+  if(!gesture_points)return false;
+  if(active>gesture_points){finish_chord(false);return true;}
+  if(chord_blocked)return true;
+  if(chord_armed && active<gesture_points){finish_chord(clock_ms()-chord_start>=50);return true;}
+  if(active!=gesture_points)return false;
+  if(!chord_armed){
+    load_chord();down=false;pressed=-2;dragging=false;preview_brightness=sheet_drag=volume_drag=seek_drag=-1;
+    climate_drag=false;climate_preview=NAN;
+    chord_armed=true;chord_dim=false;chord_start=last_activity=clock_ms();chord_next=chord_start+gesture_hold_ms;
+    int n=0;for(const auto &p:touches)if(p.state==1 || p.state==2){chord_ids[n]=p.id;chord_x[n]=p.x;chord_y[n++]=p.y;}
+  }else if(!chord_dim){
+    for(const auto &p:touches)if(p.state==1 || p.state==2){
+      int i=0;while(i<gesture_points && chord_ids[i]!=p.id)++i;
+      if(i==gesture_points || std::hypot(double(p.x)-chord_x[i],double(p.y)-chord_y[i])>36){finish_chord(false);break;}
+    }
+  }
+  return true;
+}
 #endif
 static void touch(int x,int y) {
   bench_demo=false;
@@ -1578,6 +1662,12 @@ static void touch(int x,int y) {
   }
 }
 static void release() {
+#ifdef STUDY_LIVE
+  if(chord_armed || chord_blocked){
+    if(chord_armed)finish_chord(clock_ms()-chord_start>=50);
+    chord_blocked=false;wake_touch=false;down=false;pressed=-2;return;
+  }
+#endif
 #ifdef STUDY_PALETTE_PICKER
   if(pressed==-161){
     down=false;pressed=-2;last_activity=clock_ms();
@@ -1787,6 +1877,7 @@ static bool start_navigation_demo(){
 }
 static void tick() {
 #ifdef STUDY_LIVE
+  chord_tick();
 #ifdef USE_ESP32_HOSTED
   network_refresh();
 #endif

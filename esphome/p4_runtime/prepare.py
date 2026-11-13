@@ -53,6 +53,10 @@ def main():
     header.append("constexpr char layout_contract[]=" + json.dumps(json.dumps(contract, separators=(",", ":"))) + ";")
     fields = [args.server.rstrip("/"), args.id, args.mac, args.id, identity["token"], identity["sign_key"]]
     display=config["display"]
+    points=min(5,max(2,int(display.get("touch_points",3))))
+    hold=min(1500,max(600,int(display.get("touch_hold_ms",600))))
+    header.append(f"constexpr int gesture_points={points if display.get('touch_gesture','off') != 'off' else 0},gesture_hold_ms={hold};")
+    header.append("constexpr bool gesture_remember="+json.dumps(bool(display.get("remember_last_state",True)))+";")
     header.append("constexpr bool diagnostic_default="+json.dumps(bool(display.get("diagnostics",False)))+";")
     header.append("constexpr bool default_mini_art="+json.dumps(bool(display.get("mini_art",True)))+";")
     for name,default in [("idle_timeout_s",45),("backlight_off_s",0),("backlight_default",100),("backlight_min",5),
@@ -147,7 +151,7 @@ def main():
         f"constexpr unsigned char volume_sha[]={{{volume_sha}}};\n{text_settings}}}\n")
     source = (args.build / "study.yaml").read_text(encoding="utf-8")
     source = source.replace("          for (const auto &p : touches) {",
-                            "          study::observe_touches(touches);\n          for (const auto &p : touches) {")
+                            "          if(study::observe_touches(touches))return;\n          for (const auto &p : touches) {")
     if not (args.build / "control_art.h").exists():
         p.error("generate control_art.h using esphome/study/control_art.py first")
     if not (args.build / "media_art.h").exists():

@@ -15,6 +15,7 @@ template<size_t N> class LightClient {
  public:
   using Handler = std::function<void(size_t, int)>;
   struct Detail {
+    bool dimmable=false;
     int kelvin=-1,minimum=2000,maximum=6500,hue=-1;
     std::string effect;
     bool dirty=true;
@@ -38,6 +39,11 @@ template<size_t N> class LightClient {
         });
       };
       attr("effect",[](Detail &d,const std::string &s){d.effect=s;});
+      attr("supported_color_modes",[](Detail &d,const std::string &s){
+        d.dimmable=false;
+        for(const char *name:{"brightness","color_temp","hs","xy","rgb","white"})
+          if(s.find(name)!=std::string::npos){d.dimmable=true;break;}
+      });
       attr("color_temp_kelvin",[](Detail &d,const std::string &s){d.kelvin=esphome::parse_number<int>(s).value_or(-1);});
       attr("min_color_temp_kelvin",[](Detail &d,const std::string &s){d.minimum=esphome::parse_number<int>(s).value_or(2000);});
       attr("max_color_temp_kelvin",[](Detail &d,const std::string &s){d.maximum=esphome::parse_number<int>(s).value_or(6500);});
