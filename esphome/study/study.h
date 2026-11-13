@@ -471,6 +471,37 @@ static bool cover_ready=false;
 static bool mini_art_enabled=default_mini_art;
 static bool diagnostics_enabled=diagnostic_default;
 static int refresh_fps=0;
+static bool ha_connected(){
+  const auto *api=esphome::api::global_api_server;
+  return api && api->is_connected_with_state_subscription() && ha_lights.receiving();
+}
+static void copy_badge_background(Scanout::Slot *slot,bool save){
+  auto *backup=slot->overlay_background;
+  for(auto rect:{diag_disconnected.rect,diag_fps.rect}){
+    for(int y=rect.y;y<rect.y+rect.h;y++){
+      auto *line=slot->pixels+2*(y*width+rect.x);
+      if(save)memcpy(backup,line,2*rect.w);
+      else memcpy(line,backup,2*rect.w);
+      backup+=2*rect.w;
+    }
+  }
+  slot->has_overlay=save;
+}
+static void draw_diagnostic_badges(Scanout::Slot *slot,int &first_y,int &end_y){
+  if(!diagnostics_enabled || blanked || current==doorbell || !scratch)return;
+  if(!slot->overlay_background){
+    const size_t size=2*(diag_disconnected.rect.w*diag_disconnected.rect.h+diag_fps.rect.w*diag_fps.rect.h);
+    slot->overlay_background=static_cast<uint8_t*>(heap_caps_malloc(size,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+    if(!slot->overlay_background)return;
+  }
+  copy_badge_background(slot,true);
+  char rate[24];snprintf(rate,sizeof(rate),"%d fps",refresh_fps);
+  const bool online=ha_connected();
+  text_field(slot->pixels,width,scratch,online?diag_connection:diag_disconnected,online?"connected":"disconnected — retrying",0,height,false);
+  text_field(slot->pixels,width,scratch,diag_fps,rate,0,height,false);
+  first_y=std::min(first_y,diag_connection.rect.y);
+  end_y=std::max(end_y,diag_connection.rect.y+diag_connection.rect.h);
+}
 static void measure_refresh(){
   static int64_t previous=0;static uint32_t earlier=0;
   const auto now=clock_ms();const auto epoch=Scanout::Panel::refresh_epoch;
@@ -595,10 +626,8 @@ static void status_fields(){
   }else if(current==diagnostics_page){
     if(diagnostics_enabled){
       text_background(page_pixels,width,scratch,{0,0,width,height},diagnostic_on[0],diagnostic_on[1]);
-      char value[24];snprintf(value,sizeof(value),"%d fps",refresh_fps);label(diag_fps,value);
-      label(diag_connection,ha_lights.receiving()?"connected":"disconnected");
     }
-    label(diagnostics_enabled?diag_ha:ha_status,ha_lights.receiving()?"• connected":"• disconnected");
+    label(diagnostics_enabled?diag_ha:ha_status,ha_connected()?"• connected":"• disconnected");
     label(diagnostics_enabled?diag_net:net_status,esphome::network::is_connected()?"Ethernet":"Disconnected");
     label(diagnostics_enabled?diag_backlight:backlight_status,applied_brightness>=0?"• running":"• unavailable");
     const auto minutes=clock_ms()/60000;
@@ -1049,6 +1078,8 @@ static void begin(Display *display) {
   std::fill_n(levels,light_count,-1);
   room_start();
   load_display_choice();
+  scanout.draw_overlay=draw_diagnostic_badges;
+  scanout.restore_overlay=[](Scanout::Slot *slot){copy_badge_background(slot,false);};
   if(lux_entity[0])esphome::api::global_api_server->subscribe_home_assistant_state(
       lux_entity,nullptr,[](esphome::StringRef s){
         auto lux=esphome::parse_number<float>(s.str());
@@ -1510,6 +1541,15 @@ static bool start_navigation_demo(){
 static void tick() {
 #ifdef STUDY_LIVE
   measure_refresh();
+  static int reported_fps=-1,reported_connection=-1;
+  if(diagnostics_enabled && !blanked && !moving && !down && diagnostic_pass<0 && current!=doorbell && page_pixels){
+    const int connected=ha_connected();
+    if(reported_fps!=refresh_fps || reported_connection!=connected){
+      const auto &r=diag_disconnected.rect;
+      blit(0,r.y,width,r.h,page_pixels+2*width*r.y,width);
+      reported_fps=refresh_fps;reported_connection=connected;
+    }
+  }
   if(bell_enabled){
     bell_client.listen();
     const bool test=bell_client.test_ring.exchange(false);

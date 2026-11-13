@@ -194,6 +194,9 @@ def capture(config,states,dest):
         page.locator("#fps").evaluate("e=>e.textContent='55 fps'")
         field("diag_fps","#fps",subset="0123456789 fps?")
         field("diag_connection","#conn")
+        page.locator("#conn").evaluate("e=>{e.className='bad';e.textContent='disconnected — retrying'}")
+        field("diag_disconnected","#conn")
+        page.locator("#conn,#fps").evaluate_all("els=>els.forEach(e=>e.style.visibility='hidden')")
         diagnostic_on=region((0,0,720,1280))
         for name,sel in (("diag_ha","#stHA"),("diag_backlight","#stBL"),("diag_net","#stNet"),("diag_uptime","#sUp")):
             field(name,sel,"right","right")
@@ -213,6 +216,7 @@ def capture(config,states,dest):
             diagnostic_results.append(put(zlib.compress(np.bitwise_xor(np.frombuffer(baseline,np.uint8),np.frombuffer(current,np.uint8)).tobytes(),9)))
             page.locator("#bList .bmeta").evaluate_all("xs=>xs.forEach(el=>el.style.visibility='')")
         click("#bBack")
+        page.locator("#conn,#fps").evaluate_all("els=>els.forEach(e=>e.style.visibility='')")
         click("#archMenu");click('#archRoomLinks [data-sheet="settings"]');click('#archSettingsLinks [data-sheet="diagnostics"]')
         click("#diagRow")
         bell=config.get("doorbell") or {}

@@ -10,7 +10,12 @@ class Scanout {
     uint8_t *pixels{};
     uint32_t safe_after{}, page{};
     bool lamp_background=false;
+    uint8_t *overlay_background{};
+    bool has_overlay=false;
   };
+  void (*restore_overlay)(Slot *)=nullptr;
+  void (*draw_overlay)(Slot *,int &,int &)=nullptr;
+  const uint8_t *visible_pixels()const{return submitted_?front_->pixels:nullptr;}
   bool begin(Panel *display) {
     if(!display)return false;
     void *a,*b,*c;
@@ -28,7 +33,10 @@ class Scanout {
       const uint32_t epoch=Panel::refresh_epoch;
       if(!submitted_ || epoch!=last_epoch_) {
         for(auto &s:slots_)
-          if(&s!=front_ && int32_t(epoch-s.safe_after)>=0)return &s;
+          if(&s!=front_ && int32_t(epoch-s.safe_after)>=0){
+            if(s.has_overlay && restore_overlay)restore_overlay(&s);
+            return &s;
+          }
       }
       if(!wait)return nullptr;
       vTaskDelay(1);
@@ -37,6 +45,7 @@ class Scanout {
     return nullptr;
   }
   bool present(Slot *slot,int first_y,int end_y) {
+    if(draw_overlay)draw_overlay(slot,first_y,end_y);
     if(esp_lcd_panel_draw_bitmap(panel_,0,first_y,720,end_y,slot->pixels)!=ESP_OK)return false;
     last_epoch_=Panel::refresh_epoch;
     // Allow two refresh boundaries for an already-started DMA scan to retire.

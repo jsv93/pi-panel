@@ -42,6 +42,9 @@ def generate(build):
             steps.append("tap_box(diagnostics_enabled?diagnostic_on_button:diagnostic_button);")
             steps.append("if(!diagnostics_enabled)tap_box(diagnostic_button);")
             capture("diagnostics-on")
+            steps.append("show(home,0);")
+            capture("home-diagnostics")
+            steps.append("show(diagnostics_page,0);")
             steps.append("tap_box(scroll_button);")
             steps.append('if(diagnostic_pass>=0 && diagnostic_pass<6){--step;return;}if(diagnostic_pass!=6)ESP_LOGE("study","LIVE_WRONG_SCREEN diagnostics scroll");')
             capture("diagnostics-scroll")
@@ -104,13 +107,15 @@ static size_t pack_capture(const uint16_t *src){
 }
 static void snapshot(const char *name){
   if(!previous_pixels || !page_pixels)return;
-  capture_name=name;capture_crc=esp_rom_crc32_le(0,page_pixels,page_bytes);
+  const auto *visible=scanout.visible_pixels();
+  if(!visible){ESP_LOGE("study","LIVE_COMPRESS_FAIL no scanout %s",name);return;}
+  capture_name=name;capture_crc=esp_rom_crc32_le(0,visible,page_bytes);
   if(!unpack(pages[current],scratch)){ESP_LOGE("study","LIVE_COMPRESS_FAIL %s",name);return;}
   auto *delta=reinterpret_cast<uint16_t*>(scratch);
-  const auto *pixels=reinterpret_cast<const uint16_t*>(page_pixels);
+  const auto *pixels=reinterpret_cast<const uint16_t*>(visible);
   for(size_t i=0;i<page_bytes/2;i++)delta[i]^=pixels[i];
   compressed_size=pack_capture(delta);
-  if(!compressed_size || compressed_size==page_bytes){memcpy(previous_pixels,page_pixels,page_bytes);compressed_size=page_bytes;}
+  if(!compressed_size || compressed_size==page_bytes){memcpy(previous_pixels,visible,page_bytes);compressed_size=page_bytes;}
   position=0;capturing_index=1;
   ESP_LOGI("study","LIVE_BEGIN %s %u %08x %s %d",name,unsigned(compressed_size),capture_crc,compressed_size==page_bytes?"raw":"delta",current);
 }
