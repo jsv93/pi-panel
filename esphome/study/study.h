@@ -67,6 +67,14 @@ static uint8_t *room_pixels, *page_pixels, *previous_pixels, *mixed_pixels, *lig
 static void control_patch(uint8_t *target,const Sprite &s,const Rect &area);
 #endif
 static Scanout scanout;
+#if defined(STUDY_LIVE) && __has_include("palette_assets.h")
+}
+#define STUDY_PALETTE_PICKER
+#include "live_runtime/palette_renderer.h"
+namespace study {
+static PaletteRenderer palette;
+static bool picker_open=false;
+#endif
 static uint32_t revision=1;
 static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
   if(!lcd)return true;
@@ -87,6 +95,17 @@ static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
   }
   slot->page=revision;
   slot->lamp_background=current==lights || current==light0;
+#ifdef STUDY_PALETTE_PICKER
+  if(!picker_open && current!=doorbell && palette.selection()){
+    if(!full && !seed && stride)
+      for(int row=0;row<h;row++)memcpy(slot->pixels+2*((y+row)*width+x),pixels+2*row*stride,2*w);
+    if(full || seed)palette.render(reinterpret_cast<uint16_t*>(slot->pixels),0,0,width,height,true);
+    else palette.render(reinterpret_cast<uint16_t*>(slot->pixels),x,y,w,h,true);
+    auto &button=palette_buttons[0];
+    if(current==display_page && (full || seed || (y<button.y+button.h && y+h>button.y)))
+      palette.label(reinterpret_cast<uint16_t*>(slot->pixels),scratch);
+  }
+#endif
   return scanout.present(slot,seed?0:y,seed?height:y+h);
 }
 static ppa_client_handle_t blender;
@@ -573,7 +592,7 @@ static void load_display_choice(){
   if(nvs_get_u8(h,"libview",&value)==ESP_OK)library_mode=value?1:0;
   nvs_close(h);
 }
-static bool save_preference(const char *key,bool enabled){
+static bool save_preference(const char *key,uint8_t enabled){
   nvs_handle_t h;if(nvs_open(display_namespace,NVS_READWRITE,&h)!=ESP_OK)return false;
   const bool ok=nvs_set_u8(h,key,enabled)==ESP_OK && nvs_commit(h)==ESP_OK;nvs_close(h);
   return ok;
@@ -583,6 +602,24 @@ static bool save_display_choice(bool enabled){
   if(ok)mini_art_enabled=enabled;
   return ok;
 }
+#ifdef STUDY_PALETTE_PICKER
+static bool choose_palette(int value){
+  if(value==palette.selection())return true;
+  const int before=palette.selection();
+  if(!before)nav.use_palette_memory();
+  if(!palette.choose(value,scratch) || !save_preference("palette",value)){
+    if(!palette.choose(before,scratch))ESP_LOGW("study","Could not restore previous palette");
+    if(!before)nav.restore_chunks();
+    return false;
+  }
+  if(!value)nav.restore_chunks();
+  return true;
+}
+static void open_palette(){
+  if(!palette.picker(page_pixels))return;
+  picker_open=true;++revision;blit(0,0,width,height,page_pixels);
+}
+#endif
 static uint32_t cover_generation=0;
 static void update_cover();
 static void draw_cover(const Rect &r){
@@ -1056,11 +1093,20 @@ static void animate() {
   if(ppa_do_blend(blender,&op)!=ESP_OK){
     moving=false;blit(0,0,width,height,page_pixels);return;
   }
-  if(slot){if(!scanout.present(slot,0,height))return;}
+  if(slot){
+#ifdef STUDY_PALETTE_PICKER
+    if(palette.selection())palette.render(reinterpret_cast<uint16_t*>(slot->pixels),0,0,width,height,false);
+#endif
+    if(!scanout.present(slot,0,height))return;
+  }
   else blit(0,0,width,motion_height,mixed_pixels);
   ++motion_frames;
 }
 static void show(int dest,int shift=14) {
+#ifdef STUDY_PALETTE_PICKER
+  picker_open=false;
+  if(palette.selection())palette.page(dest);
+#endif
 #ifdef USE_ESP32_HOSTED
   if(network_open)close_network();
 #endif
@@ -1080,6 +1126,9 @@ static void show(int dest,int shift=14) {
     if(current==light0 && dest==lights)playback_direction=1;
   }
   nav.select(current,dest,shift,request_at);
+#ifdef STUDY_PALETTE_PICKER
+  if(palette.selection()){nav.select(-1,-1,0,request_at);playback_direction=-1;}
+#endif
   const bool transition=change && shift && blender && current!=idle && current!=doorbell && dest!=idle && dest!=doorbell && (dest!=home || nav.active());
   if(transition)std::swap(previous_pixels,page_pixels);
   moving=false;
@@ -1175,6 +1224,9 @@ static void begin(Display *display) {
   const auto *part=esp_partition_find_first(ESP_PARTITION_TYPE_DATA,static_cast<esp_partition_subtype_t>(0x40),"motion");
   static esp_partition_mmap_handle_t volume_mapping;
   const void *mapped=nullptr;unsigned char digest[32];
+#ifdef STUDY_PALETTE_PICKER
+  if(!palette.begin(part))ESP_LOGW("study","Palette bank unavailable");
+#endif
   if(part && esp_partition_mmap(part,volume_offset,volume_size,ESP_PARTITION_MMAP_DATA,&mapped,&volume_mapping)==ESP_OK &&
      !mbedtls_sha256(static_cast<const uint8_t*>(mapped),volume_size,digest,0) && !memcmp(digest,volume_sha,sizeof(digest)))
     volume_art=static_cast<const uint8_t*>(mapped);
@@ -1253,6 +1305,18 @@ static void begin(Display *display) {
     if(bell_enabled && !bell_client.reserve_frames())ESP_LOGW("study","Camera buffer reservation failed");
 #endif
     if(scanout.active && blender)nav.begin();
+#ifdef STUDY_PALETTE_PICKER
+    nvs_handle_t prefs;
+    if(palette.available() && nvs_open(display_namespace,NVS_READONLY,&prefs)==ESP_OK){
+      uint8_t value=0;
+      const bool restore=nvs_get_u8(prefs,"palette",&value)==ESP_OK && value>0 && value<6;
+      nvs_close(prefs);
+      if(restore){
+        nav.use_palette_memory();
+        if(palette.choose(value,scratch))show(home,0);else nav.restore_chunks();
+      }
+    }
+#endif
     if(scanout.active && blender){
       page_done=xSemaphoreCreateBinary();
       if(page_done)xTaskCreatePinnedToCore(decode_page_task,"study_page",24576,nullptr,1,&page_worker,xPortGetCoreID()^1);
@@ -1363,6 +1427,12 @@ static void touch(int x,int y) {
     wake_touch=true;blanked=false;show(wake_page,0);apply_brightness();return;
   }
   if(!moving && sheet_touch(x,y))return;
+#ifdef STUDY_PALETTE_PICKER
+  if(!moving && palette.available() && current==display_page && (picker_open || pressed==-161 || (!down && palette_buttons[0].contains(x,y)))){
+    if(!down){down=true;pressed=-161;x0=x;y0=y;}
+    dx=x-x0;dy=y-y0;return;
+  }
+#endif
 #ifdef USE_ESP32_HOSTED
   if(!moving && current==settings_page && (network_open || pressed==-160 || (!down && wifi_button.contains(x,y)))){
     if(!down){down=true;pressed=-160;x0=x;y0=y;wifi_touch_scroll=wifi_scroll;}
@@ -1508,6 +1578,20 @@ static void touch(int x,int y) {
   }
 }
 static void release() {
+#ifdef STUDY_PALETTE_PICKER
+  if(pressed==-161){
+    down=false;pressed=-2;last_activity=clock_ms();
+    if(std::abs(dx)>=24 || std::abs(dy)>=24)return;
+    const int x=x0+dx,y=y0+dy;
+    if(!picker_open){if(palette_buttons[0].contains(x,y))open_palette();return;}
+    if(palette_buttons[1].contains(x,y)){show(display_page,0);return;}
+    for(int i=0;i<6;i++)if(palette_buttons[i+2].contains(x,y)){
+      if(choose_palette(i))open_palette();
+      return;
+    }
+    return;
+  }
+#endif
 #ifdef USE_ESP32_HOSTED
   if(pressed==-160){
     down=false;pressed=-2;
@@ -1782,7 +1866,11 @@ static void tick() {
   if(!down && !moving && diagnostic_pass<0 && page_pixels && (current==room_menu_page || current==diagnostics_page) && now>=next_status){
     status_fields();next_status=now+5000;++revision;blit(0,0,width,height,page_pixels);
   }
-  if(current==display_page && page_pixels && !down && !moving && screen_level()!=shown_brightness){
+  if(current==display_page && page_pixels && !down && !moving && screen_level()!=shown_brightness
+#ifdef STUDY_PALETTE_PICKER
+     && !picker_open
+#endif
+  ){
     display_field(screen_level());++revision;blit(0,0,width,height,page_pixels);
   }
   thermostat.tick();

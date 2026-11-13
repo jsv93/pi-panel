@@ -3,6 +3,8 @@
 #include <esp_wifi.h>
 #include <esp_netif.h>
 #include <esp_timer.h>
+#include <esp_event.h>
+#include <atomic>
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -38,6 +40,8 @@ class WifiClient {
   struct Job {bool connect=false,restore=false;char ssid[33]{},password[64]{};};
   QueueHandle_t queue_{};SemaphoreHandle_t guard_{};TaskHandle_t worker_{};
   esp_netif_t *station_{};bool ready_=false;
+  std::atomic<int> disconnect_reason_{0};
+  esp_event_handler_instance_t disconnect_handler_{};
   Result result_;
   bool request(const Job &job){
     if(!guard_ || !queue_)return false;
@@ -52,6 +56,10 @@ class WifiClient {
     if(ready_)return true;
     if(!station_)station_=esp_netif_create_default_wifi_sta();
     if(!station_)return false;
+    if(!disconnect_handler_ && esp_event_handler_instance_register(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,
+      [](void *self,esp_event_base_t,int32_t,void *event){
+        if(event)static_cast<WifiClient*>(self)->disconnect_reason_=static_cast<wifi_event_sta_disconnected_t*>(event)->reason;
+      },this,&disconnect_handler_)!=ESP_OK)return false;
     wifi_init_config_t cfg=WIFI_INIT_CONFIG_DEFAULT();
     if(esp_wifi_init(&cfg)!=ESP_OK)return false;
     if(esp_wifi_set_mode(WIFI_MODE_STA)==ESP_OK && esp_wifi_start()==ESP_OK){ready_=true;return true;}
@@ -79,17 +87,22 @@ class WifiClient {
   }
   bool has_lease(const char *ssid){
     const auto end=esp_timer_get_time()+20000000;
+    bool associated=false;
     while(esp_timer_get_time()<end){
       wifi_ap_record_t ap{};esp_netif_ip_info_t info{};
-      if(esp_wifi_sta_get_ap_info(&ap)==ESP_OK && strcmp(reinterpret_cast<const char*>(ap.ssid),ssid)==0 &&
-         esp_netif_get_ip_info(station_,&info)==ESP_OK && info.ip.addr)return true;
+      if(esp_wifi_sta_get_ap_info(&ap)==ESP_OK && strncmp(reinterpret_cast<const char*>(ap.ssid),ssid,sizeof(ap.ssid))==0){
+        associated=true;
+        if(esp_netif_get_ip_info(station_,&info)==ESP_OK && info.ip.addr)return true;
+      }
       vTaskDelay(pdMS_TO_TICKS(250));
     }
+    ESP_LOGW("study_wifi","Wi-Fi timed out, associated=%d, disconnect reason=%d",int(associated),disconnect_reason_.load());
     return false;
   }
   bool connect(const Job &job){
     wifi_config_t old{},next{};
-    if(esp_wifi_get_config(WIFI_IF_STA,&old)!=ESP_OK)return false;
+    const auto old_result=esp_wifi_get_config(WIFI_IF_STA,&old);
+    if(old_result!=ESP_OK){ESP_LOGW("study_wifi","Station configuration unavailable: %d",old_result);return false;}
     memcpy(next.sta.ssid,job.ssid,strlen(job.ssid));
     memcpy(next.sta.password,job.password,strlen(job.password));
     next.sta.threshold.authmode=job.password[0]?WIFI_AUTH_WPA2_PSK:WIFI_AUTH_OPEN;
@@ -97,7 +110,11 @@ class WifiClient {
     bool linked=false;
     if(esp_wifi_set_storage(WIFI_STORAGE_RAM)==ESP_OK){
       esp_wifi_disconnect();
-      linked=esp_wifi_set_config(WIFI_IF_STA,&next)==ESP_OK && esp_wifi_connect()==ESP_OK && has_lease(job.ssid);
+      disconnect_reason_=0;
+      const auto configured=esp_wifi_set_config(WIFI_IF_STA,&next);
+      const auto started=configured==ESP_OK?esp_wifi_connect():configured;
+      if(started!=ESP_OK)ESP_LOGW("study_wifi","Station connection request failed: %d",started);
+      linked=started==ESP_OK && has_lease(job.ssid);
       linked=linked && esp_wifi_set_storage(WIFI_STORAGE_FLASH)==ESP_OK && esp_wifi_set_config(WIFI_IF_STA,&next)==ESP_OK;
       if(!linked){
         esp_wifi_disconnect();
@@ -105,7 +122,7 @@ class WifiClient {
         if(esp_wifi_set_config(WIFI_IF_STA,&old)==ESP_OK && old.sta.ssid[0])esp_wifi_connect();
         esp_wifi_set_storage(WIFI_STORAGE_FLASH);
       }
-    }
+    }else ESP_LOGW("study_wifi","Station RAM configuration unavailable");
     explicit_bzero(&old,sizeof(old));explicit_bzero(&next,sizeof(next));
     return linked;
   }

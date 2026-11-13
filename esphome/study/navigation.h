@@ -242,6 +242,14 @@ class Navigation {
     return i;
   }
  public:
+#ifdef STUDY_PALETTE_PICKER
+  void use_palette_memory(){
+    release_job();route_=-1;part_=0;
+    heap_caps_free(chunks_);chunks_=nullptr;
+    heap_caps_free(chunk_offsets_);chunk_offsets_=nullptr;
+  }
+  void restore_chunks(){if(!chunks_ && input_ && play_ids_)make_chunks();}
+#endif
   void begin(){
     const auto *part=esp_partition_find_first(ESP_PARTITION_TYPE_DATA,static_cast<esp_partition_subtype_t>(0x40),"motion");
     const void *base=nullptr;

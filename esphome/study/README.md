@@ -42,9 +42,14 @@ The Music screen lists the configured speakers and switches its transport, volum
 
 The room menu date, Home Assistant connection, network, backlight, display refresh and uptime readings come from the P4. Enabling diagnostics places the HA connection and display refresh rate in the top corners. The preference persists across restarts. The scroll test measures completed presentations across six native list-rendering workloads and shows the results on the panel. Browser compositor workloads and native renderer workloads measure different operations.
 
-The asset generator accepts all six Architectural palettes for individual builds. In-panel palette switching and the Default and Ambient layouts remain open. The Network screen in the hosted Wi-Fi candidate scans the 2.4 GHz band and accepts an SSID selection and a passphrase on its touch keyboard. The worker waits for authentication and a DHCP lease before saving a new network. The working room uses Architectural and Linen over Ethernet.
+The Architectural firmware can include the six native colour choices under Display → Theme colours. The picker and the saved selection run locally, including after a reboot. Default and Ambient use different page layouts and are still outstanding. The Network screen in the hosted Wi-Fi candidate scans the 2.4 GHz band and accepts an SSID selection and a passphrase on its touch keyboard. The worker waits for authentication and a DHCP lease before saving a new network.
 
-To build the shared palette artwork, render each Architectural palette into a subdirectory named after its palette, then run `python esphome/study/palette_art.py PALETTE_DIRECTORY PRIVATE_BUILD/study-palettes.bin`. The encoder reopens the packed sections and checks every pixel of every resting screen against the original RGB565 render. The pack covers resting screens. Interactive controls and motion still need runtime palette support.
+To include the picker, render each Architectural palette into a subdirectory named after its palette. Keep each render's input configuration in that directory as `config.json`. Run the following commands before `prepare.py --hosted-wifi`.
+
+    python esphome/study/palette_art.py PALETTE_DIRECTORY PRIVATE_BUILD/study-palettes.bin
+    python esphome/study/palette_runtime.py PALETTE_DIRECTORY PRIVATE_BUILD/study-palettes.bin states.json PRIVATE_BUILD
+
+The second command checks all resting screens against the CM5 RGB565 captures and captures all six picker states. Provision `palette-art.bin` at `0x610000 + palette_offset` from the generated motion header. The app verifies its digest. Non-Linen movement uses the P4 compositor. Live media, overlaid text and transition colours still require visual comparisons on the device.
 
 ## Hardware test
 

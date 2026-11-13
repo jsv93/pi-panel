@@ -128,6 +128,16 @@ def main():
         text_sha=",".join(map(str,hashlib.sha256(packed).digest()))
         text_settings=f"constexpr unsigned text_offset={text_offset},text_packed_size={len(packed)};\nconstexpr unsigned char text_sha[]={{{text_sha}}};\n"
     (args.build / "live-motion-tail.bin").write_bytes(blob)
+    palette_file=args.build/"palette-art.bin"
+    if palette_file.is_file():
+        if not (args.build/"palette_assets.h").is_file() or not args.hosted_wifi or not text_settings:
+            p.error("native palettes require palette_assets.h and the compact hosted-Wi-Fi build")
+        palette_offset=(text_offset+len(packed)+4095)&~4095
+        palette=palette_file.read_bytes()
+        if not palette or palette_offset+len(palette)>0x1980000:p.error("palette artwork exceeds the Study partition")
+        palette_sha=",".join(map(str,hashlib.sha256(palette).digest()))
+        text_settings+=f"constexpr unsigned palette_offset={palette_offset},palette_size={len(palette)};\nconstexpr unsigned char palette_sha[]={{{palette_sha}}};\n"
+        shutil.copyfile(Path(__file__).parent.parent/"study/palette_renderer.h",dest/"palette_renderer.h")
     expected = ",".join(map(str, hashlib.sha256(blob).digest()))
     (dest / "motion_tail.h").write_text(
         "#pragma once\nnamespace study {\n"
@@ -148,6 +158,8 @@ def main():
     shutil.copyfile(Path(__file__).parent.parent/"study/network_screen.h",dest/"network_screen.h")
     source = source.replace("study_assets.h, study.h", "study_assets.h, control_art.h, media_art.h, text_art.h, text_renderer.h, study.h")
     source = source.replace("includes: [scanout.h", "includes: [live_runtime, scanout.h")
+    if palette_file.is_file():
+        source=source.replace(", study.h",", palette_assets.h, study.h",1)
     source=source.replace("  includes:", "  platformio_options:\n    build_flags: [-DUSE_API_HOMEASSISTANT_ACTION_RESPONSES, -DUSE_API_HOMEASSISTANT_ACTION_RESPONSES_ERRORS, -DUSE_API_HOMEASSISTANT_ACTION_RESPONSES_JSON]\n  includes:",1)
     source+="\njson:\n"
     if args.hosted_wifi:
