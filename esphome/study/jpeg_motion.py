@@ -96,7 +96,25 @@ def emit(d):
     # The decoder sums at most 15 lengths for a random segment.
     checkpoints=ends[:-1:16].astype("<u4").tobytes()
     packed_index=checkpoints+lengths.astype("u1").tobytes()
-    payload=packed_index+bank
+    # Each frame indexes the same entropy dictionary. Group the low, middle
+    # and high bytes so DEFLATE can reuse the slowly changing high bytes.
+    if len(lengths)>1<<24:
+        raise ValueError("Motion segment dictionary exceeds 24-bit IDs")
+    frame_maps=bytearray()
+    entries=[]
+    for a,b,t,phases in paths:
+        blocks=[]
+        for o,s in phases:
+            ids=np.frombuffer(zlib.decompress(bank[prefix+entropy+o:prefix+entropy+o+s]),"<u4")
+            if len(ids)!=(W//16)*(H//16) or int(ids.max())>=len(lengths):
+                raise ValueError("Invalid motion frame map")
+            planes=ids.view("u1").reshape(-1,4)[:,:3].T.tobytes()
+            packed=zlib.compress(planes,9)
+            n=prefix+int(lengths[ids].sum())+2*len(ids)
+            blocks.append("{%d,%d,%d}"%(len(frame_maps),len(packed),n))
+            frame_maps.extend(packed)
+        entries.append("{%d,%d,%d,{%s}}"%(a,b,t,",".join(blocks)))
+    payload=packed_index+bank[:prefix+entropy]+frame_maps
     tag=hashlib.sha256(payload).digest()
     image=tag+payload
     if len(image)>0x1980000:raise ValueError("Motion asset exceeds its data partition")
@@ -119,17 +137,10 @@ def emit(d):
     with (d/"navigation_assets.h").open("w",encoding="ascii") as h:
         h.write("#pragma once\n#include <cstdint>\nnamespace study {\n")
         h.write("struct Block {uint32_t offset,size,bytes;};struct PathMotion {int from,to,travel; Block phases[10];};\n")
-        entries=[]
-        for a,b,t,phases in paths:
-            blocks=[]
-            for o,s in phases:
-                ids=np.frombuffer(zlib.decompress(bank[prefix+entropy+o:prefix+entropy+o+s]),"<u4")
-                n=prefix+int(lengths[ids].sum())+2*len(ids)
-                blocks.append("{%d,%d,%d}"%(o,s,n))
-            entries.append("{%d,%d,%d,{%s}}"%(a,b,t,",".join(blocks)))
         h.write("constexpr PathMotion nav_paths[]={"+",".join(entries)+"};\n")
         h.write("constexpr uint8_t motion_tag[]={"+",".join(map(str,tag))+"};\n")
         h.write(f"#define STUDY_PACKED_SEGMENTS\nconstexpr size_t checkpoint_bytes={len(checkpoints)};\n")
+        h.write("#define STUDY_PLANAR_MAPS\n")
         h.write(f"constexpr size_t motion_bytes={len(image)}, offsets_bytes={len(packed_index)}, header_bytes={prefix}, entropy_bytes={entropy}, max_frame={maximum};\n")
         h.write("struct Pose {int shift; unsigned alpha;};constexpr Pose nav_pose[3][11]={"+
                 ",".join("{"+",".join("{%d,%d}"%pose(i,t) for i in range(11))+"}" for t in (14,24,-24))+"};\n")

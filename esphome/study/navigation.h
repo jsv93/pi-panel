@@ -117,7 +117,17 @@ class Navigation {
     }
   }
   bool ids(const Block &b,uint32_t *dest)const{
+#ifdef STUDY_PLANAR_MAPS
+    // Separate scratch per consumer. Playback assembly and cache preparation
+    // can run on different cores.
+    auto *planes=reinterpret_cast<uint8_t*>(dest+blocks);
+    if(tinfl_decompress_mem_to_mem(planes,blocks*3,maps_+b.offset,b.size,1)!=blocks*3)return false;
+    for(int i=0;i<blocks;i++)
+      dest[i]=planes[i] | (uint32_t(planes[blocks+i])<<8) | (uint32_t(planes[2*blocks+i])<<16);
+    return true;
+#else
     return tinfl_decompress_mem_to_mem(dest,blocks*4,maps_+b.offset,b.size,1)==blocks*4;
+#endif
   }
   uint8_t *append_raw(uint8_t *ptr,const uint32_t *ids,int begin,int end)const{
     for(int j=begin;j<end;j++){
@@ -276,8 +286,13 @@ class Navigation {
     entropy_=header_+header_bytes;maps_=entropy_+entropy_bytes;
     jpeg_decode_memory_alloc_cfg_t cfg{};cfg.buffer_direction=JPEG_DEC_ALLOC_INPUT_BUFFER;
     input_=static_cast<uint8_t*>(jpeg_alloc_decoder_mem(max_frame,&cfg,&input_size_));
-    prepare_ids_=static_cast<uint32_t*>(heap_caps_malloc(blocks*4,MALLOC_CAP_SPIRAM));
-    play_ids_=static_cast<uint32_t*>(heap_caps_malloc(blocks*4,MALLOC_CAP_SPIRAM));
+#ifdef STUDY_PLANAR_MAPS
+    constexpr size_t map_buffer_bytes=blocks*7;
+#else
+    constexpr size_t map_buffer_bytes=blocks*4;
+#endif
+    prepare_ids_=static_cast<uint32_t*>(heap_caps_malloc(map_buffer_bytes,MALLOC_CAP_SPIRAM));
+    play_ids_=static_cast<uint32_t*>(heap_caps_malloc(map_buffer_bytes,MALLOC_CAP_SPIRAM));
     if(!input_ || !play_ids_ || !decoder()){input_=nullptr;ESP_LOGW("study","Navigation decoder unavailable");return;}
     if(!check_colors()){input_=nullptr;ESP_LOGW("study","Native color check failed; using page blend");return;}
     make_chunks();

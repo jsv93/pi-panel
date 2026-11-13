@@ -62,7 +62,7 @@ def fixture_page(cfg, states, browse_children=None):
             return r.fulfill(json={})
         page.route("**/*", route)
         page.goto(ORIGIN+"/panel.html")
-        page.wait_for_function("document.body.dataset.theme==='architectural' || document.body.classList.contains('architectural') || document.querySelector('#archRoom').textContent==='Study'")
+        page.wait_for_function("theme=>document.body.classList.contains('theme-'+theme)",arg=cfg["display"].get("theme","default"))
         page.evaluate("document.fonts.ready")
         page.wait_for_timeout(400)
         try:

@@ -74,6 +74,7 @@ static Scanout scanout;
 namespace study {
 static PaletteRenderer palette;
 static bool picker_open=false;
+static void restore_media_colours(uint8_t *frame,const Rect &paint);
 #endif
 static uint32_t revision=1;
 static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
@@ -99,8 +100,9 @@ static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
   if(!picker_open && current!=doorbell && palette.selection()){
     if(!full && !seed && stride)
       for(int row=0;row<h;row++)memcpy(slot->pixels+2*((y+row)*width+x),pixels+2*row*stride,2*w);
-    if(full || seed)palette.render(reinterpret_cast<uint16_t*>(slot->pixels),0,0,width,height,true);
-    else palette.render(reinterpret_cast<uint16_t*>(slot->pixels),x,y,w,h,true);
+    const Rect paint=full || seed?Rect{0,0,width,height}:Rect{x,y,w,h};
+    palette.render(reinterpret_cast<uint16_t*>(slot->pixels),paint.x,paint.y,paint.w,paint.h,true);
+    restore_media_colours(slot->pixels,paint);
     auto &button=palette_buttons[0];
     if(current==display_page && (full || seed || (y<button.y+button.h && y+h>button.y)))
       palette.label(reinterpret_cast<uint16_t*>(slot->pixels),scratch);
@@ -535,6 +537,38 @@ static uint16_t *cover_pixels=nullptr;
 static bool cover_ready=false;
 static bool mini_art_enabled=default_mini_art;
 static bool diagnostics_enabled=diagnostic_default;
+#ifdef STUDY_PALETTE_PICKER
+static void restore_media_colours(uint8_t *frame,const Rect &paint){
+  if(current!=media && current!=home)return;
+  auto restore=[&](const Rect &image,int top,int bottom){
+    const int x=std::max(paint.x,image.x),end_x=std::min(paint.x+paint.w,image.x+image.w);
+    const int y=std::max({paint.y,image.y,top}),end_y=std::min({paint.y+paint.h,image.y+image.h,bottom});
+    if(x>=end_x)return;
+    for(int row=y;row<end_y;row++){
+      const auto offset=2*(row*width+x);
+      memcpy(frame+offset,page_pixels+offset,2*(end_x-x));
+    }
+  };
+  if(library_open && current==media){
+    const int cols=library_steps[library_mode][0],step=library_steps[library_mode][1];
+    const int first=std::max(0,library_scroll/step*cols-int(library.first));
+    const auto &tile=library_tiles[2*library_mode];
+    for(size_t i=first;i<library.items.size();i++){
+      const int y=library_list.y+int((library.first+i)/cols)*step-library_scroll;
+      if(y>=library_list.y+library_list.h)break;
+      const auto &url=library.items[i].thumbnail;
+      if(url.empty() || !std::any_of(thumbnails,thumbnails+thumbnail_slots,[&](const Thumbnail &t){return t.ready && t.url==url;}))continue;
+      Rect icon=library_note_rects[library_mode];
+      icon.x+=library_list.x+(i%cols)*library_steps[library_mode][2]-tile.x;
+      icon.y+=y-tile.y;
+      restore(icon,library_list.y,library_list.y+library_list.h);
+    }
+  }else if(cover_ready && !queue_open && !speakers_open){
+    if(current==media)restore(album_rect,0,height);
+    else if(player().playing && mini_art_enabled)restore(mini_album_rect,0,height);
+  }
+}
+#endif
 static int observed_touches=0;
 static int refresh_fps=0;
 static bool ha_connected(){

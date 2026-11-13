@@ -127,19 +127,47 @@ class WifiClient {
     return linked;
   }
   void run(){
+    bool reconnect=false;
+    int retry_seconds=2;
     for(;;){
-      Job job{};xQueueReceive(queue_,&job,portMAX_DELAY);
+      Job job{};
+      const bool queued=xQueueReceive(queue_,&job,reconnect?pdMS_TO_TICKS(retry_seconds*1000):portMAX_DELAY)==pdTRUE;
+      if(!queued){
+        wifi_ap_record_t ap{};esp_netif_ip_info_t ip{};
+        if(esp_wifi_sta_get_ap_info(&ap)==ESP_OK){
+          if(esp_netif_get_ip_info(station_,&ip)==ESP_OK && ip.ip.addr){
+            xSemaphoreTake(guard_,portMAX_DELAY);
+            if(result_.state==State::idle)result_.state=State::connected;
+            memcpy(result_.ssid,ap.ssid,32);
+            result_.signal=std::clamp(2*(int(ap.rssi)+100),0,100);
+            xSemaphoreGive(guard_);
+          }
+          retry_seconds=2;continue;
+        }
+        // Retry the saved station in the background. A scan or a new join
+        // can interrupt the backoff through the same work queue.
+        wifi_config_t saved{};
+        if(esp_wifi_get_config(WIFI_IF_STA,&saved)==ESP_OK && saved.sta.ssid[0])esp_wifi_connect();
+        explicit_bzero(&saved,sizeof(saved));
+        xSemaphoreTake(guard_,portMAX_DELAY);
+        if(result_.state==State::connected)result_.state=State::idle;
+        result_.ssid[0]=0;result_.signal=0;
+        xSemaphoreGive(guard_);
+        retry_seconds=std::min(retry_seconds*2,32);continue;
+      }
       Result next;
       bool ok=start();
       if(ok && job.restore){
         wifi_config_t saved{};
         if(esp_wifi_get_config(WIFI_IF_STA,&saved)==ESP_OK && saved.sta.ssid[0]){
+          reconnect=true;
           char name[33]{};memcpy(name,saved.sta.ssid,32);
           ok=esp_wifi_connect()==ESP_OK && has_lease(name);if(ok)next.state=State::connected;
         }
         explicit_bzero(&saved,sizeof(saved));
       }else if(ok && job.connect){
-        next=snapshot();ok=connect(job);if(ok)next.state=State::connected;
+        next=snapshot();ok=connect(job);
+        if(ok){next.state=State::connected;reconnect=true;retry_seconds=2;}
       }else if(ok)ok=scan_networks(next);
       if(!ok)next.state=State::failed;
       wifi_ap_record_t ap{};

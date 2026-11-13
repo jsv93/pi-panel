@@ -182,8 +182,9 @@ inline bool study_station_ip(esp_netif_ip_info_t &info){
   return netif && esp_netif_is_netif_up(netif) && esp_netif_get_ip_info(netif,&info)==ESP_OK && info.ip.addr;
 }''')
         network_patch("util.h","inline bool is_connected() {","inline bool is_connected() {\n  esp_netif_ip_info_t info{};if(study_station_ip(info))return true;")
-        network_patch("util.cpp","if (ethernet::global_eth_component != nullptr)\n    return ethernet::global_eth_component->get_ip_addresses();",'''if (ethernet::global_eth_component != nullptr && ethernet::global_eth_component->is_connected())
+        network_patch("util.cpp","if (ethernet::global_eth_component != nullptr)\n    return ethernet::global_eth_component->get_ip_addresses();\n#endif",'''if (ethernet::global_eth_component != nullptr && ethernet::global_eth_component->is_connected())
     return ethernet::global_eth_component->get_ip_addresses();
+#endif
   esp_netif_ip_info_t info{};
   if(study_station_ip(info)){
     ip4_addr_t ip{};ip.addr=info.ip.addr;

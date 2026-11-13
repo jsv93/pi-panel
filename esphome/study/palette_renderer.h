@@ -13,7 +13,40 @@ namespace study {
 class PaletteRenderer {
   static constexpr int width=720,height=1280,page_bytes=width*height*2;
   struct Key {uint16_t colour,first;};
-  struct Table {Key *keys=nullptr;uint16_t *colours=nullptr;size_t count=0,rows=0;};
+  struct Table {
+    Key *keys=nullptr;
+    uint16_t *colours=nullptr,*blocks=nullptr,*indices=nullptr;
+    size_t count=0,rows=0;
+    void make_index(){
+      if(indices)return;
+      constexpr int shift=6;
+      const size_t directory_size=1u<<(16-shift);
+      blocks=static_cast<uint16_t*>(heap_caps_calloc(directory_size,sizeof(uint16_t),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+      if(!blocks)return;
+      unsigned pages=0;
+      for(size_t i=0;i<count;i++){
+        auto &page=blocks[keys[i].colour>>shift];
+        if(!page)page=++pages;
+      }
+      indices=static_cast<uint16_t*>(heap_caps_calloc(pages<<shift,sizeof(uint16_t),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+      if(!indices){heap_caps_free(blocks);blocks=nullptr;return;}
+      for(size_t i=0;i<count;i++){
+        const unsigned code=keys[i].colour;
+        indices[((blocks[code>>shift]-1)<<shift)+(code&63)]=i+1;
+      }
+    }
+    const Key *find(uint16_t colour)const{
+      if(indices){
+        const auto page=blocks[colour>>6];
+        if(!page)return nullptr;
+        const auto index=indices[((page-1)<<6)+(colour&63)];
+        return index?keys+index-1:nullptr;
+      }
+      const auto *end=keys+count;
+      const auto *key=std::lower_bound(static_cast<const Key*>(keys),end,colour,[](const Key &k,uint16_t c){return k.colour<c;});
+      return key!=end && key->colour==colour?key:nullptr;
+    }
+  };
   const uint8_t *data_=nullptr;
   esp_partition_mmap_handle_t mapping_{};
   std::array<Table,16> tables_;
@@ -38,7 +71,10 @@ class PaletteRenderer {
   bool choose(int mode,uint8_t *temporary){
     if(mode<0 || mode>5 || !data_ || !temporary)return false;
     if(!mode){
-      for(auto &table:tables_){heap_caps_free(table.keys);heap_caps_free(table.colours);table=Table{};}
+      for(auto &table:tables_){
+        heap_caps_free(table.keys);heap_caps_free(table.colours);
+        heap_caps_free(table.blocks);heap_caps_free(table.indices);table=Table{};
+      }
       heap_caps_free(ranks_);ranks_=nullptr;selected_=0;page_=-1;return true;
     }
     if(mode==selected_)return true;
@@ -56,6 +92,7 @@ class PaletteRenderer {
       if(!table.keys || !table.colours)return false;
       table.count=n;table.rows=rows;
       memcpy(table.keys,values+2,4*n);
+      table.make_index();
       values+=2+2*n;
       for(unsigned j=0;j<rows;j++)table.colours[j]=values[j*5+mode-1];
     }
@@ -79,8 +116,8 @@ class PaletteRenderer {
       auto &pixel=frame[position];
       const auto &t=tables_[(row%4)*4+column%4];
       auto end=t.keys+t.count;
-      auto key=std::lower_bound(t.keys,end,pixel,[](const Key &k,uint16_t colour){return k.colour<colour;});
-      if(key==end || key->colour!=pixel)continue;
+      const auto *key=t.find(pixel);
+      if(!key)continue;
       const size_t first=key->first,limit=key+1==end?t.rows:(key+1)->first;
       const size_t wanted=first+(exact && page_>=0?ranks_[position]:0);
       pixel=t.colours[wanted<limit?wanted:first];
