@@ -8,12 +8,13 @@ static Wifi::Result wifi_result;
 static bool network_open=false;
 static int wifi_selected=-1,wifi_scroll=0,wifi_touch_scroll=0;
 static bool wifi_shift=false,wifi_pending=false;
+static bool wifi_scan_after_restore=false;
 static char passphrase[64]{};
 static int wifi_row_step(){return wifi_rows[1].y-wifi_rows[0].y;}
 static int wifi_list_bottom(){return std::min(1210,height);}
 static int wifi_scroll_limit(){return std::max(0,int(wifi_result.networks.size())*wifi_row_step()-wifi_list_bottom()+wifi_rows[0].y);}
 static void close_network(){
-  network_open=false;wifi_selected=-1;wifi_shift=false;wifi_pending=false;
+  network_open=false;wifi_selected=-1;wifi_shift=false;wifi_pending=false;wifi_scan_after_restore=false;
   explicit_bzero(passphrase,sizeof(passphrase));
 }
 static void paint_network(){
@@ -59,13 +60,19 @@ static void network_refresh(){
   if(!network_open || !wifi_pending || down)return;
   auto next=station.snapshot();
   if(next.state==Wifi::State::joining || next.state==Wifi::State::scanning)return;
+  if(wifi_scan_after_restore){
+    wifi_scan_after_restore=false;
+    wifi_pending=station.scan();wifi_result=station.snapshot();paint_network();return;
+  }
   wifi_pending=false;wifi_result=std::move(next);
   if(wifi_result.state==Wifi::State::connected){wifi_selected=-1;explicit_bzero(passphrase,sizeof(passphrase));}
   paint_network();
 }
 static void network_action(int x,int y){
   if(!network_open){
-    close_network();network_open=true;wifi_scroll=0;wifi_pending=station.scan();
+    close_network();network_open=true;wifi_scroll=0;
+    if(!station.scan())wifi_scan_after_restore=true;
+    wifi_pending=true;
     wifi_result=station.snapshot();paint_network();return;
   }
   if(wifi_back.contains(x,y)){close_network();show(settings_page,0);return;}
