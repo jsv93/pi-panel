@@ -1006,7 +1006,8 @@ body[class] #s-media.music-player #mpVolumeButton:disabled{opacity:.4}
 #doorbellTitle{font-size:clamp(24px,5vw,38px);font-weight:500;margin:10px 0}
 #doorbellClose{min-width:80px;min-height:52px;padding:12px 18px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2);color:var(--ink);font:inherit}
 #doorbellClose:focus-visible{outline:3px solid var(--accent);outline-offset:4px}
-#doorbellVideo{display:block;width:100%;flex:1;min-height:0;object-fit:contain;background:var(--scrim);border-radius:16px}
+#doorbellVideo,#doorbellMjpeg{display:block;width:100%;height:0;flex:1;min-height:0;object-fit:contain;background:var(--scrim);border-radius:16px}
+#doorbellVideo[hidden],#doorbellMjpeg[hidden]{display:none}
 #doorbellState{font-size:20px;margin:0}
 #doorbellDuration{font-size:15px;color:var(--ink-dim);margin:0}
 </style>
@@ -1453,6 +1454,7 @@ SOFTWARE.
 <section id="doorbellPopup" role="dialog" aria-modal="true" aria-labelledby="doorbellTitle" hidden>
   <header><div><div id="doorbellLabel">DOORBELL</div><h1 id="doorbellTitle">Someone at the door</h1></div><button id="doorbellClose" type="button">Close</button></header>
   <video id="doorbellVideo" autoplay muted playsinline aria-label="Doorbell live video"></video>
+  <img id="doorbellMjpeg" alt="Doorbell live video" referrerpolicy="no-referrer" hidden>
   <p id="doorbellState" role="status"></p><p id="doorbellDuration"></p>
 </section>
 <script type="module">
@@ -1935,9 +1937,12 @@ function call(domain,service,data){
    No camera URL, credential or command can arrive in the ring event. */
 const bellConfig=CFG.doorbell||{};
 let bellSession=null,bellSerial=0;
+let bellPicture='';
 const cameraSubscriptions=new Map();
 function releaseDoorbellStream(s){
   clearTimeout(s.connectTimer);
+  clearInterval(s.imageTimer);
+  const image=$('#doorbellMjpeg');image.onerror=null;image.removeAttribute('src');image.hidden=true;
   if(s.subscription){
     cameraSubscriptions.delete(s.subscription);
     if(wsReady&&ws===s.socket)wsSend({type:'unsubscribe_events',subscription:s.subscription},5000).catch(()=>{});
@@ -1945,7 +1950,7 @@ function releaseDoorbellStream(s){
   }
   if(s.peer){s.peer.ontrack=null;s.peer.onicecandidate=null;s.peer.onconnectionstatechange=null;s.peer.close();s.peer=null;}
   s.stream?.getTracks().forEach(t=>t.stop());s.stream=null;
-  const video=$('#doorbellVideo');video.onplaying=null;video.pause();video.srcObject=null;
+  const video=$('#doorbellVideo');video.onplaying=null;video.pause();video.srcObject=null;video.hidden=false;
 }
 function closeDoorbell(){
   const s=bellSession;if(!s)return;
@@ -1990,7 +1995,20 @@ async function openDoorbell(test=false){
   try{
     const caps=await wsSend({type:'camera/capabilities',entity_id:bellConfig.camera},8000);
     if(!current())return;
-    if(!caps?.frontend_stream_types?.includes('web_rtc'))throw Error('This camera does not support live WebRTC video in Home Assistant.');
+    if(!caps?.frontend_stream_types?.includes('web_rtc')){
+      const prefix='/api/camera_proxy/'+bellConfig.camera+'?token=';
+      if(!bellPicture.startsWith(prefix)||!/^[A-Za-z0-9_-]+$/.test(bellPicture.slice(prefix.length)))
+        throw Error('This camera does not support live WebRTC video in Home Assistant.');
+      const image=$('#doorbellMjpeg');$('#doorbellVideo').hidden=true;image.hidden=false;
+      image.onerror=()=>{if(current())failDoorbell(s,'Home Assistant could not start this camera.');};
+      image.src=new URL('/api/camera_proxy_stream/'+bellConfig.camera+'?token='+bellPicture.slice(prefix.length),BASE).href;
+      s.imageTimer=setInterval(()=>{
+        if(!current()||!image.naturalWidth)return;
+        clearInterval(s.imageTimer);clearTimeout(s.connectTimer);popup.dataset.state='playing';
+        popup.dataset.startupMs=String(Math.round(performance.now()-s.started));$('#doorbellState').textContent='Live camera';
+      },100);
+      return;
+    }
     const config=await wsSend({type:'camera/webrtc/get_client_config',entity_id:bellConfig.camera},8000);
     if(!current())return;
     const peer=s.peer=new RTCPeerConnection(config.configuration||{});
@@ -2051,6 +2069,7 @@ function applyState(s){
   if(!s) return;
   adaptiveReading(s);
   const id = s.entity_id;
+  if(id===bellConfig.camera)bellPicture=typeof s.attributes?.entity_picture==='string'?s.attributes.entity_picture:'';
   if(SPEAKERS.some(sp=>sp[0]===id))speakerStates.set(id,s);
   const li = LIGHTS.findIndex(l=>l.entity_id===id);
   if(li >= 0){

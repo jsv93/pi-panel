@@ -19,11 +19,11 @@ import threading
 import time
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 
-from . import backgrounds, db, firstboot, ha, ssh, screen, performance, access, doorbell
+from . import backgrounds, db, firstboot, ha, ssh, screen, performance, access, doorbell, p4_video
 
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme")
 WEAK_DEFAULTS = {"changeme", "change-me", ""}
@@ -76,7 +76,30 @@ HOST_NEW="${HOST_NEW:-$PANEL_ID}"
 HOST_NEW=$(echo "$HOST_NEW" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | sed 's/^-*//;s/-*$//')
 OLD_HOST=$(hostname)
 echo "==> hostname: $HOST_NEW"
+# Chromium records the hostname in its profile lock. Let the existing kiosk
+# close while it still owns that hostname before a reinstall renames the Pi.
+resume_kiosk=false
+if [ "$OLD_HOST" != "$HOST_NEW" ] &&
+   [[ "$(systemctl show -p ActiveState --value cage-kiosk.service)" =~ ^(active|activating|reloading)$ ]]; then
+  systemctl stop cage-kiosk.service
+  resume_kiosk=true
+  trap 'systemctl start cage-kiosk.service || true' EXIT
+fi
+if [ "$OLD_HOST" != "$HOST_NEW" ]; then
+  profile=/var/lib/panel-kiosk/chromium
+  lock=$(readlink "$profile/SingletonLock" || true)
+  if [[ "${lock%-*}" == "$OLD_HOST" && "${lock##*-}" =~ ^[0-9]+$ ]] &&
+     [ ! -d "/proc/${lock##*-}" ] &&
+     [ "$(stat -c %U "$profile/SingletonLock")" = panel ] &&
+     [ "$(findmnt -T "$profile" -n -o FSTYPE)" = ext4 ]; then
+    unlink "$profile/SingletonLock"
+  fi
+fi
 hostnamectl set-hostname "$HOST_NEW"
+if $resume_kiosk; then
+  systemctl start cage-kiosk.service
+  trap - EXIT
+fi
 # Without this, every later sudo prints "unable to resolve host".
 if grep -qE "^127\.0\.1\.1" /etc/hosts; then
   sed -i "s/^127\.0\.1\.1.*/127.0.1.1\t$HOST_NEW/" /etc/hosts
@@ -926,6 +949,16 @@ async def panel_config(panel_id: str, request: Request):
     cfg["_version"] = db.latest_version(panel_id)
     cfg["_panel_id"] = panel_id
     cfg["_claimed"] = bool(p["claimed"])
+    if request.headers.get("accept") == "application/vnd.pi-panel.config+json":
+        # Embedded clients verify these exact bytes before persisting them.
+        # This avoids reserializing Python floats and Unicode on the device.
+        key = db.get_panel_sign_key(panel_id)
+        if not key or not db.get_panel_token(panel_id):
+            raise HTTPException(403, "signed configuration requires enrollment")
+        body = canonical(cfg)
+        return Response(body, media_type="application/vnd.pi-panel.config+json",
+                        headers={"X-Panel-Signature": hmac.new(key.encode(), body, hashlib.sha256).hexdigest(),
+                                 "Cache-Control": "no-store", "Vary": "Accept"})
     # Signed as well as the bundle. Config is data, not code, but the kiosk
     # page holds Home Assistant's token and renders some of it -- a server
     # that could forge config could forge its way into that page.
@@ -1120,10 +1153,8 @@ async def panel_presets(panel_id: str, request: Request):
     return {"version": version, "changed": changed}
 
 
-# What a panel may change about its own screen. Narrower than DISPLAY_KEYS on
-# purpose: these are the four with a control on the panel, and a panel has no
-# business setting its own screen size or dtoverlay.
-PANEL_DISPLAY_KEYS = {"theme", "palette", "glass_tier", "diagnostics", "browse_view"}
+# Display preferences editable from a paired panel's own touchscreen.
+PANEL_DISPLAY_KEYS = {"theme", "palette", "glass_tier", "diagnostics", "browse_view", "mini_art"}
 
 
 @app.post("/api/panel/{panel_id}/display")
@@ -1274,6 +1305,63 @@ ACCESS_REQUESTS = {}
 ACCESS_LAST = {}
 
 DOORBELL_LAST = {}
+P4_BELL_WAITERS = {}
+P4_VIDEO_ACTIVE = set()
+
+
+def p4_bell_settings(panel_id, request):
+    if not db.get_panel_token(panel_id) or not _token_ok(request.headers,panel_id):
+        raise HTTPException(401,"Paired panel authentication required")
+    panel=db.get_panel(panel_id)
+    if not panel or panel.get("kind")!="esp" or not panel.get("claimed"):
+        raise HTTPException(403,"Claim this ESP panel first")
+    bell=db.merged_config(panel_id).get("doorbell") or {}
+    if not bell.get("enabled") or not bell.get("camera"):
+        raise HTTPException(409,"No enabled camera for this panel")
+    doorbell.validate(bell)
+    return bell
+
+
+@app.get("/api/panel/{panel_id}/doorbell/wait")
+async def p4_wait_for_bell(panel_id: str, request: Request):
+    p4_bell_settings(panel_id,request)
+    if panel_id in P4_BELL_WAITERS:
+        raise HTTPException(409,"A ring listener is already connected")
+    ready=asyncio.Event()
+    P4_BELL_WAITERS[panel_id]=ready
+    try:
+        try:
+            await asyncio.wait_for(ready.wait(),15)
+        except TimeoutError:
+            return Response(status_code=204)
+        return Response(status_code=200,content="ring",headers={"Cache-Control":"no-store"})
+    finally:
+        P4_BELL_WAITERS.pop(panel_id,None)
+
+
+@app.get("/api/panel/{panel_id}/doorbell/video")
+async def p4_doorbell_video(panel_id: str, request: Request):
+    bell=p4_bell_settings(panel_id,request)
+    if panel_id in P4_VIDEO_ACTIVE:
+        raise HTTPException(409,"A video session is already open")
+    if not ha.configured():
+        raise HTTPException(503,"Home Assistant camera connection unavailable")
+    P4_VIDEO_ACTIVE.add(panel_id)
+    source=p4_video.video(bell["camera"])
+    async def frames():
+        try:
+            async with asyncio.timeout(bell.get("duration_s",30)):
+                async for frame in source:
+                    yield frame
+        except (TimeoutError, ValueError, OSError, p4_video.httpx.HTTPError):
+            # A zero-length record tells the decoder the camera stopped. A
+            # cancelled HTTP client exits via finally without another write.
+            yield bytes(4)
+        finally:
+            await source.aclose()
+            P4_VIDEO_ACTIVE.discard(panel_id)
+    return StreamingResponse(frames(),media_type="application/vnd.pi-panel.jpeg-stream",
+                             headers={"Cache-Control":"no-store","X-Accel-Buffering":"no"})
 
 
 @app.post('/api/panels/{panel_id}/doorbell/test', dependencies=[Depends(require_admin)])
@@ -1285,7 +1373,8 @@ async def test_doorbell(panel_id: str, request: Request):
     bell = db.merged_config(panel_id).get('doorbell', {})
     if not bell.get('enabled') or not bell.get('camera'):
         raise HTTPException(409, 'Save and enable a doorbell camera first')
-    if panel_id not in LIVE:
+    listener=P4_BELL_WAITERS.get(panel_id)
+    if panel_id not in LIVE and listener is None:
         raise HTTPException(503, 'Panel is offline')
     if time.monotonic() - DOORBELL_LAST.get(panel_id, -100) < 3:
         raise HTTPException(429, 'Wait a moment before ringing again')
@@ -1293,7 +1382,10 @@ async def test_doorbell(panel_id: str, request: Request):
         raise HTTPException(409, 'Connect Home Assistant in server settings first')
     DOORBELL_LAST[panel_id] = time.monotonic()
     try:
-        await ha.ring_doorbell(panel_id)
+        if listener is not None:
+            listener.set()
+        else:
+            await ha.ring_doorbell(panel_id)
     except Exception:
         raise HTTPException(502, 'Home Assistant could not accept the test ring')
     access.audit(panel_id, 'Administrator', 'doorbell test sent', bell['camera'])
