@@ -10,10 +10,40 @@
 #include "live_settings.h"
 
 namespace study {
+#ifdef STUDY_CARD_PLAYER
+constexpr const char *theme_keys[]={"default","ambient","architectural"};
+constexpr const char *palette_keys[]={"linen","midnight","ember","slate","heath","mono"};
+struct ScreenChoices {uint8_t theme=2,palette=0;bool diagnostics=false,tiles=false;};
+static bool read_screen_choices(cJSON *display,ScreenChoices &screen){
+  if(!cJSON_IsObject(display))return false;
+  auto index=[&](const char *key,const auto &names,int fallback)->int{
+    auto *v=cJSON_GetObjectItemCaseSensitive(display,key);
+    if(!v)return fallback;
+    if(!cJSON_IsString(v))return -1;
+    if(!*v->valuestring)return fallback;
+    for(size_t i=0;i<std::size(names);++i)if(!strcmp(names[i],v->valuestring))return int(i);
+    return -1;
+  };
+  int theme=index("theme",theme_keys,0);
+  int palette=index("palette",palette_keys,theme==2?0:theme==1?2:1);
+  if(theme<0 || palette<0)return false;
+  screen.theme=theme;screen.palette=palette;
+  auto *diag=cJSON_GetObjectItemCaseSensitive(display,"diagnostics");
+  auto *browse=cJSON_GetObjectItemCaseSensitive(display,"browse_view");
+  if((diag && !cJSON_IsBool(diag)) || (browse && (!cJSON_IsString(browse) ||
+     (strcmp(browse->valuestring,"list") && strcmp(browse->valuestring,"tiles")))))return false;
+  screen.diagnostics=cJSON_IsTrue(diag);
+  screen.tiles=browse && !strcmp(browse->valuestring,"tiles");
+  return true;
+}
+#endif
 struct RoomProfile {
   int version=0;
   int soft[light_count]{},bright[light_count]{};
   bool members[light_count]{};
+#ifdef STUDY_CARD_PLAYER
+  ScreenChoices screen;
+#endif
 };
 static p4_runtime::FleetClient<RoomProfile> fleet;
 static p4_runtime::LightClient<light_count> ha_lights;
@@ -26,6 +56,10 @@ static p4_runtime::AlbumClient album_client,thumbnail_client;
 static p4_runtime::LibraryClient library;
 static RoomProfile factory_profile(){
   RoomProfile p;
+#ifdef STUDY_CARD_PLAYER
+  p4_runtime::Json factory(cJSON_Parse(layout_contract),cJSON_Delete);
+  if(factory)read_screen_choices(cJSON_GetObjectItemCaseSensitive(factory.get(),"display"),p.screen);
+#endif
   for(int i=0;i<light_count;i++){
     p.soft[i]=seed_soft[i];p.bright[i]=seed_bright[i];p.members[i]=seed_members[i];
   }
@@ -39,6 +73,15 @@ static bool decode_room(const cJSON *doc,RoomProfile &out){
   const auto *version=cJSON_GetObjectItemCaseSensitive(doc,"_version");
   if(!cJSON_IsNumber(version)||version->valuedouble<1||version->valuedouble!=version->valueint)return false;
   out.version=version->valueint;
+#ifdef STUDY_CARD_PLAYER
+  auto *actual_display=cJSON_GetObjectItemCaseSensitive(shape.get(),"display");
+  auto *expected_display=cJSON_GetObjectItemCaseSensitive(expected.get(),"display");
+  if(!read_screen_choices(actual_display,out.screen))return false;
+  for(const char *key:{"theme","palette","diagnostics","browse_view"}){
+    cJSON_DeleteItemFromObjectCaseSensitive(actual_display,key);
+    cJSON_DeleteItemFromObjectCaseSensitive(expected_display,key);
+  }
+#endif
   for(const char *key:{"_claimed","_panel_id","_version"})cJSON_DeleteItemFromObjectCaseSensitive(shape.get(),key);
   auto *lights=cJSON_GetObjectItemCaseSensitive(shape.get(),"lights");
   if(!cJSON_IsArray(lights)||cJSON_GetArraySize(lights)!=light_count)return false;

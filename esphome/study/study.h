@@ -12,6 +12,33 @@
 #ifdef STUDY_CARD_FIELDS
 #include "live_runtime/card_text.h"
 #include "live_runtime/card_presets_page.h"
+#ifdef STUDY_CARD_SPEAKERS
+#include "live_runtime/card_speaker_page.h"
+#ifdef STUDY_CARD_PLAYER
+#include "live_runtime/card_player.h"
+#ifdef STUDY_CARD_BELL
+#include "live_runtime/card_bell.h"
+#endif
+#ifdef STUDY_CARD_SETTINGS
+#include "live_runtime/card_settings.h"
+#ifdef STUDY_CARD_DIAGNOSTICS
+#include "live_runtime/card_diagnostics.h"
+#endif
+#endif
+#ifdef STUDY_CARD_LIBRARY
+#include "live_runtime/card_library.h"
+#ifdef STUDY_CARD_OVERLAYS
+#include "live_runtime/card_overlay.h"
+#ifdef STUDY_CARD_EDITOR
+#include "live_runtime/card_editor.h"
+#endif
+#endif
+#ifdef STUDY_CARD_WIFI
+#include "live_runtime/card_wifi.h"
+#endif
+#endif
+#endif
+#endif
 #endif
 #endif
 #ifdef STUDY_BENCH_TEST
@@ -88,10 +115,53 @@ static CardPage card_page=CardPage::lights;
 static CardArt card_field_file,card_preset_file;
 static CardText card_text;
 static CardPresetsPage card_presets;
+#ifdef STUDY_CARD_SPEAKERS
+static CardArt card_speaker_file;
+static CardSpeakerPage card_speakers;
+#ifdef STUDY_CARD_PLAYER
+static CardArt card_player_file;
+static bool theme_picker_open=false;
+static int selected_theme=2;
+#ifdef STUDY_CARD_BELL
+static CardArt card_bell_file;
+static bool card_bell_active=false;
+static const BellView &bell_view(){return card_bell_views[selected_theme*6+card_mode];}
+#endif
+static int card_travel=14;
+static bool decoded_card_endpoint=false;
+#ifdef STUDY_CARD_SETTINGS
+static CardArt card_settings_file;
+static uint8_t *settings_scroll_pixels=nullptr;
+static int settings_offset=0,settings_down_offset=0;
+#endif
+#ifdef STUDY_CARD_LIBRARY
+static CardArt card_library_file;
+static CardText card_library_text;
+#ifdef STUDY_CARD_OVERLAYS
+static CardArt card_overlay_file;
+static CardText card_overlay_text;
+static int open_card_light=-1;
+static bool paint_card_detail(int i,uint8_t *pixels);
+static bool paint_card_strip(int theme,int mode,uint8_t *pixels);
+#ifdef STUDY_CARD_EDITOR
+static CardArt card_editor_file;
+static bool paint_card_editor(bool members,uint8_t *pixels);
+#endif
+#endif
+#ifdef STUDY_CARD_WIFI
+static CardArt card_wifi_file;
+static CardText card_wifi_text;
+static bool card_network_open=false;
+static bool paint_card_network();
+#endif
+#endif
+#endif
+#endif
 static std::string (*card_date_now)();
 static int card_scene_mask=-1;
 static int card_minute=-2;
 static std::string card_date;
+static bool card_wake=false,card_ring_return=false;
 #endif
 enum class CardState {idle,loading,ready,failed};
 static std::atomic<CardState> card_state{CardState::idle};
@@ -104,11 +174,44 @@ static bool card_assets_ready(){
   retry_at=clock_ms()+30000;
   card_state.store(CardState::loading);
   if(xTaskCreate([](void*){
-        const bool ready=card_frames_file.mount() && card_screens.attach(card_frames_file) && card_sliders.attach(card_levels_file)
+        bool ready=card_frames_file.mount() && card_screens.attach(card_frames_file) && card_sliders.attach(card_levels_file)
 #ifdef STUDY_CARD_FIELDS
           && card_text.attach(card_field_file) && card_presets.attach(card_preset_file)
+#ifdef STUDY_CARD_SPEAKERS
+          && card_speakers.attach(card_speaker_file)
+#ifdef STUDY_CARD_PLAYER
+          && card_player_file.open(card_player_path,card_player_size,card_player_sha)
+#ifdef STUDY_CARD_BELL
+          && card_bell_file.open(card_bell_path,card_bell_size,card_bell_sha)
+#endif
+#ifdef STUDY_CARD_SETTINGS
+          && card_settings_file.open(card_settings_path,card_settings_size,card_settings_sha)
+#endif
+#ifdef STUDY_CARD_LIBRARY
+          && card_library_file.open(card_library_path,card_library_size,card_library_sha)
+#ifdef STUDY_CARD_OVERLAYS
+          && card_overlay_file.open(card_overlay_path,card_overlay_size,card_overlay_sha)
+#ifdef STUDY_CARD_EDITOR
+          && card_editor_file.open(card_editor_path,card_editor_size,card_editor_sha)
+#endif
+#endif
+#ifdef STUDY_CARD_WIFI
+          && card_wifi_file.open(card_wifi_path,card_wifi_size,card_wifi_sha)
+#endif
+#endif
+#endif
+#endif
 #endif
           ;
+#ifdef STUDY_CARD_LIBRARY
+        if(ready)ready=card_library_text.use_bank(card_library_file,library_glyph_offset,library_glyph_count);
+#ifdef STUDY_CARD_OVERLAYS
+        if(ready)ready=card_overlay_text.use_bank(card_overlay_file,overlay_glyph_offset,overlay_glyph_count);
+#endif
+#ifdef STUDY_CARD_WIFI
+        if(ready)ready=card_wifi_text.use_bank(card_wifi_file,wifi_glyph_offset,wifi_glyph_count);
+#endif
+#endif
         card_state.store(ready?CardState::ready:CardState::failed);
         ESP_LOGI("study_card","Theme artwork %s",ready?"ready":"unavailable");
         vTaskDelete(nullptr);
@@ -155,6 +258,9 @@ static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
   if(!picker_open && current!=doorbell && palette.selection()
 #ifdef STUDY_CARD_ART
      && !card_page_visible
+#ifdef STUDY_CARD_WIFI
+     && !card_network_open
+#endif
 #endif
   ){
     if(!full && !seed && stride)
@@ -384,6 +490,11 @@ static int thumbnail_job=-1;static uint32_t thumbnail_stamp=0;
 static void load_library_thumbnail();
 static void label(const TextArea &field,const char *value);
 static void show(int dest,int shift);
+#ifdef STUDY_CARD_PLAYER
+static bool show_card_root(int dest,int theme,int mode);
+static bool show_card_player(int theme,int mode);
+static bool show_card_options(int theme,int mode,CardPage page);
+#endif
 // The embedded panel has no CSS compositor. Exercise the equivalent native
 // list operations and report completed framebuffer presentations.
 static int diagnostic_pass=-1,diagnostic_frames=0,diagnostic_offset=0;
@@ -394,6 +505,33 @@ static constexpr const char *diagnostic_cases[]={"baseline","uncached rows","all
 // band, using the kiosk's own four-row RGB565 dither as its ground.
 static uint16_t library_ground[2][4][library_list.w];
 static int8_t library_ground_ok[2]={-1,-1};
+// A folder and a track use the same two backgrounds on every row. Keep
+// decoded copies while browsing so exposing a few scanlines doesn't inflate
+// an entire tile for each item. Keep the uncached path for tight PSRAM.
+static uint8_t *library_background[2]={nullptr,nullptr};
+static int library_cache_mode=-1;
+#ifdef STUDY_CARD_LIBRARY
+static uint8_t *card_library_background=nullptr;
+static int card_library_index=-1;
+#endif
+static void release_library_backgrounds(){
+  for(auto &entry:library_background){heap_caps_free(entry);entry=nullptr;}
+  library_cache_mode=-1;
+#ifdef STUDY_CARD_LIBRARY
+  heap_caps_free(card_library_background);card_library_background=nullptr;card_library_index=-1;
+#endif
+}
+static const uint8_t *library_tile(int mode,int variant,size_t bytes){
+  if(library_cache_mode!=mode){release_library_backgrounds();library_cache_mode=mode;}
+  auto &cached=library_background[variant%2];
+  if(cached)return cached;
+  if(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)>bytes+256*1024)
+    cached=static_cast<uint8_t*>(heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+  auto *out=cached?cached:scratch;
+  const auto &art=library_art[variant];
+  if(tinfl_decompress_mem_to_mem(out,bytes,text_art+art[0],art[1],1)==bytes)return out;
+  heap_caps_free(cached);cached=nullptr;return nullptr;
+}
 static void paint_library(int movement=0){
   const int mode=library_mode,cols=library_steps[mode][0],step=library_steps[mode][1];
   const auto &v=library_list;
@@ -449,14 +587,15 @@ static void paint_library(int movement=0){
   }
   for(size_t i=0;i<library.items.size();i++){
     const auto &item=library.items[i];const int variant=2*mode+(item.expand?0:1);
-    const auto &ref=library_tiles[variant];const auto &art=library_art[variant];
+    const auto &ref=library_tiles[variant];
     const int x=v.x+(i%cols)*library_steps[mode][2];
     const int y=v.y+int((library.first+i)/cols)*step-library_scroll;
     if(y>=end || y+ref.h<=top)continue;
     const size_t bytes=2*ref.w*ref.h;
-    if(tinfl_decompress_mem_to_mem(scratch,bytes,text_art+art[0],art[1],1)!=bytes)continue;
+    const auto *tile=library_tile(mode,variant,bytes);
+    if(!tile)continue;
     for(int row=std::max(0,top-y);row<ref.h && row+y<end;row++)
-      memcpy(page_pixels+2*((y+row)*width+x),scratch+2*row*ref.w,2*ref.w);
+      memcpy(page_pixels+2*((y+row)*width+x),tile+2*row*ref.w,2*ref.w);
     if(item.expand && item.category!="directory"){
       auto icon=library_note_rects[mode];icon.x+=x-library_tiles[2*mode].x;icon.y+=y-library_tiles[2*mode].y;
       const auto &artwork=library_notes[mode];
@@ -635,30 +774,37 @@ static bool ha_connected(){
   return api && api->is_connected_with_state_subscription() && ha_lights.receiving();
 }
 static void copy_badge_background(Scanout::Slot *slot,bool save){
-  auto *backup=slot->overlay_background;
-  for(auto rect:{diag_disconnected.rect,diag_fps.rect}){
-    for(int y=rect.y;y<rect.y+rect.h;y++){
-      auto *line=slot->pixels+2*(y*width+rect.x);
-      if(save)memcpy(backup,line,2*rect.w);
-      else memcpy(line,backup,2*rect.w);
-      backup+=2*rect.w;
-    }
-  }
+  constexpr size_t bytes=2*width*32;
+  if(save)memcpy(slot->overlay_background,slot->pixels,bytes);
+  else memcpy(slot->pixels,slot->overlay_background,bytes);
   slot->has_overlay=save;
 }
 static void draw_diagnostic_badges(Scanout::Slot *slot,int &first_y,int &end_y){
-#ifdef STUDY_CARD_FIELDS
+#if defined(STUDY_CARD_FIELDS) && !defined(STUDY_CARD_DIAGNOSTICS)
   if(card_page_visible)return;
 #endif
   if(!diagnostics_enabled || blanked || current==doorbell || !scratch)return;
   if(!slot->overlay_background){
-    const size_t size=2*(diag_disconnected.rect.w*diag_disconnected.rect.h+diag_fps.rect.w*diag_fps.rect.h);
+    const size_t size=2*width*32;
     slot->overlay_background=static_cast<uint8_t*>(heap_caps_malloc(size,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
     if(!slot->overlay_background)return;
   }
   copy_badge_background(slot,true);
   char rate[24];snprintf(rate,sizeof(rate),"%d fps",refresh_fps);
   const bool online=ha_connected();
+#ifdef STUDY_CARD_DIAGNOSTICS
+  if(selected_theme<2){
+    const auto &v=card_diagnostics_views[selected_theme*6+card_mode];
+    auto draw=[&](TextArea field,const DiagLabel &box,const char *value,int align){
+      field.rect={box.x,box.y,box.w,box.h};field.baseline=box.baseline;field.spacing=box.spacing;
+      field.colour=box.colour;field.align=align;
+      text_field(slot->pixels,width,scratch,field,value,0,height,false);
+    };
+    draw(online?diag_connection:diag_disconnected,v.badges[online?0:1],online?"connected":"disconnected — retrying",0);
+    draw(diag_fps,v.badges[2],rate,2);
+    first_y=0;end_y=std::max(end_y,32);return;
+  }
+#endif
   text_field(slot->pixels,width,scratch,online?diag_connection:diag_disconnected,online?"connected":"disconnected — retrying",0,height,false);
   text_field(slot->pixels,width,scratch,diag_fps,rate,0,height,false);
   first_y=std::min(first_y,diag_connection.rect.y);
@@ -682,6 +828,9 @@ static void load_display_choice(){
   uint8_t value=0;if(nvs_get_u8(h,"mini",&value)==ESP_OK)mini_art_enabled=value!=0;
   if(nvs_get_u8(h,"diag",&value)==ESP_OK)diagnostics_enabled=value!=0;
   if(nvs_get_u8(h,"libview",&value)==ESP_OK)library_mode=value?1:0;
+#ifdef STUDY_CARD_PLAYER
+  if(nvs_get_u8(h,"theme",&value)==ESP_OK && value<=2)selected_theme=value;
+#endif
   nvs_close(h);
 }
 static bool save_preference(const char *key,uint8_t enabled){
@@ -689,6 +838,33 @@ static bool save_preference(const char *key,uint8_t enabled){
   const bool ok=nvs_set_u8(h,key,enabled)==ESP_OK && nvs_commit(h)==ESP_OK;nvs_close(h);
   return ok;
 }
+#ifdef STUDY_CARD_PLAYER
+// A local touch overrides the same server default until that default changes.
+// Store the baseline alongside each choice to handle a later offline restart.
+static bool remember_screen(const char *key,uint8_t value,uint8_t base){
+  nvs_handle_t h;if(nvs_open(display_namespace,NVS_READWRITE,&h)!=ESP_OK)return false;
+  auto base_key=std::string(key)+"_base";
+  bool ok=nvs_set_u8(h,key,value)==ESP_OK && nvs_set_u8(h,base_key.c_str(),base)==ESP_OK && nvs_commit(h)==ESP_OK;
+  nvs_close(h);return ok;
+}
+static uint8_t local_screen(const char *key,uint8_t base,uint8_t max){
+  nvs_handle_t h;if(nvs_open(display_namespace,NVS_READONLY,&h)!=ESP_OK)return base;
+  uint8_t previous=base,value=base;
+  auto base_key=std::string(key)+"_base";
+  const bool has_base=nvs_get_u8(h,base_key.c_str(),&previous)==ESP_OK;
+  bool valid=nvs_get_u8(h,key,&value)==ESP_OK && value<=max && (!has_base || previous==base);
+  nvs_close(h);
+  if(!has_base || previous!=base)remember_screen(key,valid?value:base,base);
+  return valid?value:base;
+}
+static bool pending_screen_report=false;
+static void report_screen(){
+  const std::string json=std::string("{\"theme\":\"")+theme_keys[selected_theme]+"\",\"palette\":\""+
+      palette_keys[card_mode]+"\",\"diagnostics\":"+(diagnostics_enabled?"true":"false")+
+      ",\"browse_view\":\""+(library_steps[library_mode][0]>1?"tiles":"list")+"\"}";
+  pending_screen_report=fleet.online() && !fleet.submit(decltype(fleet)::Edit::display,json);
+}
+#endif
 static bool save_display_choice(bool enabled){
   const bool ok=save_preference("mini",enabled);
   if(ok)mini_art_enabled=enabled;
@@ -696,15 +872,33 @@ static bool save_display_choice(bool enabled){
 }
 #ifdef STUDY_PALETTE_PICKER
 static bool choose_palette(int value){
-  if(value==palette.selection())return true;
+  if(value==palette.selection()){
+#ifdef STUDY_CARD_PLAYER
+    card_mode=value;
+#endif
+    return true;
+  }
   const int before=palette.selection();
   if(!before)nav.use_palette_memory();
-  if(!palette.choose(value,scratch) || !save_preference("palette",value)){
+  if(!palette.choose(value,scratch) ||
+#ifdef STUDY_CARD_PLAYER
+     !remember_screen("palette",value,fleet.active().screen.palette)
+#else
+     !save_preference("palette",value)
+#endif
+  ){
     if(!palette.choose(before,scratch))ESP_LOGW("study","Could not restore previous palette");
     if(!before)nav.restore_chunks();
     return false;
   }
-  if(!value)nav.restore_chunks();
+  if(!value
+#ifdef STUDY_CARD_PLAYER
+     && selected_theme==2
+#endif
+  )nav.restore_chunks();
+#ifdef STUDY_CARD_PLAYER
+  card_mode=value;report_screen();
+#endif
   return true;
 }
 static void open_palette(){
@@ -827,6 +1021,28 @@ static std::string home_diagnostic_message(){
     notes+"\nconfig v"+std::to_string(profile.version)+details;
 }
 static std::string last_home_diagnostic;
+#ifdef STUDY_CARD_DIAGNOSTICS
+static void draw_card_home_notes(int theme,int mode,const std::string &message,uint8_t *pixels){
+  const auto &box=card_diagnostics_views[theme*6+mode].badges[3];
+  auto field=diag_connection;field.rect={box.x,box.y,box.w,box.h};
+  field.colour=box.colour;field.baseline=box.baseline;field.spacing=box.spacing;field.align=1;
+  const int bottom=height-180;
+  const char *p=message.c_str();
+  while(*p && field.rect.y+field.rect.h<=bottom){
+    const char *first=p,*space=nullptr;int advance=0;
+    while(*p && *p!='\n'){
+      const char *next=p;const auto &glyph=text_glyph(field.font,next_code(next));
+      if(advance+glyph.advance>box.w*64 && p!=first){if(space && space>first)p=space;break;}
+      if(*p==' ')space=p;
+      advance+=glyph.advance+field.spacing;p=next;
+    }
+    const std::string line(first,p);text_field(pixels,width,scratch,field,line.c_str(),box.y,bottom,false);
+    if(*p=='\n')++p;else while(*p==' ')++p;
+    field.rect.y+=box.h;
+  }
+  last_home_diagnostic=message;
+}
+#endif
 static void paint_home_diagnostics(const std::string &message){
   if(!room_pixels || !page_pixels)return;
   auto field=diag_home_line;
@@ -1000,6 +1216,18 @@ static void edit_fields(){
   }
 }
 static void refresh_edit(){
+#ifdef STUDY_CARD_EDITOR
+  if(card_page_visible && (current==edit_page || current==members_page) && !moving && !down){
+    if(paint_card_editor(current==members_page,page_pixels)){++revision;blit(0,0,width,height,page_pixels);}
+    return;
+  }
+#endif
+#ifdef STUDY_CARD_OVERLAYS
+  if(open_card_light>=0 && !down && !moving){
+    if(paint_card_detail(open_card_light,page_pixels)){++revision;blit(0,0,width,height,page_pixels);}
+    return;
+  }
+#endif
   if(light_sheet!=LightSheet::closed && !moving && !down){draw_light_sheet(false);return;}
   if(!moving && page_pixels && (current==edit_page || current==members_page)){
     edit_fields();++revision;blit(0,0,width,height,page_pixels);
@@ -1186,7 +1414,11 @@ static void animate() {
   }
   if(slot){
 #ifdef STUDY_PALETTE_PICKER
-    if(palette.selection())palette.render(reinterpret_cast<uint16_t*>(slot->pixels),0,0,width,height,false);
+    if(palette.selection()
+#ifdef STUDY_CARD_ART
+       && !card_page_visible
+#endif
+    )palette.render(reinterpret_cast<uint16_t*>(slot->pixels),0,0,width,height,false);
 #endif
     if(!scanout.present(slot,0,height))return;
   }
@@ -1194,8 +1426,23 @@ static void animate() {
   ++motion_frames;
 }
 static void show(int dest,int shift=14) {
+#ifdef STUDY_CARD_PLAYER
+  theme_picker_open=false;
+  if(!card_switching && selected_theme<2){
+    card_travel=shift;
+    const bool handled=show_card_root(dest,selected_theme,card_mode);
+    card_travel=14;
+    if(handled)return;
+  }
+#ifdef STUDY_CARD_SETTINGS
+  if(!card_switching || dest!=settings_page){heap_caps_free(settings_scroll_pixels);settings_scroll_pixels=nullptr;}
+#endif
+#endif
 #ifdef STUDY_CARD_ART
   card_page_visible=card_finger=false;
+#ifdef STUDY_CARD_OVERLAYS
+  open_card_light=-1;
+#endif
   card_lights_page.cancel();
 #endif
 #ifdef STUDY_PALETTE_PICKER
@@ -1212,7 +1459,7 @@ static void show(int dest,int shift=14) {
   diagnostic_pass=-1;
   light_sheet=LightSheet::closed;sheet_drag=-1;
   volume_open=false;queue_open=false;speakers_open=false;volume_drag=-1;seek_drag=-1;
-  if(library_open){library.close();library_open=false;}
+  if(library_open){library.close();library_open=false;release_library_backgrounds();}
   if(change && current==doorbell)bell_client.close();
 #endif
   playback_direction=-1;last_phase=-1;
@@ -1229,6 +1476,9 @@ static void show(int dest,int shift=14) {
   moving=false;
   current=dest;
   ++revision;
+#ifdef STUDY_CARD_PLAYER
+  if(decoded_card_endpoint)return;
+#endif
   auto &art=pages[current];
   auto *target=page_pixels?page_pixels:scratch;
   if(!target)return;
@@ -1274,9 +1524,15 @@ static void show(int dest,int shift=14) {
     if(!page_pixels && i>=0 && levels[i]>=0)paint_level(levels[i]);
   }
 }
+#ifdef STUDY_CARD_FIELDS
+static bool show_card_root(int dest,int theme,int mode);
+#endif
 static void go(int dest) {
 #ifdef STUDY_LIVE
   if(dest==idle){
+#ifdef STUDY_CARD_FIELDS
+    card_wake=card_page_visible;
+#endif
     wake_page=backlight_off_s>0?home:current;
     if(wake_page==home)depth=0;
     dim_since=clock_ms();blanked=backlight_off_s>0;shown_minute=-2;
@@ -1307,26 +1563,66 @@ static void go(int dest) {
     levels[i]=std::clamp(v,0,100);scene=-1;paint_level(levels[i]);return;
 #endif
   }
-  if(dest==-1) {show(depth?history[--depth]:home);return;}
+  if(dest==-1){
+    const auto target=depth?history[--depth]:home;
+#ifdef STUDY_CARD_FIELDS
+    if(current==doorbell && card_ring_return){
+      card_ring_return=false;
+      if(show_card_root(target,card_theme,card_mode))return;
+    }
+#endif
+    show(target);return;
+  }
   if(dest==current)return;
   if(depth==24) depth=0;
   history[depth++]=current;
   show(dest);
 }
 #ifdef STUDY_CARD_ART
+static bool card_entry(int dest){
+#ifdef STUDY_CARD_PLAYER
+  // Keep the displayed source frame in page_pixels while the next frame is
+  // decoded into previous_pixels. Run the normal navigation cleanup and
+  // preserve both themed endpoints for PPA.
+  const bool animated=selected_theme<2 && card_page_visible && dest!=current && card_travel &&
+                      current>=home && current<=media && dest>=home && dest<=media && blender && scanout.active;
+  decoded_card_endpoint=true;
+#endif
+  card_switching=true;show(dest,0);card_switching=false;
+#ifdef STUDY_CARD_PLAYER
+  decoded_card_endpoint=false;
+#endif
+  std::swap(page_pixels,previous_pixels);
+#ifdef STUDY_CARD_PLAYER
+  return animated;
+#else
+  return false;
+#endif
+}
+static bool present_card_page(bool animated){
+#ifdef STUDY_CARD_PLAYER
+  if(animated){
+    nav.select(-1,-1,0,clock_ms());playback_direction=-1;
+    motion_height=height;
+    for(const auto &h:card_hits)if(h.theme==card_theme && h.page==card_page && h.action==CardAction::open_media){
+      motion_height=h.y;break;
+    }
+    travel=card_travel;motion_frames=0;motion_start=clock_ms();moving=true;
+    animate();return true;
+  }
+#endif
+  return blit(0,0,width,height,page_pixels);
+}
 static bool show_card_lights(int theme,int mode){
   if(theme<0 || theme>1 || mode<0 || mode>=6 || !lcd || !previous_pixels || !page_pixels || !scratch || !card_assets_ready())return false;
   await_page();
   // Decode off-screen. A failed read must leave the current visible frame usable.
   if(!card_lights_page.open(theme,mode,previous_pixels,scratch,page_bytes,ha_lights))return false;
   // Clear overlays and release any active camera or media session through normal navigation.
-  card_switching=true;
-  show(lights,0);
-  card_switching=false;
-  std::swap(page_pixels,previous_pixels);
+  const bool animated=card_entry(lights);
   card_theme=theme;card_mode=mode;card_page=CardPage::lights;card_page_visible=true;card_finger=false;last_activity=clock_ms();++revision;
-  if(blit(0,0,width,height,page_pixels))return true;
-  show(lights,0);return false;
+  if(present_card_page(animated))return true;
+  card_switching=true;show(lights,0);card_switching=false;return false;
 }
 #ifdef STUDY_CARD_FIELDS
 static bool paint_card_scene(int theme,int mode,CardPage page,uint8_t *pixels,bool force){
@@ -1355,12 +1651,552 @@ static bool show_card_scene(int theme,int mode,CardPage page){
   if((page!=CardPage::home && page!=CardPage::scenes) || !lcd || !previous_pixels || !page_pixels || !card_assets_ready())return false;
   await_page();
   if(!card_screens.read(theme,mode,page,previous_pixels,page_bytes) || !paint_card_scene(theme,mode,page,previous_pixels,true))return false;
-  card_switching=true;show(page==CardPage::home?home:scenes,0);card_switching=false;
-  std::swap(page_pixels,previous_pixels);
+#ifdef STUDY_CARD_DIAGNOSTICS
+  if(page==CardPage::home && diagnostics_enabled)draw_card_home_notes(theme,mode,home_diagnostic_message(),previous_pixels);
+#endif
+#ifdef STUDY_CARD_OVERLAYS
+  if(page==CardPage::home && player().playing && !paint_card_strip(theme,mode,previous_pixels))return false;
+#endif
+  const bool animated=card_entry(page==CardPage::home?home:scenes);
   card_theme=theme;card_mode=mode;card_page=page;card_page_visible=true;last_activity=clock_ms();++revision;
-  if(blit(0,0,width,height,page_pixels))return true;
-  show(home,0);return false;
+  if(present_card_page(animated))return true;
+  card_switching=true;show(home,0);card_switching=false;return false;
 }
+#ifdef STUDY_CARD_CLIMATE
+static std::string card_temperature,card_humidity;
+static bool paint_card_climate(int theme,int mode,uint8_t *pixels,bool force){
+  char temp[24]="~",hum[24]="~";
+  if(std::isfinite(thermostat.temperature))snprintf(temp,sizeof(temp),"%.1f",double(thermostat.temperature));
+  if(std::isfinite(thermostat.humidity))snprintf(hum,sizeof(hum),"%d",int(std::floor(thermostat.humidity+.5f)));
+  if(!force && card_temperature==temp && card_humidity==hum)return false;
+  for(const auto &f:card_fields){
+    if(f.theme!=theme || f.palette!=mode || f.page!=CardPage::climate)continue;
+    if(f.id!=FieldId::cTemp && f.id!=FieldId::cHum)continue;
+    if(!card_text.reading(f,f.id==FieldId::cHum?hum:temp,pixels,scratch,page_bytes))return false;
+  }
+  card_temperature=temp;card_humidity=hum;return true;
+}
+#endif
+static bool show_card_room_page(int theme,int mode,CardPage page){
+  if(!lcd || !previous_pixels || !page_pixels || !card_assets_ready())return false;
+  await_page();
+  if(!card_screens.read(theme,mode,page,previous_pixels,page_bytes))return false;
+  int dest=climate_page+1;
+#ifdef STUDY_CARD_CLIMATE
+  if(page==CardPage::climate){
+    if(!paint_card_climate(theme,mode,previous_pixels,true))return false;
+    dest=climate_page;
+  }
+#endif
+  const bool animated=card_entry(dest);
+  card_theme=theme;card_mode=mode;card_page=page;card_page_visible=true;
+  last_activity=clock_ms();++revision;
+  if(present_card_page(animated))return true;
+  card_switching=true;show(dest,0);card_switching=false;return false;
+}
+static bool show_card_root(int dest,int theme,int mode){
+  if(dest==home || dest==scenes)return show_card_scene(theme,mode,dest==home?CardPage::home:CardPage::scenes);
+  if(dest==lights)return show_card_lights(theme,mode);
+#ifdef STUDY_CARD_PLAYER
+  if(dest==media)return show_card_player(theme,mode);
+  if(dest==settings_page)return show_card_options(theme,mode,CardPage::settings);
+#endif
+  if(dest==climate_page+1)return show_card_room_page(theme,mode,CardPage::blinds);
+#ifdef STUDY_CARD_CLIMATE
+  if(dest==climate_page)return show_card_room_page(theme,mode,CardPage::climate);
+#endif
+  return false;
+}
+#ifdef STUDY_CARD_SPEAKERS
+static bool paint_card_speakers(int theme,int mode,uint8_t *pixels,bool force){
+  static_assert(card_speaker_count==speaker_count);
+  return card_speakers.paint(theme,mode,selected_speaker,[](int i){return can_transfer(i)?4:speaker_variant(i);},
+                             pixels,scratch,page_bytes,force);
+}
+static bool show_card_speakers(int theme,int mode){
+  if(!lcd || !previous_pixels || !page_pixels || !card_assets_ready())return false;
+  await_page();
+  if(!card_screens.read(theme,mode,CardPage::speakers,previous_pixels,page_bytes) ||
+     !paint_card_speakers(theme,mode,previous_pixels,true))return false;
+  card_switching=true;show(media,0);card_switching=false;
+  std::swap(page_pixels,previous_pixels);speakers_open=true;transfer_status=nullptr;
+  card_page=CardPage::speakers;card_page_visible=true;card_theme=theme;card_mode=mode;
+  last_activity=clock_ms();++revision;
+  if(blit(0,0,width,height,page_pixels))return true;
+  card_switching=true;show(media,0);card_switching=false;return false;
+}
+#ifdef STUDY_CARD_PLAYER
+static uint16_t *card_tile=nullptr;
+static size_t card_tile_bytes=0;
+static bool read_player_patch(const CardPlayerPatch &p,uint8_t *target,CardArt &source=card_player_file){
+  const size_t size=2u*p.w*p.h;
+  if(!scratch || p.size>page_bytes || size>page_bytes || !source.read(p.offset,scratch,p.size))return false;
+  return tinfl_decompress_mem_to_mem(target,size,scratch,p.size,1)==size;
+}
+static bool apply_player_patch(const CardPlayerPatch &p,uint8_t *frame,CardArt &source=card_player_file){
+  const size_t size=2u*p.w*p.h;
+  if(p.w==width && p.h==height)return read_player_patch(p,frame,source);
+  if(size>card_tile_bytes){
+    auto *next=static_cast<uint16_t*>(heap_caps_realloc(card_tile,size,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+    if(!next)return false;
+    card_tile=next;card_tile_bytes=size;
+  }
+  if(!read_player_patch(p,reinterpret_cast<uint8_t*>(card_tile),source))return false;
+  for(int row=0;row<p.h;++row)memcpy(frame+2*((p.y+row)*width+p.x),card_tile+row*p.w,p.w*2);
+  return true;
+}
+#ifdef STUDY_CARD_WIFI
+static bool paint_card_network(){
+  const auto &l=wifi_layout();
+  const bool joining=wifi_selected>=0 && size_t(wifi_selected)<wifi_result.networks.size();
+  const auto &sheet=wifi_sheet();
+  if(!read_player_patch(joining?l.keyboard[wifi_shift]:sheet.image,page_pixels,card_wifi_file))return false;
+  auto label=[&](int index,const char *value,int dy,int top=0,int bottom=height){
+    auto f=l.fields[index];f.y+=dy;
+    return card_wifi_text.write(f,value,page_pixels,scratch,page_bytes,top,bottom);
+  };
+  const int shift=sheet.top-l.top;
+  std::string connection="not connected";
+  if(wifi_result.ssid[0])connection=std::string(wifi_result.ssid)+" · "+std::to_string(wifi_result.signal)+"%";
+  if(!label(joining?3:0,connection.c_str(),joining?0:shift))return false;
+  if(joining){
+    const auto &net=wifi_result.networks[wifi_selected];
+    const char *msg=wifi_result.state==Wifi::State::joining?"Connecting…":wifi_result.state==Wifi::State::failed?"Failed":net.secure?"":"open network";
+    std::string dots;
+    for(size_t j=0;j<strlen(passphrase);++j)dots+="•";
+    return label(4,net.ssid,0) && label(5,msg,0) && label(6,dots.c_str(),0);
+  }
+  auto r=wifi_first_row();
+  if(wifi_result.networks.empty()){
+    const char *message=wifi_result.state==Wifi::State::scanning?"Scanning…":wifi_result.state==Wifi::State::failed?"Wi-Fi unavailable":"No networks found";
+    return label(0,message,r.y-l.fields[0].y);
+  }
+  for(size_t i=0;i<wifi_result.networks.size();++i){
+    const int y=r.y+int(i)*l.step-wifi_scroll;
+    if(y+r.h<=r.y)continue;
+    if(y>=height)break;
+    const auto &net=wifi_result.networks[i];
+    const auto &patch=l.rows[2*int(net.secure)+(!strcmp(net.ssid,wifi_result.ssid))];
+    const size_t size=2u*patch.w*patch.h;
+    if(size>card_tile_bytes){
+      auto *buf=static_cast<uint16_t*>(heap_caps_realloc(card_tile,size,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+      if(!buf)return false;
+      card_tile=buf;card_tile_bytes=size;
+    }
+    if(!read_player_patch(patch,reinterpret_cast<uint8_t*>(card_tile),card_wifi_file))return false;
+    for(int j=std::max(0,r.y-y);j<r.h && y+j<height;++j)
+      memcpy(page_pixels+2*((y+j)*width+r.x),card_tile+j*r.w,2*r.w);
+    const char *bars=net.signal>=75?"▂▄▆█":net.signal>=50?"▂▄▆":net.signal>=25?"▂▄":"▂";
+    char signal[32];snprintf(signal,sizeof(signal),"%s %u%%",bars,unsigned(net.signal));
+    if(!label(1,net.ssid,y-l.row.y,r.y) || !label(2,signal,y-l.row.y,r.y))return false;
+  }
+  return true;
+}
+#endif
+struct CardProgress {
+  uint16_t *data=nullptr;
+  size_t capacity=0;
+  int bank=-1;
+  bool draw(int theme,int mode,uint8_t *frame){
+    const int index=theme*6+mode;
+    const auto *art=card_transport[index]+7;
+    const auto &bar=seek_slider;
+    size_t offset[4],size=0;
+    for(int i=0;i<4;++i){offset[i]=size;size+=art[i].w*art[i].h;}
+    if(size>capacity){
+      auto *next=static_cast<uint16_t*>(heap_caps_realloc(data,2*size,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+      if(!next)return false;
+      data=next;capacity=size;bank=-1;
+    }
+    if(bank!=index){
+      bank=-1;
+      for(int i=0;i<4;++i)if(!read_player_patch(art[i],reinterpret_cast<uint8_t*>(data+offset[i])))return false;
+      bank=index;
+    }
+    auto *pixels=reinterpret_cast<uint16_t*>(frame);
+    const int pos=seek_drag>=0?seek_drag:int(std::lround(player().position()));
+    const int end=player().duration?std::clamp(int(std::lround(double(pos)*bar.w/player().duration)),0,bar.w):0;
+    const int pattern=player().playing?2:1;
+    const int phase=player().playing?int(clock_ms()*44/2800%44):0;
+    for(int row=0;row<art[0].h;++row){
+      auto *line=pixels+(art[0].y+row)*width;
+      memcpy(line+art[0].x,data+offset[0]+row*art[0].w,2*art[0].w);
+      auto *tile=data+offset[pattern]+row*art[pattern].w;
+      for(int x=0;x<end;++x)line[bar.x+x]=tile[(x+phase)%art[pattern].w];
+    }
+    for(int row=0;row<art[3].h;++row)
+      memcpy(pixels+(art[3].y+row)*width+bar.x+end-5,data+offset[3]+row*art[3].w,2*art[3].w);
+    return true;
+  }
+};
+static CardProgress card_progress;
+static bool paint_card_player(int theme,int mode,uint8_t *frame,bool progress_only){
+  const int pos=seek_drag>=0?seek_drag:int(std::lround(player().position()));
+  char elapsed[24],duration[24],volume[12];
+  snprintf(elapsed,sizeof(elapsed),"%d:%02d",pos/60,pos%60);
+  snprintf(duration,sizeof(duration),"%d:%02d",player().duration/60,player().duration%60);
+  snprintf(volume,sizeof(volume),"%d%%",std::max(0,player().volume));
+  for(const auto &f:card_fields){
+    if(f.theme!=theme || f.palette!=mode || f.page!=CardPage::media)continue;
+    const char *v=nullptr;
+    if(f.id==FieldId::mElapsed)v=elapsed;
+    else if(f.id==FieldId::mDur)v=duration;
+    else if(progress_only)continue;
+    else if(f.id==FieldId::mTitle)v=player().title.empty()?"Nothing playing":player().title.c_str();
+    else if(f.id==FieldId::mArtist)v=player().title.empty()?"Browse your music library":player().artist.empty()?speaker_labels[selected_speaker]:player().artist.c_str();
+    else if(f.id==FieldId::mpVolumeValue)v=volume;
+    if(v && !card_text.paint(f,v,frame,scratch,page_bytes))return false;
+  }
+  if(!card_progress.draw(theme,mode,frame))return false;
+  if(progress_only)return true;
+  const auto *art=card_transport[theme*6+mode];
+  for(int i:{int(player().shuffled),2+int(player().playing),4+player().repeat_mode})
+    if(!apply_player_patch(art[i],frame))return false;
+  if(cover_ready && cover_pixels)for(int y=0;y<album_rect.h;++y)
+    memcpy(frame+2*((album_rect.y+y)*width+album_rect.x),cover_pixels+y*album_rect.w,2*album_rect.w);
+  return true;
+}
+static bool present_card_view(int theme,int mode,CardPage page,int dest){
+  const bool animated=card_entry(dest);
+  card_theme=theme;card_mode=mode;card_page=page;card_page_visible=true;
+  last_activity=clock_ms();++revision;
+  return present_card_page(animated);
+}
+static bool show_card_player(int theme,int mode){
+  if(!lcd || !previous_pixels || !page_pixels || !card_assets_ready())return false;
+  await_page();
+  if(!card_screens.read(theme,mode,CardPage::media,previous_pixels,page_bytes) ||
+     !paint_card_player(theme,mode,previous_pixels,false))return false;
+  return present_card_view(theme,mode,CardPage::media,media);
+}
+#ifdef STUDY_CARD_OVERLAYS
+static bool overlay_patch(unsigned table,unsigned index,uint8_t *pixels){
+  CardPlayerPatch p{};
+  static_assert(sizeof(p)==16);
+  return card_overlay_file.read(table+index*sizeof(p),&p,sizeof(p)) &&
+         apply_player_patch(p,pixels,card_overlay_file);
+}
+static const CardMusicOverlay &music_overlay(){return card_music_views[card_theme*6+card_mode];}
+static bool overlay_label(const LibraryField &f,const char *value,uint8_t *pixels){
+  return card_overlay_text.write(f,value,pixels,scratch,page_bytes,0,height);
+}
+static bool paint_card_strip(int theme,int mode,uint8_t *pixels){
+  const auto &s=card_music_views[theme*6+mode].strip[mini_art_enabled];
+  if(!apply_player_patch(s.tile,pixels,card_overlay_file) ||
+     !overlay_label(s.text[0],player().title.empty()?"Nothing playing":player().title.c_str(),pixels) ||
+     !overlay_label(s.text[1],player().artist.c_str(),pixels))return false;
+  if(cover_ready && cover_pixels && s.cover.w){
+    const auto &r=s.cover;
+    for(int y=0;y<r.h;++y){
+      auto *out=reinterpret_cast<uint16_t*>(pixels)+(r.y+y)*width+r.x;
+      const auto *src=cover_pixels+(y*album_rect.h/r.h)*album_rect.w;
+      for(int x=0;x<r.w;++x)out[x]=src[x*album_rect.w/r.w];
+    }
+  }
+  const auto &bar=s.progress;
+  const int amount=player().duration?std::clamp(int(std::lround(bar.w*player().position()/player().duration)),0,bar.w):0;
+  for(int y=0;y<bar.h;++y)std::fill_n(reinterpret_cast<uint16_t*>(pixels)+(bar.y+y)*width+bar.x,amount,uint16_t(s.text[0].colour));
+  return true;
+}
+static int card_queue_state(){return int(!player().title.empty())+2*int(!player().playlist.empty() || !player().album.empty());}
+static bool paint_card_popup(bool volume,uint8_t *pixels){
+  const auto &v=music_overlay();
+  if(volume){
+    int value=volume_drag>=0?volume_drag:std::clamp(player().volume,0,100);
+    const std::string text=std::to_string(value)+"%";
+    return paint_card_player(card_theme,card_mode,pixels,false) &&
+           overlay_patch(v.volume,value,pixels) && overlay_label(v.level,text.c_str(),pixels);
+  }
+  const int state=card_queue_state();const auto &q=v.queue[state];
+  if(!read_player_patch(q.base,pixels,card_overlay_file))return false;
+  int row=0;
+  if(state&1){
+    auto title=player().title;
+    if(!player().artist.empty())title+="  ·  "+player().artist;
+    if(!overlay_label(q.text[row++],title.c_str(),pixels))return false;
+  }
+  if(state&2){
+    auto title="Playlist: "+(player().playlist.empty()?player().album:player().playlist);
+    if(!overlay_label(q.text[row],title.c_str(),pixels))return false;
+  }
+  return true;
+}
+static bool open_card_popup(bool volume){
+  if(volume && !card_screens.read(card_theme,card_mode,CardPage::media,previous_pixels,page_bytes))return false;
+  if(!paint_card_popup(volume,previous_pixels))return false;
+  if(!present_card_view(card_theme,card_mode,volume?CardPage::volume:CardPage::queue,media))return false;
+  volume_open=volume;queue_open=!volume;return true;
+}
+static const CardDetail &detail_layout(int i){return card_detail_views[(card_theme*6+card_mode)*light_count+i];}
+static bool paint_card_detail(int i,uint8_t *pixels){
+  const auto &l=detail_layout(i);
+  if(!apply_player_patch(l.sheet,pixels,card_overlay_file))return false;
+  const auto &d=ha_lights.detail(i);
+  const bool pending=edit_slot==i+2 && edit_waiting;
+  const int check=(fleet.active().members[i]!=pending)+2*(edit_slot==i+2 && edit_feedback==2);
+  if(!apply_player_patch(l.check[check],pixels,card_overlay_file))return false;
+  constexpr int hues[]={0,20,40,60,120,180,200,220,260,290,320,340};
+  for(int n=0;n<l.total;++n){
+    bool active=false;
+    if(n<l.colours && n<int(std::size(hues)))active=d.hue>=0 && std::abs(d.hue-hues[n])<10;
+    else if(n>=l.colours && effect_starts[i]+n-l.colours<effect_starts[i+1])
+      active=d.effect==effect_names[effect_starts[i]+n-l.colours];
+    if(!overlay_patch(l.offset,2*n+active,pixels))return false;
+  }
+  if(l.warmth.w){
+    const auto &r=l.warmth;
+    const int p=sheet_drag>=0?sheet_drag:d.kelvin>=0 && d.maximum>d.minimum?
+      std::clamp(int(std::lround(100.*(d.kelvin-d.minimum)/(d.maximum-d.minimum))),0,100):50;
+    const int k=sheet_drag>=0?std::lround(d.minimum+(d.maximum-d.minimum)*p/100.):d.kelvin;
+    const std::string label=k<0?"—K":std::to_string(k)+"K";
+    if(!overlay_label(l.text,label.c_str(),pixels))return false;
+    if(!overlay_patch(l.knob,p,pixels))return false;
+  }
+  return true;
+}
+static bool open_card_detail(int i){
+  const auto page=static_cast<CardPage>(int(CardPage::detail0)+i);
+  if(!card_screens.read(card_theme,card_mode,page,previous_pixels,page_bytes) || !paint_card_detail(i,previous_pixels))return false;
+  if(!present_card_view(card_theme,card_mode,page,lights))return false;
+  open_card_light=i;return true;
+}
+#ifdef STUDY_CARD_EDITOR
+static const EditView &card_editor_view(){return card_edit_views[card_theme*6+card_mode];}
+static bool paint_card_editor(bool members,uint8_t *pixels){
+  const auto &v=card_editor_view();
+  if(!read_player_patch(members?v.members:v.edit,pixels,card_editor_file))return false;
+  for(int i=0;i<(members?light_count:2);++i){
+    const auto &button=members?v.lights[i]:v.saves[i];
+    bool pending=edit_slot==i+2 && edit_waiting;
+    int mode=members?(fleet.active().members[i]!=pending)+2*(edit_slot==i+2 && edit_feedback==2):edit_slot==i?edit_feedback:0;
+    CardPlayerPatch p{};
+    if(!card_editor_file.read(button.table+mode*sizeof(p),&p,sizeof(p)) || !apply_player_patch(p,pixels,card_editor_file))return false;
+  }
+  return true;
+}
+static bool open_card_editor(bool members){
+  if(!paint_card_editor(members,previous_pixels))return false;
+  return present_card_view(card_theme,card_mode,CardPage::scenes,members?members_page:edit_page);
+}
+#endif
+#endif
+#ifdef STUDY_CARD_BACKLIGHT
+static bool paint_settings_level(int theme,int mode,int value,uint8_t *frame){
+  const auto &slider=card_setting_sliders[theme*6+mode];
+  uint32_t refs[4];
+  if(!card_settings_file.read(slider.table+sizeof(refs)*value,refs,sizeof(refs)))return false;
+  for(int i=0;i<2;++i){
+    const auto &r=slider.patches[i];
+    if(!apply_player_patch({uint16_t(r.x),uint16_t(r.y),uint16_t(r.w),uint16_t(r.h),refs[i*2],refs[i*2+1]},frame,card_settings_file))return false;
+  }
+  shown_brightness=value;return true;
+}
+static bool update_settings_level(int value){
+  if(!settings_scroll_pixels || !paint_settings_level(card_theme,card_mode,value,settings_scroll_pixels))return false;
+  const auto &view=card_settings_views[(card_theme*6+card_mode)*2+int(diagnostics_enabled)];
+  const auto &slider=card_setting_sliders[card_theme*6+card_mode];
+  const int top=std::max(0,slider.patches[1].y-settings_offset);
+  const int bottom=std::min(view.height,slider.patches[0].y+slider.patches[0].h-settings_offset);
+  if(bottom<=top)return true;
+  memcpy(page_pixels+2*width*top,settings_scroll_pixels+2*width*(top+settings_offset),2*width*(bottom-top));
+  ++revision;return blit(0,top,width,bottom-top,page_pixels+2*width*top,width);
+}
+#endif
+#ifdef STUDY_CARD_DIAGNOSTICS
+static void settings_live_text(int theme,int mode,uint8_t *pixels,int extent){
+  const auto &labels=card_diagnostics_views[theme*6+mode].settings[int(diagnostics_enabled)];
+  std::string network=esphome::network::is_connected()?"Ethernet":"not connected",wifi="not connected";
+#ifdef USE_ESP32_HOSTED
+  const auto status=station.snapshot();
+  if(status.ssid[0]){
+    wifi=status.ssid;
+    if(!esphome::ethernet::global_eth_component->is_connected())network=wifi+" · "+std::to_string(status.signal)+"%";
+  }
+#endif
+  const int minutes=int(clock_ms()/60000);
+  std::string uptime=minutes>=60?std::to_string(minutes/60)+"h "+std::to_string(minutes%60)+"m":std::to_string(minutes)+"m";
+  const char *values[]={uptime.c_str(),"ESP32-P4 · DSI",mini_art_enabled?"On":"Off",wifi.c_str(),
+                        diagnostics_enabled?"On":"Off",ha_connected()?"• connected":"• disconnected",network.c_str()};
+  for(unsigned i=0;i<std::size(values);++i){
+    const auto &s=labels[i];const auto &r=s.label;
+    if(!s.size || r.y<0 || r.y+r.h>extent)continue;
+    const size_t bytes=2*r.w*r.h;
+    if(tinfl_decompress_mem_to_mem(scratch,bytes,diag_settings_art+s.offset,s.size,1)!=bytes)continue;
+    for(int y=0;y<r.h;++y)memcpy(pixels+2*((r.y+y)*width+r.x),scratch+2*y*r.w,2*r.w);
+    for(const auto &f:card_fields){
+      auto id=i>=2 && i<=4?FieldId::wifiV:FieldId::sUp;
+      if(f.theme!=theme || f.palette!=mode || f.page!=CardPage::settings || f.id!=id)continue;
+      auto label=f;
+      label.x=r.x;label.y=r.y;label.w=r.w;label.h=r.h;label.baseline=r.baseline;
+      label.spacing=r.spacing;label.colour=r.colour;label.align=2;
+      card_text.write(label,values[i],pixels,scratch,page_bytes,0,extent);break;
+    }
+  }
+}
+#endif
+static bool show_card_options(int theme,int mode,CardPage page){
+  if(!lcd || !previous_pixels || !page_pixels || !card_assets_ready())return false;
+  await_page();
+  bool loaded=false;
+#ifdef STUDY_CARD_SETTINGS
+  const auto &view=card_settings_views[(theme*6+mode)*2+int(diagnostics_enabled)];
+  if(page!=CardPage::settings){heap_caps_free(settings_scroll_pixels);settings_scroll_pixels=nullptr;}
+  if(page==CardPage::settings){
+    if(!read_player_patch({0,0,width,height,view.top,view.top_bytes},previous_pixels,card_settings_file))return false;
+    loaded=true;
+  }
+#endif
+  if(!loaded && !card_screens.read(theme,mode,page,previous_pixels,page_bytes))return false;
+  if(page==CardPage::settings){
+#ifndef STUDY_CARD_DIAGNOSTICS
+    std::string network=esphome::network::is_connected()?"Ethernet":"not connected";
+    std::string wifi="not connected";
+#ifdef USE_ESP32_HOSTED
+    const auto status=station.snapshot();
+    if(status.ssid[0]){
+      wifi=status.ssid;
+      if(!esphome::ethernet::global_eth_component->is_connected())network=wifi+" · "+std::to_string(status.signal)+"%";
+    }
+#endif
+    const auto minutes=clock_ms()/60000;
+    const auto uptime=minutes>=60?std::to_string(minutes/60)+"h "+std::to_string(minutes%60)+"m":std::to_string(minutes)+"m";
+    for(const auto &f:card_fields){
+      if(f.page!=page || f.theme!=theme || f.palette!=mode)continue;
+      const char *value=f.id==FieldId::stHA?(ha_connected()?"• connected":"• disconnected"):
+                        f.id==FieldId::sUp?uptime.c_str():f.id==FieldId::diagV?(diagnostics_enabled?"On":"Off"):
+                        f.id==FieldId::stNet?network.c_str():f.id==FieldId::wifiV?wifi.c_str():nullptr;
+      if(value && !card_text.paint(f,value,previous_pixels,scratch,page_bytes))return false;
+    }
+#endif
+#ifdef STUDY_CARD_SETTINGS
+    const auto line=2*width;
+#ifdef STUDY_CARD_BACKLIGHT
+    if(!paint_settings_level(theme,mode,screen_level(),previous_pixels))return false;
+#endif
+    auto *cache=static_cast<uint8_t*>(heap_caps_realloc(settings_scroll_pixels,line*(view.height+view.scroll),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+    if(!cache)return false;
+    settings_scroll_pixels=cache;
+    memcpy(cache,previous_pixels,line*view.height);
+    if(!read_player_patch({0,0,width,uint16_t(view.scroll),view.tail,view.tail_bytes},cache+line*view.height,card_settings_file))return false;
+#ifdef STUDY_CARD_DIAGNOSTICS
+    settings_live_text(theme,mode,cache,view.height+view.scroll);
+#endif
+    settings_offset=card_page_visible && card_page==CardPage::settings?std::min(settings_offset,view.scroll):0;
+    memcpy(previous_pixels,cache+line*settings_offset,line*view.height);
+#endif
+  }
+  return present_card_view(theme,mode,page,settings_page);
+}
+#ifdef STUDY_CARD_LIBRARY
+static const LibraryLayout &library_layout(){
+  return card_library_layouts[(card_theme*6+card_mode)*2+(library_steps[library_mode][0]==1)];
+}
+static bool paint_card_library(){
+  const auto &l=library_layout();
+  const int index=&l-card_library_layouts;
+  if(index!=card_library_index){
+    release_library_backgrounds();
+    card_library_background=page_buffer();
+    if(card_library_background && !read_player_patch(l.base,card_library_background,card_library_file))return false;
+    for(int i=0;i<2;++i){
+      auto &tile=library_background[i];
+      tile=static_cast<uint8_t*>(heap_caps_malloc(2*l.tiles[i].w*l.tiles[i].h,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+      if(!tile || !read_player_patch(l.tiles[i],tile,card_library_file))return false;
+    }
+    card_library_index=index;
+  }
+  if(card_library_background)memcpy(page_pixels,card_library_background,page_bytes);
+  else if(!read_player_patch(l.base,page_pixels,card_library_file))return false;
+  const auto &v=l.viewport;
+  const int end=std::min(height,v.y+v.h);
+  std::string crumb="Library";
+  for(const auto &f:library.folders)crumb+="  ›  "+f.title;
+  auto write=[&](auto f,const std::string &s,int dx,int dy,int top,int bottom){
+    f.x+=dx;f.y+=dy;return card_library_text.write(f,s.c_str(),page_pixels,scratch,page_bytes,top,bottom);
+  };
+  if(!write(l.fields[0],library.folders.empty()?"Library":library.folders.back().title,0,0,0,height) ||
+     !write(l.fields[1],crumb,0,0,0,height))return false;
+  if(*library.message)return write(l.fields[1],library.message,0,v.y-l.fields[1].y+20,v.y,end);
+  for(size_t i=0;i<library.items.size();++i){
+    const auto &item=library.items[i];
+    const int variant=item.expand?0:1;
+    const auto &tile=l.tiles[variant];
+    const size_t n=library.first+i;
+    const int x=v.x+int(n%l.cols)*l.spacing,y=v.y+int(n/l.cols)*l.step-library_scroll;
+    if(y>=end)break;
+    if(y+tile.h<=v.y)continue;
+    const int dx=x-tile.x,dy=y-tile.y;
+    for(int row=std::max(0,v.y-y);row<tile.h && y+row<end;++row)
+      memcpy(page_pixels+2*((y+row)*width+x),library_background[variant]+2*row*tile.w,2*tile.w);
+    const auto &icon=l.icons[variant];
+    bool thumbnail=false;
+    if(!item.thumbnail.empty())for(auto &t:thumbnails)if(t.ready && t.url==item.thumbnail){
+      for(int row=std::max(0,v.y-icon.y-dy);row<icon.h && icon.y+dy+row<end;++row){
+        auto *out=reinterpret_cast<uint16_t*>(page_pixels)+(icon.y+dy+row)*width+icon.x+dx;
+        for(int col=0;col<icon.w;++col)out[col]=t.pixels[(row*thumbnail_side/icon.h)*thumbnail_side+col*thumbnail_side/icon.w];
+      }
+      t.used=++thumbnail_stamp;thumbnail=true;break;
+    }
+    if(!thumbnail && item.expand && item.category!="directory"){
+      const auto &note=l.icons[1];const auto &other=l.tiles[1];
+      for(int row=std::max(0,v.y-icon.y-dy);row<std::min(icon.h,note.h) && icon.y+dy+row<end;++row)
+        memcpy(page_pixels+2*((icon.y+dy+row)*width+icon.x+dx),
+               library_background[1]+2*((note.y-other.y+row)*other.w+note.x-other.x),2*std::min(icon.w,note.w));
+    }
+    if(!write(l.fields[2+variant*2],item.title,dx,dy,v.y,end) ||
+       !write(l.fields[3+variant*2],item.category,dx,dy,v.y,end))return false;
+  }
+  return true;
+}
+static bool open_card_library(){
+  if(!card_assets_ready())return false;
+  library_open=true;library_scroll=0;library.open(speaker_ids[selected_speaker]);
+  card_page=library_steps[library_mode][0]==1?CardPage::library_alt:CardPage::library;
+  if(paint_card_library()){++revision;return blit(0,0,width,height,page_pixels);}
+  show_card_player(card_theme,card_mode);return false;
+}
+#endif
+static bool open_theme_picker(){
+  if(!card_assets_ready() || !apply_player_patch(card_theme_choices[palette.selection()],previous_pixels))return false;
+  std::swap(previous_pixels,page_pixels);theme_picker_open=true;card_switching=false;
+  card_page_visible=true;++revision;return blit(0,0,width,height,page_pixels);
+}
+static bool select_theme(int theme){
+  if(theme<0 || theme>2)return false;
+  if(theme==2){
+    if(!remember_screen("theme",2,fleet.active().screen.theme))return false;
+    selected_theme=2;depth=0;report_screen();show(display_page,0);
+    if(!palette.selection())nav.restore_chunks();
+    return open_theme_picker();
+  }
+  // These layouts draw from their CM5 endpoints. Release the Architectural
+  // decoder's optional run cache for the Settings sheet and library tiles.
+  nav.use_palette_memory();
+  if(!show_card_options(theme,palette.selection(),CardPage::theme) || !remember_screen("theme",theme,fleet.active().screen.theme)){
+    if(selected_theme==2 && !palette.selection())nav.restore_chunks();
+    return false;
+  }
+  depth=0;selected_theme=theme;report_screen();return true;
+}
+static void apply_screen_profile(const ScreenChoices &screen,bool render){
+  const int old_theme=selected_theme,old_palette=palette.selection(),old_library=library_mode;
+  const bool old_diagnostics=diagnostics_enabled;
+  selected_theme=local_screen("theme",screen.theme,2);
+  card_mode=local_screen("palette",screen.palette,5);
+  diagnostics_enabled=local_screen("diag",screen.diagnostics,1);
+  const uint8_t base=(library_steps[0][0]>1)==screen.tiles?0:1;
+  library_mode=local_screen("libview",base,1);
+  if(!render || !palette.available())return;
+  if(selected_theme<2)nav.use_palette_memory();
+  if(old_theme==selected_theme && old_palette==card_mode &&
+     old_library==library_mode && old_diagnostics==diagnostics_enabled)return;
+  if(!palette.selection() && card_mode)nav.use_palette_memory();
+  if(!palette.choose(card_mode,scratch))return;
+  if(!card_mode && selected_theme==2)nav.restore_chunks();
+  if(current!=doorbell && current!=idle){depth=0;show(home,0);}
+}
+#endif
+#endif
 #endif
 #endif
 static void begin(Display *display) {
@@ -1419,6 +2255,9 @@ static void begin(Display *display) {
   std::fill_n(levels,light_count,-1);
   room_start();
   load_display_choice();
+#ifdef STUDY_CARD_PLAYER
+  apply_screen_profile(fleet.active().screen,false);
+#endif
   scanout.draw_overlay=draw_diagnostic_badges;
   scanout.restore_overlay=[](Scanout::Slot *slot){copy_badge_background(slot,false);};
   if(lux_entity[0])esphome::api::global_api_server->subscribe_home_assistant_state(
@@ -1454,6 +2293,9 @@ static void begin(Display *display) {
 #endif
     if(scanout.active && blender)nav.begin();
 #ifdef STUDY_PALETTE_PICKER
+#ifdef STUDY_CARD_PLAYER
+    apply_screen_profile(fleet.active().screen,true);
+#else
     nvs_handle_t prefs;
     if(palette.available() && nvs_open(display_namespace,NVS_READONLY,&prefs)==ESP_OK){
       uint8_t value=0;
@@ -1464,6 +2306,7 @@ static void begin(Display *display) {
         if(palette.choose(value,scratch))show(home,0);else nav.restore_chunks();
       }
     }
+#endif
 #endif
     if(scanout.active && blender){
       page_done=xSemaphoreCreateBinary();
@@ -1660,10 +2503,87 @@ static void touch(int x,int y) {
 #ifdef STUDY_LIVE
   last_activity=clock_ms();
   if(wake_touch)return;
+#ifdef STUDY_CARD_BELL
+  if(current==doorbell && card_bell_active){
+    if(!down){x0=x;y0=y;down=true;pressed=-163;}
+    dx=x-x0;dy=y-y0;return;
+  }
+#endif
+#ifdef STUDY_CARD_PLAYER
+  if((theme_picker_open || pressed==-162 || (current==display_page && !picker_open && card_choice_hits[0].contains(x,y))) &&
+     (!down || pressed==-162)){
+    if(!down){x0=x;y0=y;down=true;pressed=-162;}
+    dx=x-x0;dy=y-y0;return;
+  }
+#endif
 #ifdef STUDY_CARD_ART
   if(card_page_visible){
-    if(!down){x0=x;y0=y;}
+    if(!down){
+      x0=x;y0=y;touched_at=last_activity;
+#ifdef STUDY_CARD_SETTINGS
+      settings_down_offset=settings_offset;
+#endif
+    }
+#ifdef STUDY_CARD_PLAYER
+    if(moving){moving=false;blit(0,0,width,height,page_pixels);}
+#endif
     down=true;dx=x-x0;dy=y-y0;
+#ifdef STUDY_CARD_OVERLAYS
+    if(open_card_light>=0 || volume_open){
+      const bool volume=volume_open;
+      const auto &r=volume?music_overlay().slider:detail_layout(open_card_light).warmth;
+      if(r.w && r.contains(x0,y0)){
+        auto &drag=volume?volume_drag:sheet_drag;
+        drag=std::clamp(int(std::lround(100.*(x-r.x)/r.w)),0,100);
+        const bool ok=volume?paint_card_popup(true,page_pixels):paint_card_detail(open_card_light,page_pixels);
+        if(ok){++revision;blit(0,0,width,height,page_pixels);}
+      }
+      return;
+    }
+    if(queue_open)return;
+#endif
+#ifdef STUDY_CARD_SETTINGS
+    if(card_page==CardPage::settings && settings_scroll_pixels){
+      const auto &view=card_settings_views[(card_theme*6+card_mode)*2+int(diagnostics_enabled)];
+#ifdef STUDY_CARD_BACKLIGHT
+      const auto &track=card_light_rects[card_theme][0][0];
+      if(y0<view.height && x0>=track.x && x0<track.x+track.w && y0+settings_down_offset>=track.y && y0+settings_down_offset<track.y+track.h){
+        preview_brightness=std::clamp(((x-track.x)*100+track.w/2)/track.w,0,100);
+        if(preview_brightness!=shown_brightness)update_settings_level(preview_brightness);
+        return;
+      }
+#endif
+      if(y0<view.height && std::abs(dy)>8 && std::abs(dy)>std::abs(dx)){
+        settings_offset=std::clamp(settings_down_offset-dy,0,view.scroll);
+        memcpy(page_pixels,settings_scroll_pixels+2*width*settings_offset,2*width*view.height);
+        ++revision;blit(0,0,width,height,page_pixels);return;
+      }
+    }
+#endif
+#ifdef STUDY_CARD_LIBRARY
+    if(library_open){
+      const auto &l=library_layout();
+      if(!dx && !dy)library_down_scroll=library_scroll;
+      if(l.viewport.contains(x0,y0) && std::abs(dy)>8 && !library.waiting){
+        const int limit=std::max(0,int((library.total+l.cols-1)/l.cols)*l.step-l.viewport.h);
+        int next=std::clamp(library_down_scroll-dy,0,limit);
+        if(next!=library_scroll){
+          library_scroll=next;
+          const size_t pos=size_t(next/l.step)*l.cols;
+          if(pos<library.first || pos>=library.first+library.batch)library.get(pos/library.batch*library.batch);
+          if(paint_card_library()){++revision;blit(0,0,width,height,page_pixels);}
+        }
+      }
+      return;
+    }
+#endif
+#ifdef STUDY_CARD_PLAYER
+    if(card_page==CardPage::media && player().can_seek && player().duration && seek_slider.contains(x0,y0)){
+      seek_drag=std::clamp(int(std::lround(double(x-seek_slider.x)*player().duration/seek_slider.w)),0,player().duration);
+      if(paint_card_player(card_theme,card_mode,page_pixels,true)){++revision;blit(0,0,width,height,page_pixels);}
+      return;
+    }
+#endif
     if(card_page==CardPage::lights && (card_finger || card_lights_page.slider_at(x0,y0))){
       if(card_lights_page.touch(x,y,ha_lights)){
         card_finger=true;++revision;blit(0,0,width,height,page_pixels);
@@ -1673,7 +2593,12 @@ static void touch(int x,int y) {
   }
 #endif
   if(current==idle){
-    wake_touch=true;blanked=false;show(wake_page,0);apply_brightness();return;
+    wake_touch=true;blanked=false;
+#ifdef STUDY_CARD_FIELDS
+    if(!card_wake || !show_card_root(wake_page,card_theme,card_mode))
+#endif
+      show(wake_page,0);
+    apply_brightness();return;
   }
   if(!moving && sheet_touch(x,y))return;
 #ifdef STUDY_PALETTE_PICKER
@@ -1827,10 +2752,27 @@ static void touch(int x,int y) {
   }
 }
 static void release() {
+#ifdef STUDY_CARD_BELL
+  if(pressed==-163){
+    down=false;pressed=-2;
+    if(std::abs(dx)<24 && std::abs(dy)<24 && bell_view().close.contains(x0,y0))go(-1);
+    return;
+  }
+#endif
 #ifdef STUDY_LIVE
   if(chord_armed || chord_blocked){
     if(chord_armed)finish_chord(clock_ms()-chord_start>=50);
     chord_blocked=false;wake_touch=false;down=false;pressed=-2;return;
+  }
+#endif
+#ifdef STUDY_CARD_PLAYER
+  if(pressed==-162){
+    pressed=-2;down=false;
+    if(std::abs(dx)>=24 || std::abs(dy)>=24)return;
+    if(!theme_picker_open){open_theme_picker();return;}
+    if(card_choice_hits[1].contains(x0,y0)){show(display_page,0);return;}
+    for(int i=0;i<3;++i)if(card_choice_hits[i+2].contains(x0,y0)){select_theme(i);return;}
+    return;
   }
 #endif
 #ifdef STUDY_PALETTE_PICKER
@@ -1859,14 +2801,174 @@ static void release() {
   if(wake_touch){wake_touch=false;return;}
 #ifdef STUDY_CARD_ART
   if(card_page_visible){
+#ifdef STUDY_CARD_EDITOR
+    if(current==edit_page || current==members_page){
+      if(down && std::abs(dx)<24 && std::abs(dy)<24){
+        const auto &v=card_editor_view();
+        if(current==edit_page){
+          if(v.back.contains(x0,y0))show_card_scene(card_theme,card_mode,CardPage::scenes);
+          else if(v.list.contains(x0,y0))open_card_editor(true);
+          else for(int i=0;i<2;++i)if(v.saves[i].area.contains(x0,y0))edit_scene(i);
+        }else if(v.members_back.contains(x0,y0))open_card_editor(false);
+        else for(int i=0;i<light_count;++i)if(v.lights[i].area.contains(x0,y0))edit_scene(i+2);
+      }
+      down=card_finger=false;pressed=-2;refresh_edit();return;
+    }
+#endif
+#ifdef STUDY_CARD_OVERLAYS
+    if(open_card_light>=0){
+      const int i=open_card_light;
+      using Property=decltype(ha_lights)::Property;
+      if(sheet_drag>=0){
+        const auto &d=ha_lights.detail(i);
+        ha_lights.adjust(i,Property::warmth,std::lround(d.minimum+(d.maximum-d.minimum)*sheet_drag/100.));
+        sheet_drag=-1;
+      }else if(down && std::abs(dx)<24 && std::abs(dy)<24){
+        const auto *h=card_hit(card_theme,card_page,x0,y0);
+        if(y0<detail_layout(i).top)show_card_lights(card_theme,card_mode);
+        else if(h && h->action==CardAction::membership)edit_scene(i+2);
+        else if(h && h->action==CardAction::colour && h->arg>=0 && h->arg<int(std::size(colour_hues)))
+          ha_lights.adjust(i,Property::colour,colour_hues[h->arg]);
+        else if(h && h->action==CardAction::effect && h->arg>=0 && effect_starts[i]+h->arg<effect_starts[i+1])
+          ha_lights.adjust(i,Property::effect,0,effect_names[effect_starts[i]+h->arg]);
+      }
+      if(open_card_light>=0 && paint_card_detail(i,page_pixels)){++revision;blit(0,0,width,height,page_pixels);}
+    }else if(volume_open){
+      if(volume_drag>=0){player().set_volume(volume_drag);volume_drag=-1;}
+      else if(down && std::abs(dx)<24 && std::abs(dy)<24 &&
+              (music_overlay().close.contains(x0,y0) || !music_overlay().panel.contains(x0,y0)))show_card_player(card_theme,card_mode);
+    }else if(queue_open){
+      if(down && std::abs(dx)<24 && std::abs(dy)<24 && y0<music_overlay().queue[card_queue_state()].top)show_card_player(card_theme,card_mode);
+    }else if(card_page==CardPage::home && player().playing && down && std::abs(dx)<24 && std::abs(dy)<24 &&
+             Rect{music_overlay().strip[mini_art_enabled].tile.x,music_overlay().strip[mini_art_enabled].tile.y,
+                  music_overlay().strip[mini_art_enabled].tile.w,music_overlay().strip[mini_art_enabled].tile.h}.contains(x0,y0)){
+      if(music_overlay().strip[mini_art_enabled].play.contains(x0,y0))player().press(p4_runtime::MediaClient::play_pause);
+      else show_card_player(card_theme,card_mode);
+    }else
+#endif
     if(card_finger)card_lights_page.release(ha_lights);
+#ifdef STUDY_CARD_BACKLIGHT
+    else if(card_page==CardPage::settings && preview_brightness>=0){
+      manual_brightness=std::clamp(preview_brightness,int(backlight_min),100);
+      override_until=clock_ms()+600000;preview_brightness=-1;apply_brightness();
+      if(shown_brightness!=manual_brightness)update_settings_level(manual_brightness);
+    }
+#endif
+#ifdef STUDY_CARD_LIBRARY
+    else if(library_open){
+      if(down && std::abs(dx)<24 && std::abs(dy)<24){
+        const auto &l=library_layout();
+        if(l.back.contains(x0,y0)){
+          if(library.folders.empty())show_card_player(card_theme,card_mode);
+          else {library_scroll=0;library.up();}
+        }else if(l.toggle.contains(x0,y0)){
+          library_scroll=0;library_mode=1-library_mode;
+          const bool base_tiles=fleet.active().screen.tiles;
+          remember_screen("libview",library_mode,(library_steps[0][0]>1)==base_tiles?0:1);
+          card_page=library_steps[library_mode][0]==1?CardPage::library_alt:CardPage::library;
+          report_screen();if(library.first)library.get(0);
+        }else if(l.viewport.contains(x0,y0) && !library.waiting){
+          const int column=l.cols>1?(x0-l.viewport.x)/l.spacing:0;
+          const int row=(y0-l.viewport.y+library_scroll)/l.step;
+          const size_t pos=row*l.cols+column;
+          if(column<l.cols && pos>=library.first && pos-library.first<library.items.size()){
+            const size_t i=pos-library.first;const auto &tile=l.tiles[library.items[i].expand?0:1];
+            if(x0-l.viewport.x-column*l.spacing<tile.w && (y0-l.viewport.y+library_scroll)%l.step<tile.h){
+              const bool play=!library.items[i].expand && library.items[i].play;
+              library.choose(i);
+              if(play)show_card_player(card_theme,card_mode);else library_scroll=0;
+            }
+          }
+        }
+        if(library_open && paint_card_library()){++revision;blit(0,0,width,height,page_pixels);}
+      }
+    }
+#endif
+#ifdef STUDY_CARD_PLAYER
+    else if(seek_drag>=0){player().seek(seek_drag);seek_drag=-1;}
+#endif
+#ifdef STUDY_CARD_SPEAKERS
+    else if(card_page==CardPage::speakers){
+      if(down && std::abs(dx)<24 && std::abs(dy)<24){
+        const auto *link=card_hit(card_theme,card_page,x0,y0);
+        if(link && link->arg>=0 && link->arg<speaker_count){
+          if(link->action==CardAction::speaker && !transfer_busy){
+            select_speaker(link->arg);
+#ifdef STUDY_CARD_PLAYER
+            if(!show_card_player(card_theme,card_mode))
+#endif
+              show(media,0);
+          }
+          else if(link->action==CardAction::transfer)transfer_speaker(link->arg);
+        }
+#ifdef STUDY_CARD_PLAYER
+        else if(!link && y0<card_speaker_top[card_theme*6+card_mode])show_card_player(card_theme,card_mode);
+#endif
+      }
+    }
+#endif
+#ifdef STUDY_CARD_FIELDS
+    else if(down && std::abs(dx)>=90 && std::abs(dx)*2>=std::abs(dy)*3 && clock_ms()-touched_at<=1200){
+      const int dest=current+(dx<0?1:-1);
+      if(dest>=home && dest<=media){
+        depth=0;if(dest!=home)history[depth++]=home;
+#ifdef STUDY_CARD_PLAYER
+        card_travel=dx<0?24:-24;
+#endif
+        if(!show_card_root(dest,card_theme,card_mode))show(dest,dx<0?24:-24);
+#ifdef STUDY_CARD_PLAYER
+        card_travel=14;
+#endif
+      }
+    }
+#endif
     else if(down && std::abs(dx)<24 && std::abs(dy)<24){
+#ifdef STUDY_CARD_SETTINGS
+      if(card_page==CardPage::settings && settings_scroll_pixels){
+        const int state=2*card_theme+int(diagnostics_enabled);
+        const auto &view=card_settings_views[(card_theme*6+card_mode)*2+int(diagnostics_enabled)];
+        if(y0<view.height)for(const auto &h:card_settings_hits){
+          const int y=y0+settings_offset;
+          if(h.state!=state || x0<h.x || x0>=h.x+h.w || y<h.y || y>=h.y+h.h)continue;
+          switch(static_cast<SettingRow>(h.action)){
+            case SettingRow::themeRow:show_card_options(card_theme,card_mode,CardPage::theme);break;
+            case SettingRow::paletteRow:show_card_options(card_theme,card_mode,CardPage::palette);break;
+            case SettingRow::diagRow:
+              if(remember_screen("diag",!diagnostics_enabled,fleet.active().screen.diagnostics)){
+                diagnostics_enabled=!diagnostics_enabled;report_screen();show_card_options(card_theme,card_mode,CardPage::settings);
+              }
+              break;
+            case SettingRow::saveSoftRow:case SettingRow::saveBrightRow:edit_scene(h.action==int(SettingRow::saveSoftRow)?0:1);break;
+            case SettingRow::scrollTestRow:
+              card_switching=true;show(diagnostics_page,0);card_switching=false;
+              diagnostic_pass=0;diagnostic_frames=0;diagnostic_offset=0;break;
+            case SettingRow::reload:depth=0;show(home,0);break;
+            case SettingRow::archMiniArt:save_display_choice(!mini_art_enabled);show_card_options(card_theme,card_mode,CardPage::settings);break;
+            case SettingRow::bl:
+              manual_brightness=std::clamp(int(std::lround(double(x0-h.x)*100/h.w)),int(backlight_min),100);
+              override_until=clock_ms()+600000;apply_brightness();break;
+#ifdef USE_ESP32_HOSTED
+            case SettingRow::wifiRow:
+              card_switching=true;show(settings_page,0);card_switching=false;
+              network_action(wifi_button.x+wifi_button.w/2,wifi_button.y+wifi_button.h/2);break;
+#endif
+            default:break;
+          }
+          down=card_finger=false;pressed=-2;return;
+        }
+      }
+#endif
       auto *link=card_hit(card_theme,card_page,x0,y0);
       if(link)switch(link->action){
 #ifdef STUDY_CARD_FIELDS
-        case CardAction::back:show_card_scene(card_theme,card_mode,CardPage::home);break;
+        case CardAction::back:
+#ifdef STUDY_CARD_PLAYER
+          if(card_page==CardPage::theme || card_page==CardPage::palette){show_card_options(card_theme,card_mode,CardPage::settings);break;}
+#endif
+          show_card_scene(card_theme,card_mode,CardPage::home);break;
         case CardAction::open_scenes:show_card_scene(card_theme,card_mode,CardPage::scenes);break;
         case CardAction::open_lights:show_card_lights(card_theme,card_mode);break;
+        case CardAction::open_blinds:show_card_room_page(card_theme,card_mode,CardPage::blinds);break;
         case CardAction::preset:{
           const auto &p=fleet.active();
           for(int i=0;i<light_count;++i)if(p.members[i])ha_lights.request(i,link->arg==0?p.soft[i]:link->arg==2?p.bright[i]:0);
@@ -1875,16 +2977,80 @@ static void release() {
         case CardAction::spDown:case CardAction::spUp:
           if(thermostat.can_adjust())thermostat.set(thermostat.target+(link->action==CardAction::spUp?1:-1)*thermostat.step);
           break;
-        case CardAction::open_settings:go(settings_page);break;
-        case CardAction::open_scene_edit:go(edit_page);break;
+        case CardAction::open_settings:
+#ifdef STUDY_CARD_PLAYER
+          if(show_card_options(card_theme,card_mode,CardPage::settings))break;
+#endif
+          go(settings_page);break;
+        case CardAction::open_scene_edit:
+#ifdef STUDY_CARD_EDITOR
+          open_card_editor(false);
+#else
+          go(edit_page);
+#endif
+          break;
 #else
         case CardAction::back:show(home,0);break;
         case CardAction::open_scenes:go(scenes);break;
-#endif
-        case CardAction::light:if(link->arg>=0 && link->arg<light_count)go(light0+link->arg);break;
-        case CardAction::open_climate:go(climate_page);break;
         case CardAction::open_blinds:go(climate_page+1);break;
-        case CardAction::open_media:go(media);break;
+#endif
+        case CardAction::light:
+          if(link->arg>=0 && link->arg<light_count){
+#ifdef STUDY_CARD_OVERLAYS
+            open_card_detail(link->arg);
+#else
+            go(light0+link->arg);
+#endif
+          }
+          break;
+        case CardAction::open_climate:
+#ifdef STUDY_CARD_CLIMATE
+          show_card_room_page(card_theme,card_mode,CardPage::climate);
+#else
+          go(climate_page);
+#endif
+          break;
+        case CardAction::open_media:
+#ifdef STUDY_CARD_PLAYER
+          if(show_card_player(card_theme,card_mode))break;
+#endif
+          go(media);break;
+#ifdef STUDY_CARD_PLAYER
+        case CardAction::icoSpk:show_card_speakers(card_theme,card_mode);break;
+        case CardAction::pp:player().press(p4_runtime::MediaClient::play_pause);break;
+        case CardAction::shuf:player().press(p4_runtime::MediaClient::shuffle);break;
+        case CardAction::rep:player().press(p4_runtime::MediaClient::repeat);break;
+        case CardAction::next:player().press(p4_runtime::MediaClient::next);break;
+        case CardAction::prev:player().press(p4_runtime::MediaClient::previous);break;
+        case CardAction::icoSearch:case CardAction::icoMore:case CardAction::mpVolumeButton:{
+#ifdef STUDY_CARD_OVERLAYS
+          if(link->action!=CardAction::icoSearch){open_card_popup(link->action==CardAction::mpVolumeButton);break;}
+#endif
+#ifdef STUDY_CARD_LIBRARY
+          if(link->action==CardAction::icoSearch){open_card_library();break;}
+#endif
+          card_switching=true;show(media,0);card_switching=false;
+          if(link->action==CardAction::icoSearch){library_open=true;library_scroll=0;library.open(speaker_ids[selected_speaker]);}
+          else if(link->action==CardAction::icoMore)queue_open=true;
+          else volume_open=true;
+          transport_fields();++revision;blit(0,0,width,height,page_pixels);break;
+        }
+        case CardAction::themeRow:show_card_options(card_theme,card_mode,CardPage::theme);break;
+        case CardAction::archMiniArt:
+          if(save_display_choice(!mini_art_enabled))show_card_options(card_theme,card_mode,CardPage::settings);
+          break;
+#ifdef USE_ESP32_HOSTED
+        case CardAction::wifiRow:{
+          card_switching=true;show(settings_page,0);card_switching=false;
+          network_action(wifi_button.x+wifi_button.w/2,wifi_button.y+wifi_button.h/2);break;
+        }
+#endif
+        case CardAction::paletteRow:show_card_options(card_theme,card_mode,CardPage::palette);break;
+        case CardAction::choose_theme:select_theme(link->arg);break;
+        case CardAction::choose_palette:
+          if(choose_palette(link->arg))show_card_options(card_theme,link->arg,CardPage::palette);
+          break;
+#endif
         default:break;
       }
     }
@@ -1901,8 +3067,17 @@ static void release() {
   }
   if(pressed==-158){
     down=false;pressed=-2;
-    if(std::abs(dx)<24 && std::abs(dy)<24 && save_preference("diag",!diagnostics_enabled)){
+    if(std::abs(dx)<24 && std::abs(dy)<24 &&
+#ifdef STUDY_CARD_PLAYER
+       remember_screen("diag",!diagnostics_enabled,fleet.active().screen.diagnostics)
+#else
+       save_preference("diag",!diagnostics_enabled)
+#endif
+    ){
       diagnostics_enabled=!diagnostics_enabled;show(diagnostics_page,0);
+#ifdef STUDY_CARD_PLAYER
+      report_screen();
+#endif
     }
     return;
   }
@@ -1917,7 +3092,14 @@ static void release() {
       if(library.folders.empty()){show(media,0);return;}
       library_scroll=0;library.up();
     }else if(browse_switch.contains(x,y)){
-      library_mode=1-library_mode;save_preference("libview",library_mode!=0);library_scroll=0;if(library.first)library.get(0);
+      library_mode=1-library_mode;
+#ifdef STUDY_CARD_PLAYER
+      remember_screen("libview",library_mode,(library_steps[0][0]>1)==fleet.active().screen.tiles?0:1);
+      report_screen();
+#else
+      save_preference("libview",library_mode!=0);
+#endif
+      library_scroll=0;if(library.first)library.get(0);
     }else if(library_list.contains(x,y) && !library.waiting){
       const int cols=library_steps[library_mode][0],step=library_steps[library_mode][1];
       const int row=(y-library_list.y+library_scroll)/step;
@@ -2031,7 +3213,16 @@ static void ring() {
   bench_demo=false;
 #ifdef STUDY_LIVE
   climate_drag=false;climate_preview=NAN;preview_brightness=-1;
-  if(current==idle){blanked=false;show(wake_page,0);}
+  if(current==idle){
+    blanked=false;
+#ifdef STUDY_CARD_FIELDS
+    if(!card_wake || !show_card_root(wake_page,card_theme,card_mode))
+#endif
+      show(wake_page,0);
+  }
+#ifdef STUDY_CARD_FIELDS
+  if(current!=doorbell)card_ring_return=card_page_visible;
+#endif
   last_activity=clock_ms();
 #endif
   down=false;dragging=false;pressed=-2;
@@ -2041,7 +3232,7 @@ static void ring() {
 #endif
   deadline=clock_ms()+60000;
 }
-static void close_ring() {if(current==doorbell)go(-1);}
+static void close_ring(){if(current==doorbell)go(-1);}
 #ifdef STUDY_LIVE
 static int bell_status=-1;
 static bool pulled_video=false;
@@ -2050,7 +3241,11 @@ static int bell_draw_w=0,bell_draw_h=0;
 static void paint_bell_status(int next){
   if(next==bell_status)return;
   bell_status=next;
-  text_background(page_pixels,width,scratch,bell_footer,bell_footers[next][0],bell_footers[next][1]);
+#ifdef STUDY_CARD_BELL
+  if(card_bell_active)apply_player_patch(bell_view().footers[next],page_pixels,card_bell_file);
+  else
+#endif
+    text_background(page_pixels,width,scratch,bell_footer,bell_footers[next][0],bell_footers[next][1]);
   ++revision;blit(0,0,width,height,page_pixels);
 }
 static void camera_ring(bool test){
@@ -2061,7 +3256,12 @@ static void camera_ring(bool test){
   ring();deadline=std::min(now+bell_seconds*1000,session_start+300000);
   if(already)return;
   pulled_video=true;bell_status=-1;bell_frames=0;bell_draw_w=bell_draw_h=0;
-  text_background(page_pixels,width,scratch,bell_header,bell_headers[test][0],bell_headers[test][1]);
+#ifdef STUDY_CARD_BELL
+  card_bell_active=card_assets_ready() && read_player_patch(bell_view().base,page_pixels,card_bell_file) &&
+                   apply_player_patch(bell_view().headers[test],page_pixels,card_bell_file);
+  if(!card_bell_active)
+#endif
+    text_background(page_pixels,width,scratch,bell_header,bell_headers[test][0],bell_headers[test][1]);
   paint_bell_status(0);bell_client.open(fleet.online());
 }
 #endif
@@ -2076,6 +3276,13 @@ static bool start_navigation_demo(){
 }
 static void tick() {
 #ifdef STUDY_LIVE
+#ifdef STUDY_CARD_PLAYER
+  static bool waiting_for_theme=true;
+  if(waiting_for_theme && card_state.load()==CardState::ready && !down && !moving){
+    if(selected_theme<2 && current==home)show_card_root(home,selected_theme,card_mode);
+    waiting_for_theme=false;
+  }
+#endif
   chord_tick();
 #ifdef USE_ESP32_HOSTED
   network_refresh();
@@ -2099,19 +3306,28 @@ static void tick() {
   static int64_t previous=now;
   static int64_t next_home_diagnostic=0;
   if(current==home && diagnostics_enabled && !moving && !down && now>=next_home_diagnostic
-#ifdef STUDY_CARD_FIELDS
+#if defined(STUDY_CARD_FIELDS) && !defined(STUDY_CARD_DIAGNOSTICS)
      && !card_page_visible
 #endif
   ){
     next_home_diagnostic=now+500;
     auto message=home_diagnostic_message();
-    if(message!=last_home_diagnostic){paint_home_diagnostics(message);++revision;blit(0,0,width,height,page_pixels);}
+    if(message!=last_home_diagnostic){
+#ifdef STUDY_CARD_DIAGNOSTICS
+      if(card_page_visible)show_card_scene(card_theme,card_mode,CardPage::home);
+      else
+#endif
+      {paint_home_diagnostics(message);++revision;blit(0,0,width,height,page_pixels);}
+    }
   }
   brightness_now+=(brightness_target-brightness_now)*(adaptive_transition_s>0?
       1-std::exp(-3*std::min(2.0,(now-previous)/1000.)/adaptive_transition_s):1);
   previous=now;
   if(!down && !moving && !bench_demo && !wake_touch && current!=doorbell && current!=idle &&
      idle_timeout_s>0 && now-last_activity>=idle_timeout_s*1000){
+#ifdef STUDY_CARD_FIELDS
+    card_wake=card_page_visible;
+#endif
     wake_page=current;dim_since=now;shown_minute=-2;show(idle,0);
     ESP_LOGI("study","Timed standby");
   }
@@ -2149,7 +3365,29 @@ static void tick() {
 #endif
   if(player().dirty && !moving && !down){
     player().dirty=false;
-    if(current==media && page_pixels){transport_fields();++revision;blit(0,0,width,height,page_pixels);}
+    if(current==media && page_pixels){
+#ifdef STUDY_CARD_OVERLAYS
+      if(card_page_visible && (volume_open || queue_open))paint_card_popup(volume_open,page_pixels);
+      else
+#endif
+#ifdef STUDY_CARD_LIBRARY
+      if(card_page_visible && library_open)paint_card_library();
+      else
+#endif
+#ifdef STUDY_CARD_SPEAKERS
+      if(card_page_visible && card_page==CardPage::speakers)paint_card_speakers(card_theme,card_mode,page_pixels,false);
+      else
+#endif
+#ifdef STUDY_CARD_PLAYER
+      if(card_page_visible && card_page==CardPage::media)paint_card_player(card_theme,card_mode,page_pixels,false);
+      else
+#endif
+        transport_fields();
+      ++revision;blit(0,0,width,height,page_pixels);
+    }
+#ifdef STUDY_CARD_OVERLAYS
+    if(current==home && card_page_visible && card_page==CardPage::home)show_card_scene(card_theme,card_mode,CardPage::home);
+#endif
     if(current==home && page_pixels
 #ifdef STUDY_CARD_FIELDS
        && !card_page_visible
@@ -2158,9 +3396,26 @@ static void tick() {
   }
   static int64_t next_progress=0;
   if(current==media && player().playing && player().duration && !down && !moving && !volume_open && !queue_open && !speakers_open && !library_open && now>=next_progress){
-    progress_fields();++revision;blit(0,0,width,height,page_pixels);next_progress=now+125;
+#ifdef STUDY_CARD_PLAYER
+    if(card_page_visible && card_page==CardPage::media)paint_card_player(card_theme,card_mode,page_pixels,true);
+    else
+#endif
+      progress_fields();
+    ++revision;blit(0,0,width,height,page_pixels);next_progress=now+125;
   }
   static int64_t next_status=0;
+#ifdef STUDY_CARD_DIAGNOSTICS
+  if(card_page_visible && card_page==CardPage::settings && settings_scroll_pixels && !moving && !down && now>=next_status){
+    const auto &view=card_settings_views[(card_theme*6+card_mode)*2+int(diagnostics_enabled)];
+    settings_live_text(card_theme,card_mode,settings_scroll_pixels,view.height+view.scroll);
+    memcpy(page_pixels,settings_scroll_pixels+2*width*settings_offset,2*width*view.height);
+    next_status=now+5000;++revision;blit(0,0,width,height,page_pixels);
+  }
+#endif
+#ifdef STUDY_CARD_BACKLIGHT
+  if(card_page_visible && card_page==CardPage::settings && !down && !moving && screen_level()!=shown_brightness)
+    update_settings_level(screen_level());
+#endif
   if(!down && !moving && diagnostic_pass<0 && page_pixels && (current==room_menu_page || current==diagnostics_page) && now>=next_status){
     status_fields();next_status=now+5000;++revision;blit(0,0,width,height,page_pixels);
   }
@@ -2181,8 +3436,20 @@ static void tick() {
     ){climate_field();++revision;blit(0,0,width,height,page_pixels);}
   }
   const bool updated=fleet.tick(ha_lights.receiving());
+  const bool display_result=fleet.display_pending();
   const int result=fleet.result();
-  if(result){
+#ifdef STUDY_CARD_PLAYER
+  static ScreenChoices applied=factory_profile().screen;
+  if(updated){
+    const auto next=fleet.active().screen;
+    if(next.theme!=applied.theme || next.palette!=applied.palette ||
+       next.diagnostics!=applied.diagnostics || next.tiles!=applied.tiles){
+      apply_screen_profile(next,true);applied=next;
+    }
+  }
+  if(pending_screen_report && !fleet.display_pending())report_screen();
+#endif
+  if(result && !display_result){
     edit_waiting=false;edit_feedback=result<0?2:edit_slot<2?3+edit_count:0;
     feedback_until=now+4000;
   }
@@ -2190,6 +3457,11 @@ static void tick() {
   if(expired){edit_slot=-1;edit_feedback=0;}
   if(result || updated || expired)refresh_edit();
   if(!moving && !down){
+#ifdef STUDY_CARD_OVERLAYS
+    if(open_card_light>=0 && ha_lights.take_detail(open_card_light) && paint_card_detail(open_card_light,page_pixels)){
+      ++revision;blit(0,0,width,height,page_pixels);
+    }
+#endif
     bool list_changed=false;
     for(int i=0;i<light_count;i++)if(live_dirty[i]){
       live_dirty[i]=false;
@@ -2226,8 +3498,13 @@ static void tick() {
 #ifdef STUDY_CARD_ART
     if(card_page_visible && card_page==CardPage::lights && card_lights_page.refresh(ha_lights)){++revision;blit(0,0,width,height,page_pixels);}
 #ifdef STUDY_CARD_FIELDS
-    if(card_page_visible && (card_page==CardPage::home || card_page==CardPage::scenes) &&
+    if(card_page_visible && (current==home || current==scenes) && (card_page==CardPage::home || card_page==CardPage::scenes) &&
        paint_card_scene(card_theme,card_mode,card_page,page_pixels,false)){++revision;blit(0,0,width,height,page_pixels);}
+#ifdef STUDY_CARD_CLIMATE
+    if(card_page_visible && card_page==CardPage::climate && paint_card_climate(card_theme,card_mode,page_pixels,false)){
+      ++revision;blit(0,0,width,height,page_pixels);
+    }
+#endif
 #endif
 #endif
   }
@@ -2323,11 +3600,16 @@ static void load_library_thumbnail(){
     if(thumb.ready){player().dirty=true;ESP_LOGD("study","Music library thumbnail decoded");}
     heap_caps_free(f.data);thumbnail_job=-1;
   }
-  const int cols=library_steps[library_mode][0],step=library_steps[library_mode][1];
+  int cols=library_steps[library_mode][0],step=library_steps[library_mode][1],viewport=library_list.h;
+#ifdef STUDY_CARD_LIBRARY
+  if(card_page_visible && library_open){
+    const auto &l=library_layout();cols=l.cols;step=l.step;viewport=l.viewport.h;
+  }
+#endif
   for(size_t i=0;i<library.items.size();i++){
     const auto &url=library.items[i].thumbnail;
     const int y=int((library.first+i)/cols)*step-library_scroll;
-    if(url.empty() || url.size()>=1536 || y>=library_list.h || y+step<=0)continue;
+    if(url.empty() || url.size()>=1536 || y>=viewport || y+step<=0)continue;
     if(std::any_of(thumbnails,thumbnails+thumbnail_slots,[&](const Thumbnail &t){return t.url==url;}))continue;
     auto *slot=std::min_element(thumbnails,thumbnails+thumbnail_slots,[](const Thumbnail &a,const Thumbnail &b){return a.used<b.used;});
     slot->url=url;slot->ready=false;slot->used=++thumbnail_stamp;thumbnail_job=slot-thumbnails;
@@ -2372,18 +3654,32 @@ static void update_cover(){
   }
   if((!changed && previously==cover_ready) || (current!=home && current!=media) || volume_open || queue_open || speakers_open || library_open)return;
 #ifdef STUDY_CARD_FIELDS
-  if(card_page_visible)return;
+  if(card_page_visible){
+#ifdef STUDY_CARD_PLAYER
+    if(card_page==CardPage::media)show_card_player(card_theme,card_mode);
+#endif
+    return;
+  }
 #endif
   show(current,0);
 }
 #endif
 #ifdef STUDY_LIVE
 static bool present_camera_pixels(const uint16_t *pixels,int source_w,int source_h,int stride){
-  const Rect &v=bell_viewport;
+  const Rect &v=
+#ifdef STUDY_CARD_BELL
+    card_bell_active?bell_view().video:
+#endif
+    bell_viewport;
   const int w=std::max(1,std::min(v.w,v.h*source_w/source_h));
   const int h=std::max(1,std::min(v.h,v.w*source_h/source_w));
   if(w!=bell_draw_w || h!=bell_draw_h){
-    text_background(page_pixels,width,scratch,v,bell_empty_video[0],bell_empty_video[1]);
+#ifdef STUDY_CARD_BELL
+    if(card_bell_active){
+      if(!apply_player_patch(bell_view().empty,page_pixels,card_bell_file))return false;
+    }else
+#endif
+      text_background(page_pixels,width,scratch,v,bell_empty_video[0],bell_empty_video[1]);
     bell_draw_w=w;bell_draw_h=h;
     ESP_LOGD("study","Camera image %dx%d at %d,%d size %dx%d",source_w,source_h,
              v.x+(v.w-w)/2,v.y+(v.h-h)/2,w,h);

@@ -10,14 +10,47 @@ static int wifi_selected=-1,wifi_scroll=0,wifi_touch_scroll=0;
 static bool wifi_shift=false,wifi_pending=false;
 static bool wifi_scan_after_restore=false;
 static char passphrase[64]{};
-static int wifi_row_step(){return wifi_rows[1].y-wifi_rows[0].y;}
-static int wifi_list_bottom(){return std::min(1210,height);}
-static int wifi_scroll_limit(){return std::max(0,int(wifi_result.networks.size())*wifi_row_step()-wifi_list_bottom()+wifi_rows[0].y);}
+#ifdef STUDY_CARD_WIFI
+static const WifiLayout &wifi_layout(){return card_wifi_layouts[selected_theme*6+card_mode];}
+static const WifiSheet &wifi_sheet(){
+  const auto &l=wifi_layout();
+  return card_wifi_sheets[l.start+std::min(int(wifi_result.networks.size()),l.count-1)];
+}
+#endif
+static Rect wifi_first_row(){
+#ifdef STUDY_CARD_WIFI
+  if(card_network_open){const auto &l=wifi_layout();auto r=l.row;r.y+=wifi_sheet().top-l.top;return r;}
+#endif
+  return wifi_rows[0];
+}
+static int wifi_row_step(){
+#ifdef STUDY_CARD_WIFI
+  if(card_network_open)return wifi_layout().step;
+#endif
+  return wifi_rows[1].y-wifi_rows[0].y;
+}
+static int wifi_list_bottom(){
+#ifdef STUDY_CARD_WIFI
+  if(card_network_open)return height;
+#endif
+  return std::min(1210,height);
+}
+static int wifi_scroll_limit(){return std::max(0,int(wifi_result.networks.size())*wifi_row_step()-wifi_list_bottom()+wifi_first_row().y);}
 static void close_network(){
   network_open=false;wifi_selected=-1;wifi_shift=false;wifi_pending=false;wifi_scan_after_restore=false;
+#ifdef STUDY_CARD_WIFI
+  card_network_open=false;
+#endif
   explicit_bzero(passphrase,sizeof(passphrase));
 }
 static void paint_network(){
+#ifdef STUDY_CARD_WIFI
+  if(card_network_open){
+    if(paint_card_network()){++revision;blit(0,0,width,height,page_pixels);return;}
+    card_network_open=false;
+    wifi_scroll=0;
+  }
+#endif
   const bool join=wifi_selected>=0 && size_t(wifi_selected)<wifi_result.networks.size();
   const auto *base=join?wifi_keyboard[wifi_shift]:wifi_empty;
   text_background(page_pixels,width,scratch,{0,0,width,height},base[0],base[1]);
@@ -71,28 +104,44 @@ static void network_refresh(){
 static void network_action(int x,int y){
   if(!network_open){
     close_network();network_open=true;wifi_scroll=0;
+#ifdef STUDY_CARD_WIFI
+    card_network_open=selected_theme<2 && card_assets_ready();
+#endif
     if(!station.scan())wifi_scan_after_restore=true;
     wifi_pending=true;
     wifi_result=station.snapshot();paint_network();return;
   }
-  if(wifi_back.contains(x,y)){close_network();show(settings_page,0);return;}
+  bool back=wifi_back.contains(x,y);
+  Rect cancel=wifi_cancel,go=wifi_go;
+#ifdef STUDY_CARD_WIFI
+  if(card_network_open){
+    const auto &l=wifi_layout();back=y<(wifi_selected<0?wifi_sheet().top:l.join_top);
+    cancel=l.cancel;go=l.go;
+  }
+#endif
+  if(back){close_network();show(settings_page,0);return;}
   if(wifi_selected<0){
-    const int index=(y-wifi_rows[0].y+wifi_scroll)/wifi_row_step();
-    if(y>=wifi_rows[0].y && y<wifi_list_bottom() && x>=wifi_rows[0].x && x<wifi_rows[0].x+wifi_rows[0].w &&
+    const auto row=wifi_first_row();
+    const int index=(y-row.y+wifi_scroll)/wifi_row_step();
+    if(y>=row.y && y<wifi_list_bottom() && x>=row.x && x<row.x+row.w && (y-row.y+wifi_scroll)%wifi_row_step()<row.h &&
        index>=0 && size_t(index)<wifi_result.networks.size()){
       wifi_selected=index;wifi_shift=false;explicit_bzero(passphrase,sizeof(passphrase));paint_network();
     }
     return;
   }
   if(wifi_result.state==Wifi::State::joining)return;
-  if(wifi_cancel.contains(x,y)){wifi_selected=-1;explicit_bzero(passphrase,sizeof(passphrase));paint_network();return;}
-  if(wifi_go.contains(x,y)){
+  if(cancel.contains(x,y)){wifi_selected=-1;explicit_bzero(passphrase,sizeof(passphrase));paint_network();return;}
+  if(go.contains(x,y)){
     const auto &net=wifi_result.networks[wifi_selected];
     wifi_pending=station.join(net.ssid,passphrase);
     wifi_result.state=wifi_pending?Wifi::State::joining:Wifi::State::failed;paint_network();return;
   }
   for(size_t i=0;i<sizeof(wifi_keys_0)/sizeof(wifi_keys_0[0]);i++){
-    if(!(wifi_shift?wifi_keys_1:wifi_keys_0)[i].contains(x,y))continue;
+    auto key=(wifi_shift?wifi_keys_1:wifi_keys_0)[i];
+#ifdef STUDY_CARD_WIFI
+    if(card_network_open)key=card_wifi_keys[selected_theme][i];
+#endif
+    if(!key.contains(x,y))continue;
     const auto *value=(wifi_shift?wifi_values_1:wifi_values_0)[i];
     const size_t len=strlen(passphrase);
     if(!strcmp(value,"__shift"))wifi_shift=!wifi_shift;

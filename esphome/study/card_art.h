@@ -40,7 +40,7 @@ class CardArt {
     slot.d0=GPIO_NUM_39;slot.d1=GPIO_NUM_40;slot.d2=GPIO_NUM_41;slot.d3=GPIO_NUM_42;
     slot.flags|=SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
     esp_vfs_fat_mount_config_t options{};
-    options.format_if_mount_failed=false;options.max_files=5;
+    options.format_if_mount_failed=false;options.max_files=12;
     auto result=esp_vfs_fat_sdmmc_mount("/sd",&host,&slot,&options,&card_);
     if(result==ESP_OK)return true;
     card_=nullptr;sd_pwr_ctrl_del_on_chip_ldo(power_);power_=nullptr;

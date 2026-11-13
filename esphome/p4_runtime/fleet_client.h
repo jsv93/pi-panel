@@ -60,19 +60,20 @@ template<typename Profile> class FleetClient {
   }
   const Profile &active()const{return active_;}
   bool online()const{return online_.load();}
-  enum class Edit {membership,preset};
+  enum class Edit {membership,preset,display};
   bool submit(Edit edit,const std::string &body){
     if(!task_ || !changes_ || !online_ || pending_ || body.size()>=sizeof(Change::body))return false;
     Change c{};c.edit=edit;c.issued=xTaskGetTickCount();
     memcpy(c.body,body.c_str(),body.size()+1);
     if(xQueueSend(changes_,&c,0)!=pdTRUE)return false;
-    pending_=true;xTaskNotifyGive(task_);return true;
+    pending_=true;last_edit_=edit;xTaskNotifyGive(task_);return true;
   }
   int result(){
     const int status=result_.exchange(0);
     if(status)pending_=false;
     return status;
   }
+  bool display_pending()const{return pending_ && last_edit_==Edit::display;}
   bool tick(bool ha_connected){
     ha_connected_.store(ha_connected);
     if(latest_ && !task_ && esphome::network::is_connected()){
@@ -87,6 +88,7 @@ template<typename Profile> class FleetClient {
   std::atomic<bool> online_{false};
   std::atomic<int> result_{0};
   bool pending_=false;
+  Edit last_edit_=Edit::membership;
   FleetSettings settings_{};
   Decode decode_{};
   Profile active_{};
@@ -104,8 +106,8 @@ template<typename Profile> class FleetClient {
       Change c{};
       if(changes_ && xQueueReceive(changes_,&c,0)==pdTRUE){
         if(registered && xTaskGetTickCount()-c.issued<pdMS_TO_TICKS(4000)){
-          auto r=request(settings_,"/api/panel/"+std::string(settings_.id)+
-              (c.edit==Edit::preset?"/presets":"/light"),c.body);
+          const char *path=c.edit==Edit::display?"/display":c.edit==Edit::preset?"/presets":"/light";
+          auto r=request(settings_,"/api/panel/"+std::string(settings_.id)+path,c.body);
           Json ack(cJSON_Parse(r.body.c_str()),cJSON_Delete);
           auto *v=ack?cJSON_GetObjectItemCaseSensitive(ack.get(),"version"):nullptr;
           if(r.status==200 && cJSON_IsNumber(v))edited_version=v->valueint;

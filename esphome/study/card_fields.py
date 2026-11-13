@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import io
 import json
+import struct
 from pathlib import Path
 import zlib
 from PIL import Image
@@ -84,6 +85,13 @@ def build(config,states,destination,chromium_cdp=None):
                         fields.append([theme,palette,screen,field,x,y,w,h,*bg,color,fonts[font],m["baseline"],m["spacing"],{"center":1,"right":2,"end":2}.get(m["align"],0)])
                         page.locator("#"+field).evaluate("e=>e.style.visibility=''")
             print("Captured live text fields",theme,palette,flush=True)
+    write_bank(destination,bank,fields,glyphs)
+
+def write_bank(destination,bank,fields,glyphs):
+    while len(bank)%4:bank.append(0)
+    table=len(bank)
+    for g in sorted(glyphs,key=lambda g:(g[0],g[1])):
+        bank.extend(struct.pack("<iIiiiiiII",*map(int,g)))
     digest=hashlib.sha256(bank).hexdigest()
     path=destination/"pi-panel"/(digest+".bin")
     path.parent.mkdir(parents=True,exist_ok=True)
@@ -91,8 +99,9 @@ def build(config,states,destination,chromium_cdp=None):
         if path.read_bytes()!=bank:raise ValueError("Existing field bank failed its hash")
     else:
         with path.open("xb") as output:output.write(bank)
-    (destination/"card-fields.json").write_text(json.dumps(dict(file=path.name,bytes=len(bank),fields=fields,glyphs=glyphs),separators=(",",":")),encoding="utf8")
-    emit_header(destination,dict(file=path.name,bytes=len(bank),fields=fields,glyphs=glyphs))
+    index=dict(file=path.name,bytes=len(bank),fields=fields,glyph_table=table,glyph_count=len(glyphs))
+    (destination/"card-fields.json").write_text(json.dumps(index,separators=(",",":")),encoding="utf8")
+    emit_header(destination,index)
     print(len(fields),"live fields,",len(bank),"bytes",flush=True)
 
 def emit_header(destination,index):
@@ -108,10 +117,9 @@ def emit_header(destination,index):
         fields=[("default","ambient").index(theme),PALETTES.index(palette),"CardPage::"+page,"FieldId::"+key,*numbers]
         header.append("{"+",".join(map(str,fields))+"},")
     header.extend(["};","struct CardGlyph {int font;unsigned code;int advance,x,y,w,h;unsigned offset,size;};",
-                   "constexpr CardGlyph card_glyphs[]={"])
-    for glyph in sorted(index["glyphs"],key=lambda g:(g[0],g[1])):
-        header.append("{"+",".join(str(int(value)) for value in glyph)+"},")
-    (destination/"card_fields.h").write_text("\n".join(header+["};","}",""]),encoding="ascii")
+                   "#define STUDY_CARD_EXTERNAL_GLYPHS",
+                   f"constexpr unsigned card_glyph_offset={index['glyph_table']},card_glyph_count={index['glyph_count']};"])
+    (destination/"card_fields.h").write_text("\n".join(header+["}",""]),encoding="ascii")
 
 if __name__=="__main__":
     parser=argparse.ArgumentParser(description=__doc__)

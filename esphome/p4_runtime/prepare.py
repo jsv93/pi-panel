@@ -229,6 +229,47 @@ inline bool study_station_ip(esp_netif_ip_info_t &info){
                 shutil.copyfile(args.card_assets/name,dest/name)
             for name in ("card_text.h","card_presets_page.h"):
                 shutil.copyfile(study/name,dest/name)
+            numbers=args.card_assets/"card_numbers.h"
+            if numbers.is_file():shutil.copyfile(numbers,dest/numbers.name)
+            else:(dest/"card_numbers.h").unlink(missing_ok=True)
+            speakers=args.card_assets/"card_speakers.h"
+            if speakers.is_file():
+                shutil.copyfile(speakers,dest/speakers.name)
+                shutil.copyfile(study/"card_speaker_page.h",dest/"card_speaker_page.h")
+                source=source.replace("build_flags: [","build_flags: [-DSTUDY_CARD_SPEAKERS, ",1)
+                player=args.card_assets/"card_player.h"
+                if player.is_file():
+                    if not palette_file.is_file():p.error("Music and the theme picker require the matching Architectural palette bank")
+                    shutil.copyfile(player,dest/player.name)
+                    source=source.replace("build_flags: [","build_flags: [-DSTUDY_CARD_PLAYER, ",1)
+                    settings=args.card_assets/"card_settings.h"
+                    if settings.is_file():
+                        shutil.copyfile(settings,dest/settings.name)
+                        source=source.replace("build_flags: [","build_flags: [-DSTUDY_CARD_SETTINGS, ",1)
+                        diagnostics=args.card_assets/"card_diagnostics.h"
+                        if diagnostics.is_file():
+                            shutil.copyfile(diagnostics,dest/diagnostics.name)
+                            source=source.replace("build_flags: [","build_flags: [-DSTUDY_CARD_DIAGNOSTICS, ",1)
+                    library=args.card_assets/"card_library.h"
+                    if library.is_file():
+                        shutil.copyfile(library,dest/library.name)
+                        source=source.replace("build_flags: [","build_flags: [-DSTUDY_CARD_LIBRARY, ",1)
+                        wifi=args.card_assets/"card_wifi.h"
+                        if wifi.is_file() and args.hosted_wifi:
+                            shutil.copyfile(wifi,dest/wifi.name)
+                            source=source.replace("build_flags: [","build_flags: [-DSTUDY_CARD_WIFI, ",1)
+                        overlays=args.card_assets/"card_overlay.h"
+                        bell=args.card_assets/"card_bell.h"
+                        if bell.is_file():
+                            shutil.copyfile(bell,dest/bell.name)
+                            source=source.replace("build_flags: [","build_flags: [-DSTUDY_CARD_BELL, ",1)
+                        if overlays.is_file():
+                            shutil.copyfile(overlays,dest/overlays.name)
+                            source=source.replace("build_flags: [","build_flags: [-DSTUDY_CARD_OVERLAYS, ",1)
+                            editor=args.card_assets/"card_editor.h"
+                            if editor.is_file():
+                                shutil.copyfile(editor,dest/editor.name)
+                                source=source.replace("build_flags: [","build_flags: [-DSTUDY_CARD_EDITOR, ",1)
             source=source.replace("build_flags: [","build_flags: [-DSTUDY_CARD_FIELDS, ",1)
         source=source.replace("build_flags: [","build_flags: [-DSTUDY_CARD_ART, ",1)
         source=source.replace("json, nvs_flash]","json, nvs_flash, fatfs, sdmmc, esp_driver_sdmmc]")

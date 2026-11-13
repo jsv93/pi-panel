@@ -26,6 +26,7 @@ static void text_background(uint8_t *page_pixels,int width,uint8_t *scratch,cons
 }
 static void text_field(uint8_t *page_pixels,int width,uint8_t *scratch,const TextArea &f,const char *value,int clip_top=0,int clip_end=1280,bool restore_background=true){
   const auto &r=f.rect;
+  if(r.y>=clip_end || r.y+r.h<=clip_top)return;
   if(restore_background && r.y>=clip_top && r.y+r.h<=clip_end)text_background(page_pixels,width,scratch,r,f.bg,f.size);
   const TextGlyph *line[128];
   int count=0,advance=0;
@@ -43,7 +44,8 @@ static void text_field(uint8_t *page_pixels,int width,uint8_t *scratch,const Tex
     const auto &g=*line[i];
     const int left=(pen+32)/64+g.x,top=f.baseline+g.y;
     pen+=g.advance+f.spacing;
-    if(!g.size || tinfl_decompress_mem_to_mem(scratch,g.w*g.h,text_art+g.offset,g.size,1)!=size_t(g.w*g.h))continue;
+    if(!g.size || r.y+top>=clip_end || r.y+top+g.h<=clip_top)continue;
+    if(tinfl_decompress_mem_to_mem(scratch,g.w*g.h,text_art+g.offset,g.size,1)!=size_t(g.w*g.h))continue;
     for(int y=std::max({0,-top,clip_top-r.y-top});y<g.h && top+y<r.h && r.y+top+y<clip_end;y++)for(int x=std::max(0,-left);x<g.w && left+x<r.w;x++){
       const unsigned a=scratch[y*g.w+x],b=255-a;if(!a)continue;
       auto &px=reinterpret_cast<uint16_t*>(page_pixels)[(r.y+top+y)*width+r.x+left+x];
