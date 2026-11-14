@@ -1124,9 +1124,6 @@ static void status_fields(){
     }
     label(menu_date,date);
   }else if(current==diagnostics_page){
-    if(diagnostics_enabled){
-      text_background(page_pixels,width,scratch,{0,0,width,height},diagnostic_on[0],diagnostic_on[1]);
-    }
     label(diagnostics_enabled?diag_ha:ha_status,ha_connected()?"• connected":"• disconnected");
     std::string network_name=esphome::network::is_connected()?"Ethernet":"Disconnected";
 #ifdef USE_ESP32_HOSTED
@@ -1533,6 +1530,13 @@ static void show(int dest,int shift=14) {
     worker_source=dest==light0 && prepared_level!=levels[0]?nullptr:cached;
     page_pending=true;xTaskNotifyGive(page_worker);
   }else{
+    // Diagnostics has a separate full-page background when badges are on.
+    // Decode the selected page once. Status refreshes repaint only its fields.
+#ifdef STUDY_LIVE
+    if(dest==diagnostics_page && diagnostics_enabled){
+      if(tinfl_decompress_mem_to_mem(target,page_bytes,text_art+diagnostic_on[0],diagnostic_on[1],1)!=page_bytes)return;
+    }else
+#endif
     if(cached)memcpy(target,cached,page_bytes);
     else if(!unpack(art,target))return;
     if(page_pixels && i>=0)paint_level(levels[i],false);
