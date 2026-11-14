@@ -1,0 +1,4 @@
+esphome==2026.6.5
+playwright==1.65.1
+numpy==2.4.6
+lz4==4.4.4

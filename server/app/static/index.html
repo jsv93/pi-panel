@@ -697,6 +697,7 @@ body{line-height:1.5}h1{font-size:22px;letter-spacing:-.5px}h2{font-size:17px}h3
           <p class="muted perf-status" id="performanceStatus" role="status">Waiting for measurements…</p>
           <div class="perf-cards" id="performanceCards"></div>
           <details class="more-performance"><summary>More performance metrics · disk activity and system load</summary><div class="perf-cards" id="performanceExtra"></div></details>
+          <section class="panel-box" id="p4Updates" hidden><div class="box-head"><h3>P4 updates</h3><button class="btn" id="p4Refresh">Refresh</button></div><div class="box-body"><p>Room changes generate firmware and artwork automatically. The panel verifies every file, then installs while idle. Its saved controls keep working when the server is offline.</p><p id="p4UpdateStatus" role="status"></p><label id="p4PairingLabel">Existing Home Assistant pairing key<input id="p4PairingKey" type="password" autocomplete="off" placeholder="ESPHome encryption key"></label><button class="btn" id="p4Enable">Enable automatic updates</button> <button class="btn" id="p4Retry">Retry build</button><p class="muted">First installation needs compatible firmware on the P4 and a microSD card. Existing artwork is retained for recovery.</p></div></section>
           <section class="panel-box"><div class="box-head"><h3>Connections &amp; device</h3><span id="connectionSummary" class="muted"></span></div><div id="deviceDiagnostics"></div><div class="box-body" id="diagBody">–</div><div class="diag" id="diagStrip"></div></section>
           <section class="panel-box"><div class="box-head"><h3>Configuration history</h3><span id="currentConfig" class="muted"></span></div><div class="box-body"><label for="historySelect">Saved version</label><select id="historySelect"><option value="">Choose a saved version…</option></select><div id="history"></div></div></section>
           <section class="panel-box"><div class="box-head"><h3>Screen &amp; recent events</h3></div><div class="box-body"><p class="muted">Capture what the panel browser is displaying. A capture cannot confirm the physical screen or backlight.</p><div class="button-row"><button class="btn" id="screenCaptureBtn">Capture screen</button><button class="btn" id="screenRefreshBtn">Refresh status and events</button></div><p id="screenDiagnosticStatus" class="muted" role="status">On-demand only.</p><img id="screenCapture" alt="Latest capture of the running panel browser" hidden style="max-width:100%;max-height:620px;object-fit:contain;border-radius:8px"><pre id="screenEvents" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px"></pre></div></section>
@@ -1103,12 +1104,31 @@ async function openPanel(id){
   updateDeviceDiagnostics();
   refreshPerformance();
   resetAccess();
+  loadP4Updates();
   /* Setup command is for a panel that has never checked in; Reinstall is for
      one that has. Never both, so there is no question which to use. */
   const pending = await pendingTokenFor(id);
   $("#setupCmdBtn").style.display = pending ? "" : "none";
   $("#reinstallBtn").style.display = pending ? "none" : "";
 }
+async function loadP4Updates(){
+  const id=CUR?.panel?.id, visible=CUR?.panel?.kind==='esp';
+  $('#p4Updates').hidden=!visible;
+  if(!visible)return;
+  try{
+    const result=await api('/panels/'+encodeURIComponent(id)+'/p4');
+    if(CUR?.panel?.id!==id)return;
+    const job=result.jobs[0];
+    $('#p4PairingLabel').hidden=result.enrolled;
+    if(result.enrolled)$('#p4PairingKey').value='';
+    $('#p4Enable').hidden=result.enabled;
+    $('#p4Retry').hidden=!result.enabled;
+    $('#p4UpdateStatus').textContent=job?`Build ${job.id} · configuration ${job.version} · ${job.state} — ${job.report?.detail||job.detail||'Waiting'}`:'Automatic updates are not configured.';
+  }catch(e){$('#p4UpdateStatus').textContent=e.message;}
+}
+$('#p4Refresh').onclick=loadP4Updates;
+$('#p4Enable').onclick=async()=>{try{await api('/panels/'+encodeURIComponent(CUR.panel.id)+'/p4',{method:'POST',body:JSON.stringify({enabled:true,api_key:$("#p4PairingKey").value})});loadP4Updates();}catch(e){toast(e.message);}};
+$('#p4Retry').onclick=async()=>{try{await api('/panels/'+encodeURIComponent(CUR.panel.id)+'/p4',{method:'POST',body:JSON.stringify({retry:true})});loadP4Updates();}catch(e){toast(e.message);}};
 $("#backBtn").onclick=()=>{ setNavigation("fleet"); resetPerformance(); $("#detailView").style.display="none"; $("#fleetView").style.display="block"; loadFleet(); };
 document.querySelectorAll("#sectNav [data-s]").forEach(n=>n.onclick=()=>{
   document.querySelectorAll("#sectNav [data-s]").forEach(x=>x.classList.toggle("on",x===n));

@@ -4,7 +4,9 @@
 .git
 .github
 docs
-esphome
+**/.esphome
+**/secrets.yaml
+**/*.key
 addon
 server/data
 server/.env

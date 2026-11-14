@@ -9,6 +9,17 @@ WORKDIR /srv
 COPY server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# One low-priority per-device compiler runs outside the HTTP process. Chromium
+# renders the same bundled kiosk with isolated fixture sockets, never live HA.
+COPY server/p4-requirements.txt .
+RUN apt-get update && apt-get install -y --no-install-recommends chromium git cmake ninja-build build-essential libffi-dev libssl-dev && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir -r p4-requirements.txt
+COPY esphome /srv/p4/esphome
+COPY panel-ui /srv/p4/panel-ui
+ENV PANEL_P4_SOURCE=/srv/p4 PANEL_CHROMIUM_PATH=/usr/bin/chromium \
+    PANEL_RENDER_CONTAINER=1 PLATFORMIO_CORE_DIR=/data/p4-toolchain \
+    ESPHOME_DEFAULT_COMPILE_PROCESS_LIMIT=2
+
 COPY server/app ./app
 COPY server/run.sh /run.sh
 RUN chmod +x /run.sh

@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 
-from . import backgrounds, db, firstboot, ha, ssh, screen, performance, access, doorbell, p4_video, p4_artwork
+from . import backgrounds, db, firstboot, ha, ssh, screen, performance, access, doorbell, p4_video, p4_artwork, p4_deployment
 
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme")
 WEAK_DEFAULTS = {"changeme", "change-me", ""}
@@ -2348,4 +2348,5 @@ async def no_cache_html(request: Request, call_next):
     return response
 
 
+p4_deployment.install(app, require_admin, require_config_owner, panel_auth, _server_url)
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

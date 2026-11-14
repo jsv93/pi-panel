@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.27.0
+
+- Build and deploy private P4 firmware and artwork automatically after room changes, with progress and retry controls in Diagnostics.
+- Preserve Home Assistant pairing, authenticate and encrypt per-device updates, resume interrupted transfers and roll back failed boots.
+- Retain current and previous local artwork for offline use and recovery; bound storage used by completed server builds.
+- Match Architectural popup entry motion, correct playback colour leakage and light-slider echoes, and remove transition colour banding.
+- Bound framebuffer DMA allocations to keep Home's final frame consistent when internal memory is fragmented.
+
 ## 0.26.3
 
 - Supply Home Assistant library provider logos through the enrolled P4 connection, with bounded image conversion and transparency for local device caching.
