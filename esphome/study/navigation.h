@@ -61,6 +61,24 @@ class Navigation {
   bool from_variant_{},to_variant_{};
   int mode_=0,reference_mode_=0;
   bool sd_active_=false,sd_memory_=false;
+  uint16_t *fade_background_=nullptr;
+  int fade_background_mode_=-1;
+  bool warm_fade_background(int mode){
+#ifdef STUDY_SD_NAVIGATION
+    if(!sd_navigation_theme_fade)return false;
+    if(!fade_background_ && heap_caps_get_free_size(MALLOC_CAP_SPIRAM)>page_bytes+2*1024*1024)
+      fade_background_=static_cast<uint16_t*>(heap_caps_malloc(page_bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+    if(!fade_background_)return false;
+    if(fade_background_mode_!=mode){
+      const uint32_t pixel=sd_navigation_backgrounds[mode];
+      std::fill_n(reinterpret_cast<uint32_t*>(fade_background_),page_bytes/4,pixel|(pixel<<16));
+      fade_background_mode_=mode;
+    }
+    return true;
+#else
+    return false;
+#endif
+  }
   // Source geometry for each eight-line strip. Pixel blending still uses
   // the exact tile intersections for the phase's sub-tile translation.
   static constexpr int tile_columns=width/16;
@@ -135,6 +153,10 @@ class Navigation {
   int queued_=-1;
   bool job_ok_=false,job_done_=false;
   const uint8_t *foreground_pixels()const{return palette_motion?scratch:page_pixels;}
+  const uint8_t *background_pixels()const{
+    return theme_fade() && fade_background_ && fade_background_mode_==mode_
+      ?reinterpret_cast<const uint8_t*>(fade_background_):previous_pixels;
+  }
   static bool variant(int p){
 #ifdef STUDY_LIVE
     if(p>=home && p<=members_page)return true;
@@ -187,7 +209,7 @@ class Navigation {
   }
   bool blend_region(uint16_t *out,const Rect &paint,int shift,unsigned alpha)const{
     ppa_blend_oper_config_t op{};
-    op.in_bg.buffer=previous_pixels;op.in_bg.pic_w=width;op.in_bg.pic_h=height;
+    op.in_bg.buffer=background_pixels();op.in_bg.pic_w=width;op.in_bg.pic_h=height;
     op.in_bg.block_offset_x=paint.x;op.in_bg.block_offset_y=paint.y;
     op.in_bg.block_w=paint.w;op.in_bg.block_h=paint.h;op.in_bg.blend_cm=PPA_BLEND_COLOR_MODE_RGB565;
     op.in_fg=op.in_bg;op.in_fg.buffer=foreground_pixels();op.in_fg.block_offset_x=paint.x-shift;
@@ -256,7 +278,7 @@ class Navigation {
     return count*16;
   }
   void paint_span(uint16_t *out,int stride,int x,int y,int span,const Pose &pose)const{
-    auto *bg=reinterpret_cast<const uint16_t*>(previous_pixels),*fg=reinterpret_cast<const uint16_t*>(foreground_pixels());
+    auto *bg=reinterpret_cast<const uint16_t*>(background_pixels()),*fg=reinterpret_cast<const uint16_t*>(foreground_pixels());
     const int left=std::clamp(pose.shift-x,0,span),right=std::clamp(width+pose.shift-x,0,span);
     for(int row=y;row<y+8;++row,out+=stride){
       const int pos=row*width+x;
@@ -555,7 +577,15 @@ class Navigation {
   void prepare(int page){
 #ifdef STUDY_SD_NAVIGATION
     navigation_artwork.warm();
-    if(navigation_artwork.ready()){use_sd_memory();return;}
+    if(navigation_artwork.ready()){
+      use_sd_memory();
+      int mode=0;
+#ifdef STUDY_PALETTE_PICKER
+      mode=palette.selection();
+#endif
+      warm_fade_background(mode);
+      return;
+    }
 #endif
     if(warm_chunk_>=0){warm_chunks();return;}
     release_job();
@@ -617,9 +647,12 @@ class Navigation {
   void prepare_background(){
 #ifdef STUDY_SD_NAVIGATION
     if(theme_fade()){
-      // One uniform underlay replaces the old full-page scanout copy.
-      const uint32_t pixel=sd_navigation_backgrounds[mode_];
-      std::fill_n(reinterpret_cast<uint32_t*>(previous_pixels),page_bytes/4,pixel|(pixel<<16));
+      // Reuse the palette ground across taps. Low-memory fallback preserves
+      // the same fade using the existing buffer instead of failing navigation.
+      if(!warm_fade_background(mode_)){
+        const uint32_t pixel=sd_navigation_backgrounds[mode_];
+        std::fill_n(reinterpret_cast<uint32_t*>(previous_pixels),page_bytes/4,pixel|(pixel<<16));
+      }
       from_variant_=false;
     }
 #endif
