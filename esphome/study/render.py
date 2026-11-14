@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import argparse
 import io
 import json
+import math
 from pathlib import Path
 import zlib
 
@@ -130,10 +131,12 @@ def generate(cfg, states, dest):
                     return page.locator(sel).bounding_box()
                 bar=rect("#archBrightness")
                 def whole(box):
-                    import math
                     x,y=math.floor(box["x"]),math.floor(box["y"])
                     return dict(x=x,y=y,width=math.ceil(box["x"]+box["width"])-x,height=math.ceil(box["y"]+box["height"])-y)
                 slider=whole(bar)
+                knob=rect("#archBrightness .knob")
+                margin=math.ceil(knob["width"]/2)
+                slider_paint={**slider,"x":slider["x"]-margin,"width":slider["width"]+2*margin}
                 patches=[]
                 full=whole(rect(".arch-reading:visible"))
                 for value in range(101):
@@ -142,12 +145,14 @@ def generate(cfg, states, dest):
                       e.querySelector('.fill').style.transform='scaleX('+v/100+')';
                       e.querySelector('.knob').style.transform='translate(calc('+v/100*e.clientWidth+'px - 50%),-50%)';
                     }""",value)
-                    patches.append([store(str(value),full),store(str(value),slider)])
+                    patches.append([store(str(value),full),store(str(value),slider_paint)])
         page.locator("#archMenu").evaluate("e=>e.click()")
         capture("room-menu")
         page.locator('#archRoomLinks [data-sheet=settings]').evaluate("e=>e.click()")
         capture("settings")
         for name in ("display","diagnostics","scene-edit","scene-members"):
+            if name in ("diagnostics","scene-edit"):
+                page.locator('#s-'+("display" if name=="diagnostics" else "diagnostics")+' [data-close]').evaluate("e=>e.click()")
             page.locator('[data-sheet="'+name+'"]').first.evaluate("e=>e.click()")
             capture(name)
         page.locator('#archRoomStandby').evaluate("e=>e.click()")
@@ -162,7 +167,7 @@ def generate(cfg, states, dest):
     presets=[[(-1 if light.get("include_presets") is False else
                0 if name=="off" else light.get(name,30 if name=="soft" else 100)) for light in cfg["lights"]]
              for name in ("soft","off","bright")]
-    manifest=dict(views=views,slider=slider,reading=full,patches=patches,video=video,initial=initial,
+    manifest=dict(views=views,slider=slider,slider_paint=slider_paint,reading=full,patches=patches,video=video,initial=initial,
                   scene_sprites=scene_sprites,presets=presets)
     (dest/"screens.json").write_text(json.dumps(manifest),encoding="utf8")
     (dest/"screens.bin").write_bytes(data)

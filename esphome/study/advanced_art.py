@@ -44,6 +44,7 @@ def capture_advanced(config,states,table,sprite,box):
                   e.querySelector('.chk').classList.toggle('on',on);
                   e.querySelector('.v').textContent=fail?'not saved':'';
                 }""",[on,failed])
+                page.wait_for_timeout(250)
                 variants.append(sprite(snap(),mr))
             member_modes.append(variants)
             # Kiosk standard select, with its option labels rendered by Chromium.

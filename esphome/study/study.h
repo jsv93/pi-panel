@@ -1,5 +1,8 @@
 #pragma once
 #include "study_assets.h"
+#ifdef STUDY_IDENTIFY
+#include "identify_assets.h"
+#endif
 #if __has_include("live_runtime/study_profile.h")
 #define STUDY_LIVE
 #include "control_art.h"
@@ -85,6 +88,8 @@ static bool blanked=false,wake_touch=false;
 static double brightness_target=backlight_default,brightness_now=backlight_default;
 static int manual_brightness=backlight_default,shown_brightness=-1,preview_brightness=-1;
 static int64_t override_until=0;
+static int64_t identify_until=0;
+static int identify_phase=-1;
 static int screen_level(){
   if(lux_entity[0] && clock_ms()>=override_until)
     return std::clamp(int(std::lround(brightness_now)),1,100);
@@ -92,7 +97,8 @@ static int screen_level(){
 }
 static void apply_brightness(){
   const int normal=screen_level();
-  const int value=blanked?0:current==idle?std::max(lux_entity[0]?1:10,int(std::lround(normal*.25))):normal;
+  const int value=clock_ms()<identify_until?100:
+    blanked?0:current==idle?std::max(lux_entity[0]?1:10,int(std::lround(normal*.25))):normal;
   if(value!=applied_brightness && set_light_level && set_light_level(value)){
     applied_brightness=value;
     ESP_LOGD("study","Backlight %d%%",value);
@@ -255,8 +261,8 @@ static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
   if(!slot)return false;
   const bool full=w==width && h==height;
   const bool seed=!full && slot->page!=revision;
-  if(seed)memcpy(slot->pixels,page_pixels,page_bytes);
-  if(full)memcpy(slot->pixels,pixels,page_bytes);
+  if(seed)scanout.copy_pixels(slot->pixels,page_pixels,page_bytes);
+  if(full)scanout.copy_pixels(slot->pixels,pixels,page_bytes);
   else if(!seed || !stride) {
     for(int row=0;row<h;row++)
       memcpy(slot->pixels+2*((y+row)*width+x),pixels+2*row*(stride?stride:w),2*w);
@@ -288,8 +294,10 @@ static ppa_client_handle_t blender;
 static int64_t motion_start;
 static int travel, motion_frames, motion_height;
 static bool moving;
+static bool palette_motion=false;
 static esphome::HighFrequencyLoopRequester motion_loop;
 static void await_page();
+static bool unpack(const Sprite &s,uint8_t *out);
 }
 #include "navigation.h"
 namespace study {
@@ -326,7 +334,7 @@ static bool page_pending;
 static void decode_page_task(void *){
   for(;;){
     ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
-    if(worker_source)memcpy(worker_target,worker_source,page_bytes);
+    if(worker_source)scanout.copy_pixels(worker_target,worker_source,page_bytes);
     else unpack(*worker_art,worker_target);
     xSemaphoreGive(page_done);
   }
@@ -365,7 +373,7 @@ static void prepare_lamp() {
     control_patch(lamp_pixels,detail_modes[prepared_level<0?0:prepared_level==0?1:2],detail_power_button);
 #endif
     if(prepared_level>=0)for(int i=0;i<2;i++){
-      auto &r=i?slider:reading;
+      auto &r=i?slider_paint:reading;
       auto &s=patches[prepared_level][i];
       if(unpack(s,scratch))for(int y=0;y<s.h;y++)
         memcpy(lamp_pixels+2*((r.y+y)*width+r.x),scratch+2*y*s.w,2*s.w);
@@ -407,14 +415,14 @@ static void animate_cached(int elapsed) {
   auto *slot=scanout.acquire(false);
   if(!slot)return;
   if(phase==lamp_steps-1){
-    memcpy(slot->pixels,page_pixels,page_bytes);
+    scanout.copy_pixels(slot->pixels,page_pixels,page_bytes);
     if(!scanout.present(slot,0,height))return;
     slot->lamp_background=false;slot->page=revision;moving=false;++motion_frames;
     ESP_LOGI("study","Cached lamp transition: %d frames in %lld ms",motion_frames,clock_ms()-motion_start);
     return;
   }
   const bool seed=!slot->lamp_background;
-  if(seed)memcpy(slot->pixels,lights_pixels,page_bytes);
+  if(seed)scanout.copy_pixels(slot->pixels,lights_pixels,page_bytes);
   auto *src=timeline+(playback_direction*lamp_steps+phase)*lamp_stride;
   for(const auto &r:lamp_spans){
     memcpy(slot->pixels+2*(r.y*width+r.x),src,2*r.w);
@@ -790,6 +798,7 @@ static void restore_media_colours(uint8_t *frame,const Rect &paint){
 #endif
 static int observed_touches=0;
 static int refresh_fps=0;
+static float display_refresh_hz=0;
 static bool ha_connected(){
   const auto *api=esphome::api::global_api_server;
   return api && api->is_connected_with_state_subscription() && ha_lights.receiving();
@@ -804,13 +813,14 @@ static void draw_diagnostic_badges(Scanout::Slot *slot,int &first_y,int &end_y){
 #if defined(STUDY_CARD_FIELDS) && !defined(STUDY_CARD_DIAGNOSTICS)
   if(card_page_visible)return;
 #endif
-  if(!diagnostics_enabled || blanked || current==doorbell || !scratch)return;
+  if(!diagnostics_enabled || blanked || current==doorbell || !scratch || clock_ms()<identify_until)return;
   if(!slot->overlay_background){
     const size_t size=2*width*32;
     slot->overlay_background=static_cast<uint8_t*>(heap_caps_malloc(size,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
     if(!slot->overlay_background)return;
   }
   copy_badge_background(slot,true);
+  uint8_t glyph_scratch[2048];
   char rate[24];snprintf(rate,sizeof(rate),"%d fps",refresh_fps);
   const bool online=ha_connected();
 #ifdef STUDY_CARD_DIAGNOSTICS
@@ -819,15 +829,15 @@ static void draw_diagnostic_badges(Scanout::Slot *slot,int &first_y,int &end_y){
     auto draw=[&](TextArea field,const DiagLabel &box,const char *value,int align){
       field.rect={box.x,box.y,box.w,box.h};field.baseline=box.baseline;field.spacing=box.spacing;
       field.colour=box.colour;field.align=align;
-      text_field(slot->pixels,width,scratch,field,value,0,height,false);
+      text_field(slot->pixels,width,glyph_scratch,field,value,0,height,false);
     };
     draw(online?diag_connection:diag_disconnected,v.badges[online?0:1],online?"connected":"disconnected — retrying",0);
     draw(diag_fps,v.badges[2],rate,2);
     first_y=0;end_y=std::max(end_y,32);return;
   }
 #endif
-  text_field(slot->pixels,width,scratch,online?diag_connection:diag_disconnected,online?"connected":"disconnected — retrying",0,height,false);
-  text_field(slot->pixels,width,scratch,diag_fps,rate,0,height,false);
+  text_field(slot->pixels,width,glyph_scratch,online?diag_connection:diag_disconnected,online?"connected":"disconnected — retrying",0,height,false);
+  text_field(slot->pixels,width,glyph_scratch,diag_fps,rate,0,height,false);
   first_y=std::min(first_y,diag_connection.rect.y);
   end_y=std::max(end_y,diag_connection.rect.y+diag_connection.rect.h);
 }
@@ -835,7 +845,9 @@ static void measure_refresh(){
   static int64_t previous=0;static uint32_t earlier=0;
   const auto now=clock_ms();const auto epoch=Scanout::Panel::refresh_epoch;
   if(previous && now-previous<1000)return;
-  if(previous)refresh_fps=std::lround((epoch-earlier)*1000./(now-previous));
+  if(previous)display_refresh_hz=(epoch-earlier)*1000./(now-previous);
+  refresh_fps=std::lround(scanout.rendered_fps());
+  fleet.display_metrics(refresh_fps,display_refresh_hz,applied_brightness);
   earlier=epoch;previous=now;
 }
 #if defined(STUDY_BENCH_TEST) || defined(STUDY_LIVE_CAPTURE)
@@ -1000,23 +1012,72 @@ namespace study {
 static void playback_time(const TextArea &area,int seconds){
   char out[24];snprintf(out,sizeof(out),"%d:%02d",seconds/60,seconds%60);label(area,out);
 }
+static uint16_t interpolate_pixel(uint16_t first,uint16_t second,unsigned weight){
+  const unsigned inverse=256-weight;
+  return ((((first&0xf81f)*inverse+(second&0xf81f)*weight)>>8)&0xf81f) |
+         ((((first&0x07e0)*inverse+(second&0x07e0)*weight)>>8)&0x07e0);
+}
 static void progress_fields(){
-  const int pos=seek_drag>=0?seek_drag:int(std::lround(player().position())),duration=player().duration;
-  playback_time(elapsed_time,pos);playback_time(total_time,duration);
+  const double pos=seek_drag>=0?seek_drag:player().position();
+  const int duration=player().duration;
   const auto &r=seek_slider;
-  const int end=duration?std::clamp(int(std::lround(double(pos)*r.w/duration)),0,r.w):0;
+  const double position=duration?std::clamp(pos*r.w/duration,0.,double(r.w)):0;
+  const int end=int(position);
+  const unsigned fraction=unsigned((position-end)*256);
   text_background(page_pixels,width,scratch,seek_background,seek_art[0][0],seek_art[0][1]);
-  const int n=player().playing?44:1,phase=player().playing?clock_ms()*44/2800%44:0;
+  const int n=player().playing?44:1;
+  const unsigned phase=player().playing?(clock_ms()*44*256/2800)%(44*256):0;
   const auto &fill=seek_art[player().playing?2:1];
-  if(end && tinfl_decompress_mem_to_mem(scratch,2*n*r.h,text_art+fill[0],fill[1],1)==size_t(2*n*r.h)){
-    for(int y=0;y<r.h;y++){
+  if(tinfl_decompress_mem_to_mem(scratch,2*n*r.h,text_art+fill[0],fill[1],1)==size_t(2*n*r.h)){
+    for(int y=std::max(0,r.h/2-16);y<std::min(r.h,r.h/2+16);y++){
       auto *dst=reinterpret_cast<uint16_t*>(page_pixels)+(r.y+y)*width+r.x;
       auto *src=reinterpret_cast<const uint16_t*>(scratch)+y*n;
-      for(int x=0;x<end;x++)dst[x]=src[(x+phase)%n];
+      for(int x=0;x<=end && x<r.w;x++){
+        const int sample=(x+(phase>>8))%n;
+        const auto pixel=interpolate_pixel(src[sample],src[(sample+1)%n],phase&255);
+        dst[x]=x<end?pixel:interpolate_pixel(dst[x],pixel,fraction);
+      }
     }
   }
   const Rect thumb{r.x+end-5,r.y+r.h/2-4,10,10};
-  text_background(page_pixels,width,scratch,thumb,seek_art[3][0],seek_art[3][1]);
+  const auto &art=seek_art[3];
+  if(tinfl_decompress_mem_to_mem(scratch,200,text_art+art[0],art[1],1)==200){
+    for(int y=0;y<10;y++){
+      auto *dst=reinterpret_cast<uint16_t*>(page_pixels)+(thumb.y+y)*width+thumb.x;
+      auto *src=reinterpret_cast<const uint16_t*>(scratch)+10*y;
+      for(int x=0;x<=10;x++)
+        dst[x]=interpolate_pixel(x<10?src[x]:dst[x],x?src[x-1]:dst[x],fraction);
+    }
+  }
+  playback_time(elapsed_time,int(pos));playback_time(total_time,duration);
+}
+static bool progress_active(){
+  return current==media && player().playing && player().duration && !blanked &&
+    !down && !moving && !volume_open && !queue_open && !speakers_open && !library_open;
+}
+static void animate_progress(){
+  if(!progress_active())return;
+#ifdef STUDY_CARD_PLAYER
+  if(card_page_visible)return;
+#endif
+  static int64_t previous=0;
+  const auto now=clock_ms();
+  if(now-previous<16 || (scanout.active && !scanout.acquire(false)))return;
+  progress_fields();
+  const int top=std::min({seek_background.y,elapsed_time.rect.y,total_time.rect.y});
+  const int bottom=std::max({seek_background.y+seek_background.h,
+    elapsed_time.rect.y+elapsed_time.rect.h,total_time.rect.y+total_time.rect.h});
+  static int shown_second=-1,labels_remaining=0;
+  const int second=int(player().position());
+  if(second!=shown_second){shown_second=second;labels_remaining=3;}
+  // The kiosk wave occupies the centre 32 pixels of its 80-pixel touch target.
+  // Paint that strip at refresh speed. Propagate changed time labels to each
+  // of the three scanout buffers once per second.
+  const Rect paint=labels_remaining?Rect{0,top,width,bottom-top}:
+      Rect{seek_background.x,seek_slider.y+seek_slider.h/2-16,seek_background.w,32};
+  if(blit(paint.x,paint.y,paint.w,paint.h,page_pixels+2*(paint.y*width+paint.x),width) && labels_remaining)
+    --labels_remaining;
+  previous=now;
 }
 static void home_player(){
   const bool cover=cover_ready && mini_art_enabled;
@@ -1106,6 +1167,12 @@ static void paint_home_diagnostics(const std::string &message){
   last_home_diagnostic=message;
 }
 static void status_fields(){
+#ifdef STUDY_PAGE_CRUMBS
+  if(current==diagnostics_page || current==edit_page){
+    const bool from_scenes=current==edit_page && depth && history[depth-1]==scenes;
+    control_patch(page_pixels,page_backs[from_scenes?1:0],page_back);
+  }
+#endif
 #ifdef USE_ESP32_HOSTED
   if(current==settings_page){
     const auto status=station.snapshot();
@@ -1367,7 +1434,7 @@ static void paint_level(int value,bool update_display=true) {
     if(!page_pixels)return;
     // Hide the photographed value and thumb until HA confirms this entity.
     auto *pixels=reinterpret_cast<uint16_t*>(page_pixels);
-    for(auto area:{reading,slider}){
+    for(auto area:{reading,slider_paint}){
       for(int row=area.y;row<area.y+area.h;row++){
         auto *line=pixels+row*width;
         std::fill_n(line+area.x,area.w,line[area.x-1]);
@@ -1381,20 +1448,47 @@ static void paint_level(int value,bool update_display=true) {
 #endif
   if(scanout.active){
     draw_patch(patches[value][0],reading,false);
-    draw_patch(patches[value][1],slider,false);
+    draw_patch(patches[value][1],slider_paint,false);
     if(update_display){
-      const int x=std::min(reading.x,slider.x),y=std::min(reading.y,slider.y);
-      const int w=std::max(reading.x+reading.w,slider.x+slider.w)-x;
-      const int h=std::max(reading.y+reading.h,slider.y+slider.h)-y;
+      const int x=std::min(reading.x,slider_paint.x),y=std::min(reading.y,slider_paint.y);
+      const int w=std::max(reading.x+reading.w,slider_paint.x+slider_paint.w)-x;
+      const int h=std::max(reading.y+reading.h,slider_paint.y+slider_paint.h)-y;
       blit(x,y,w,h,page_pixels+2*(y*width+x),width);
     }
     return;
   }
   draw_patch(patches[value][0],reading,update_display);
-  draw_patch(patches[value][1],slider,update_display);
+  draw_patch(patches[value][1],slider_paint,update_display);
 }
 static void animate() {
+#ifdef STUDY_LIVE
+#ifdef STUDY_IDENTIFY
+  if(clock_ms()<identify_until){
+    const int phase=int((10000-identify_until+clock_ms())/450)%2;
+    if(phase==identify_phase)return;
+    auto *slot=scanout.acquire(false);if(!slot)return;
+    if(!phase){
+      scanout.copy_pixels(slot->pixels,scratch,page_bytes);
+      if(!scanout.present(slot,0,height))return;
+    }else{
+      ppa_blend_oper_config_t op{};
+      op.in_bg.buffer=previous_pixels;op.in_bg.pic_w=width;op.in_bg.pic_h=height;
+      op.in_bg.block_w=width;op.in_bg.block_h=height;op.in_bg.blend_cm=PPA_BLEND_COLOR_MODE_RGB565;
+      op.in_fg=op.in_bg;op.in_fg.buffer=scratch;
+      op.out.buffer=slot->pixels;op.out.buffer_size=page_bytes;op.out.pic_w=width;op.out.pic_h=height;
+      op.out.blend_cm=PPA_BLEND_COLOR_MODE_RGB565;
+      op.bg_alpha_update_mode=PPA_ALPHA_FIX_VALUE;op.bg_alpha_fix_val=255;
+      op.fg_alpha_update_mode=PPA_ALPHA_FIX_VALUE;op.fg_alpha_fix_val=89;
+      if(ppa_do_blend(blender,&op)!=ESP_OK || !scanout.present(slot,0,1))return;
+    }
+    slot->page=0;slot->lamp_background=false;identify_phase=phase;return;
+  }
+#endif
+  if(moving || progress_active())motion_loop.start();else motion_loop.stop();
+  animate_progress();
+#else
   if(moving)motion_loop.start();else motion_loop.stop();
+#endif
 #ifdef STUDY_LIVE
 #ifndef STUDY_ARCHITECTURAL_ONLY
   if(diagnostic_pass>=0){diagnostic_scroll_frame();return;}
@@ -1409,7 +1503,12 @@ static void animate() {
   if(nav.active()){if(nav.draw(elapsed))moving=false;return;}
   await_page();
   if(elapsed>=180) {
-    blit(0,0,width,height,page_pixels);
+    if(palette_motion){
+      auto *slot=scanout.acquire(false);if(!slot)return;
+      scanout.copy_pixels(slot->pixels,scratch,page_bytes);
+      if(!scanout.present(slot,0,height))return;
+      slot->page=revision;slot->lamp_background=false;palette_motion=false;
+    }else blit(0,0,width,height,page_pixels);
     moving=false;
     ESP_LOGI("study","Page transition: %d frames in %lld ms",motion_frames+1,clock_ms()-motion_start);
     return;
@@ -1418,16 +1517,17 @@ static void animate() {
   const float ease=ease_out(elapsed/180.f);
   const int offset=std::lround(travel*(1.f-ease));
   const unsigned dest_x=std::max(offset,0),src_x=std::max(-offset,0);
-  auto *slot=scanout.active?scanout.acquire(false):nullptr;
+  auto *slot=scanout.active?scanout.acquire(false,true):nullptr;
   if(scanout.active && !slot)return;
   uint8_t *out=slot?slot->pixels:mixed_pixels;
+  const auto *foreground=palette_motion?scratch:page_pixels;
   if(slot){
     const int edge=std::abs(offset),x=offset<0?width-edge:0;
     if(edge)for(int y=0;y<motion_height;y++){
       const int pos=2*(y*width+x);
       memcpy(out+pos,previous_pixels+pos,2*edge);
     }
-    memcpy(out+2*width*motion_height,page_pixels+2*width*motion_height,2*width*(height-motion_height));
+    memcpy(out+2*width*motion_height,foreground+2*width*motion_height,2*width*(height-motion_height));
     slot->page=0;
     slot->lamp_background=false;
   }
@@ -1436,7 +1536,7 @@ static void animate() {
   op.in_bg.pic_w=width; op.in_bg.pic_h=height;
   op.in_bg.block_w=width-std::abs(offset); op.in_bg.block_h=motion_height;
   op.in_bg.block_offset_x=dest_x; op.in_bg.blend_cm=PPA_BLEND_COLOR_MODE_RGB565;
-  op.in_fg=op.in_bg; op.in_fg.buffer=page_pixels; op.in_fg.block_offset_x=src_x;
+  op.in_fg=op.in_bg; op.in_fg.buffer=foreground; op.in_fg.block_offset_x=src_x;
   op.out.buffer=out; op.out.buffer_size=page_bytes;
   op.out.pic_w=width; op.out.pic_h=height; op.out.block_offset_x=dest_x;
   op.out.blend_cm=PPA_BLEND_COLOR_MODE_RGB565;
@@ -1449,7 +1549,7 @@ static void animate() {
   }
   if(slot){
 #ifdef STUDY_PALETTE_PICKER
-    if(palette.selection()
+    if(!palette_motion && palette.selection()
 #ifdef STUDY_CARD_ART
        && !card_page_visible
 #endif
@@ -1461,6 +1561,9 @@ static void animate() {
   ++motion_frames;
 }
 static void show(int dest,int shift=14) {
+#ifdef STUDY_LIVE
+  identify_until=0;
+#endif
 #ifdef STUDY_CARD_PLAYER
   theme_picker_open=false;
   if(!card_switching && selected_theme<2){
@@ -1506,8 +1609,15 @@ static void show(int dest,int shift=14) {
 #ifdef STUDY_PALETTE_PICKER
   if(palette.selection()){nav.select(-1,-1,0,request_at);playback_direction=-1;}
 #endif
-  const bool transition=change && shift && blender && current!=idle && current!=doorbell && dest!=idle && dest!=doorbell && (dest!=home || nav.active());
+  const bool transition=change && shift && blender && current!=idle && current!=doorbell && dest!=idle && dest!=doorbell;
   if(transition)std::swap(previous_pixels,page_pixels);
+  palette_motion=false;
+#ifdef STUDY_PALETTE_PICKER
+  if(transition && scanout.active && palette.selection() && scratch && scanout.visible_pixels()){
+    scanout.copy_pixels(previous_pixels,scanout.visible_pixels(),page_bytes);
+    palette_motion=true;
+  }
+#endif
   moving=false;
   current=dest;
   ++revision;
@@ -1537,7 +1647,7 @@ static void show(int dest,int shift=14) {
       if(tinfl_decompress_mem_to_mem(target,page_bytes,text_art+diagnostic_on[0],diagnostic_on[1],1)!=page_bytes)return;
     }else
 #endif
-    if(cached)memcpy(target,cached,page_bytes);
+    if(cached)scanout.copy_pixels(target,cached,page_bytes);
     else if(!unpack(art,target))return;
     if(page_pixels && i>=0)paint_level(levels[i],false);
     if(page_pixels && dest==scenes)scene_fields();
@@ -1553,6 +1663,13 @@ static void show(int dest,int shift=14) {
 #endif
   }
   if(transition) {
+#ifdef STUDY_PALETTE_PICKER
+    if(palette_motion){
+      scanout.copy_pixels(scratch,page_pixels,page_bytes);
+      palette.render(reinterpret_cast<uint16_t*>(scratch),0,0,width,height,true);
+      restore_media_colours(scratch,{0,0,width,height});
+    }
+#endif
     if(playback_direction<0)nav.prepare_live_tiles();
     motion_height=height;
     for(const auto &link:links)if(link.page==dest && link.root)
@@ -2691,6 +2808,7 @@ static void touch(int x,int y) {
   bench_demo=false;
 #ifdef STUDY_LIVE
   last_activity=clock_ms();
+  if(identify_until){identify_until=0;show(current,0);apply_brightness();wake_touch=true;return;}
   if(wake_touch)return;
 #ifdef STUDY_CARD_BELL
   if(current==doorbell && card_bell_active){
@@ -2714,7 +2832,7 @@ static void touch(int x,int y) {
 #endif
     }
 #ifdef STUDY_CARD_PLAYER
-    if(moving){moving=false;blit(0,0,width,height,page_pixels);}
+    if(moving){nav.cancel();moving=false;blit(0,0,width,height,page_pixels);}
 #endif
     down=true;dx=x-x0;dy=y-y0;
 #ifdef STUDY_CARD_OVERLAYS
@@ -2876,7 +2994,7 @@ static void touch(int x,int y) {
 #endif
   const int i=light_index();
   if(!down) {
-    if(moving){await_page();moving=false;blit(0,0,width,height,page_pixels);}
+    if(moving){nav.cancel();await_page();moving=false;blit(0,0,width,height,page_pixels);}
     down=true;pressed=-2;dragging=i>=0 && slider.contains(x,y);
 #ifdef STUDY_LIVE
     dragging=dragging && ha_lights.confirmed(i)>=0;
@@ -3476,6 +3594,10 @@ static bool start_navigation_demo(){
 }
 static void tick() {
 #ifdef STUDY_LIVE
+  if(identify_until){
+    if(clock_ms()<identify_until){apply_brightness();return;}
+    identify_until=0;blit(0,0,width,height,page_pixels);
+  }
 #ifdef STUDY_CARD_PLAYER
   static bool waiting_for_theme=true;
   if(waiting_for_theme && card_state.load()==CardState::ready && !down && !moving){
@@ -3493,7 +3615,9 @@ static void tick() {
     const int connected=ha_connected();
     if(reported_fps!=refresh_fps || reported_connection!=connected){
       const auto &r=diag_disconnected.rect;
+      scanout.count_frame=false;
       blit(0,r.y,width,r.h,page_pixels+2*width*r.y,width);
+      scanout.count_frame=true;
       reported_fps=refresh_fps;reported_connection=connected;
     }
   }
@@ -3613,14 +3737,12 @@ static void tick() {
     next_progress=now+80;
   }
 #endif
-  if(current==media && player().playing && player().duration && !down && !moving && !volume_open && !queue_open && !speakers_open && !library_open && now>=next_progress){
 #ifdef STUDY_CARD_PLAYER
+  if(progress_active() && card_page_visible && now>=next_progress){
     if(card_page_visible && card_page==CardPage::media)paint_card_player(card_theme,card_mode,page_pixels,true);
-    else
-#endif
-      progress_fields();
     ++revision;blit(0,0,width,height,page_pixels);next_progress=now+125;
   }
+#endif
   static int64_t next_status=0;
 #ifdef STUDY_CARD_DIAGNOSTICS
   if(card_page_visible && card_page==CardPage::settings && settings_scroll_pixels && !moving && !down && now>=next_status){
@@ -3655,6 +3777,27 @@ static void tick() {
     ){climate_field();++revision;blit(0,0,width,height,page_pixels);}
   }
   const bool updated=fleet.tick(ha_lights.receiving());
+  using PanelAction=p4_runtime::FleetSocket::Action;
+  const auto action=moving?PanelAction::none:fleet.take_action();
+  if(action==PanelAction::restart)esphome::App.safe_reboot();
+  if(action==PanelAction::wake || action==PanelAction::identify){
+    blanked=false;last_activity=now;
+    if(current==idle)show(wake_page,0);
+  }
+  if(action==PanelAction::identify){
+    show(current,0);
+#ifdef STUDY_IDENTIFY
+    scanout.copy_pixels(previous_pixels,scanout.visible_pixels(),page_bytes);
+    const auto &frame=identify_frames[palette.selection()];
+    if(tinfl_decompress_mem_to_mem(scratch,page_bytes,identify_pixels+frame[0],frame[1],1)==page_bytes){
+      identify_until=now+10000;identify_phase=-1;apply_brightness();return;
+    }
+#else
+    identify_until=now+10000;
+#endif
+  }
+  if(action==PanelAction::sleep){wake_page=current;show(idle,0);blanked=true;}
+  if(action==PanelAction::reload && !moving){show(current,0);last_activity=now;}
   const bool display_result=fleet.display_pending();
   const int result=fleet.result();
 #ifdef STUDY_SCREEN_OPTIONS
@@ -3704,7 +3847,7 @@ static void tick() {
          && !card_page_visible
 #endif
       ){
-        memcpy(page_pixels,lights_pixels,page_bytes);
+        scanout.copy_pixels(page_pixels,lights_pixels,page_bytes);
         ++revision;blit(0,0,width,height,page_pixels);
       }
     }
@@ -3787,28 +3930,56 @@ static size_t camera_bitstream(uint8_t *jpg,size_t size){
   return 0;
 }
 #ifdef STUDY_LIVE
-static bool decode_library_thumbnail(const p4_runtime::AlbumClient::Frame &f,Thumbnail &out){
-  if(!f.data || !previous_pixels || !scratch)return false;
-  memcpy(scratch,f.data,f.size);
-  const auto size=camera_bitstream(scratch,f.size);
+// Ordinary JPEG artwork uses full-range YCbCr. The P4's RGB output applies
+// video-range conversion, which clips shadows and oversaturates album covers.
+// Decode packed V/U/Y and resize before quantizing to the display's RGB565.
+static uint16_t jpeg_pixel(int v,int u,int luma,int x,int y){
+  constexpr int bayer[4][4]={{0,8,2,10},{12,4,14,6},{3,11,1,9},{15,7,13,5}};
+  v-=128;u-=128;
+  const int red=std::clamp(luma+((359*v+128)>>8),0,255);
+  const int green=std::clamp(luma-((88*u+183*v+128)>>8),0,255);
+  const int blue=std::clamp(luma+((454*u+128)>>8),0,255);
+  const int threshold=(2*bayer[y%4][x%4]+1)*255/32;
+  return (((red*31+threshold)/255)<<11) | (((green*63+threshold)/255)<<5) | ((blue*31+threshold)/255);
+}
+static bool decode_artwork(const p4_runtime::AlbumClient::Frame &frame,
+                           uint16_t *&pixels,int output_width,int output_height){
+  if(!frame.data || !previous_pixels || !scratch || frame.size>page_bytes)return false;
+  memcpy(scratch,frame.data,frame.size);
+  const auto size=camera_bitstream(scratch,frame.size);
   jpeg_decode_picture_info_t info{};
   if(!size || jpeg_decoder_get_info(scratch,size,&info)!=ESP_OK || !info.width || !info.height)return false;
   const int mx=info.sample_method==JPEG_DOWN_SAMPLING_YUV420 || info.sample_method==JPEG_DOWN_SAMPLING_YUV422?16:8;
   const int stride=(info.width+mx-1)&~(mx-1);
-  if(2ull*stride*((info.height+15)&~15u)>page_bytes)return false;
-  jpeg_decode_cfg_t cfg{};cfg.output_format=JPEG_DECODE_OUT_FORMAT_RGB565;cfg.rgb_order=panel_jpeg_order;
+  if(3ull*stride*((info.height+15)&~15u)>page_bytes)return false;
+  jpeg_decode_cfg_t cfg{};cfg.output_format=JPEG_DECODE_OUT_FORMAT_YUV444;
   uint32_t written=0;auto engine=decoder();
   if(!engine || jpeg_decoder_process(engine,&cfg,scratch,size,previous_pixels,page_bytes,&written)!=ESP_OK ||
-     written<2u*stride*info.height)return false;
-  if(!out.pixels)out.pixels=static_cast<uint16_t*>(heap_caps_malloc(2*thumbnail_side*thumbnail_side,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
-  if(!out.pixels)return false;
+     written<3u*stride*info.height)return false;
+  if(!pixels)pixels=static_cast<uint16_t*>(heap_caps_malloc(2*output_width*output_height,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+  if(!pixels)return false;
   const int side=std::min(info.width,info.height);
-  const auto *source=reinterpret_cast<const uint16_t*>(previous_pixels);
-  for(int y=0;y<thumbnail_side;y++){
-    const auto *row=source+((info.height-side)/2+y*side/thumbnail_side)*stride+(info.width-side)/2;
-    for(int x=0;x<thumbnail_side;x++)out.pixels[y*thumbnail_side+x]=row[x*side/thumbnail_side];
+  for(int y=0;y<output_height;++y){
+    const int fy=std::clamp(((2*y+1)*side*128)/output_height-128,0,(side-1)*256);
+    const int sy=(info.height-side)/2+(fy>>8),wy=fy&255;
+    const auto *row=previous_pixels+3*(sy*stride+(info.width-side)/2);
+    const auto *next=row+(sy+1<int(info.height)?3*stride:0);
+    for(int x=0;x<output_width;++x){
+      const int fx=std::clamp(((2*x+1)*side*128)/output_width-128,0,(side-1)*256);
+      const int sx=fx>>8,wx=fx&255,right=std::min(sx+1,side-1);
+      int yuv[3];
+      for(int c=0;c<3;++c){
+        const int top=row[3*sx+c]*(256-wx)+row[3*right+c]*wx;
+        const int bottom=next[3*sx+c]*(256-wx)+next[3*right+c]*wx;
+        yuv[c]=(top*(256-wy)+bottom*wy+32768)>>16;
+      }
+      pixels[y*output_width+x]=jpeg_pixel(yuv[0],yuv[1],yuv[2],x,y);
+    }
   }
   return true;
+}
+static bool decode_library_thumbnail(const p4_runtime::AlbumClient::Frame &f,Thumbnail &out){
+  return decode_artwork(f,out.pixels,thumbnail_side,thumbnail_side);
 }
 static void load_library_thumbnail(){
   if(!thumbnail_client.initialized())return;
@@ -3845,32 +4016,9 @@ static void update_cover(){
   }
   p4_runtime::AlbumClient::Frame f;
   if(album_client.take(f)){
-    if(f.version==cover_generation && f.data && previous_pixels && scratch){
-      memcpy(scratch,f.data,f.size);
-      const auto bytes=camera_bitstream(scratch,f.size);
-      jpeg_decode_picture_info_t info{};
-      if(bytes && jpeg_decoder_get_info(scratch,bytes,&info)==ESP_OK && info.width && info.height &&
-         info.width<=1280 && info.height<=1280){
-        auto engine=decoder();jpeg_decode_cfg_t cfg{};cfg.output_format=JPEG_DECODE_OUT_FORMAT_RGB565;cfg.rgb_order=panel_jpeg_order;
-        const int mx=(info.sample_method==JPEG_DOWN_SAMPLING_YUV420 || info.sample_method==JPEG_DOWN_SAMPLING_YUV422)?16:8;
-        const int stride=(info.width+mx-1)&~(mx-1);
-        uint32_t written=0;
-        if(engine && 2u*stride*((info.height+15)&~15u)<=page_bytes &&
-           jpeg_decoder_process(engine,&cfg,scratch,bytes,previous_pixels,page_bytes,&written)==ESP_OK &&
-           written>=2u*stride*info.height){
-          if(!cover_pixels)cover_pixels=static_cast<uint16_t*>(heap_caps_malloc(2*album_rect.w*album_rect.h,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
-          if(cover_pixels){
-            const int side=std::min(info.width,info.height);
-            const auto *src=reinterpret_cast<const uint16_t*>(previous_pixels);
-            for(int y=0;y<album_rect.h;y++){
-              const auto *row=src+((info.height-side)/2+y*side/album_rect.h)*stride+(info.width-side)/2;
-              for(int x=0;x<album_rect.w;x++)cover_pixels[y*album_rect.w+x]=row[x*side/album_rect.w];
-            }
-            cover_speaker=selected_speaker;cover_picture=player().picture;
-            cover_ready=true;changed=true;ESP_LOGD("study","Album artwork decoded %ux%u",info.width,info.height);
-          }
-        }
-      }
+    if(f.version==cover_generation && decode_artwork(f,cover_pixels,album_rect.w,album_rect.h)){
+      cover_speaker=selected_speaker;cover_picture=player().picture;
+      cover_ready=true;changed=true;ESP_LOGD("study","Album artwork decoded");
     }
     heap_caps_free(f.data);
   }
@@ -3961,7 +4109,13 @@ static bool draw_jpeg(const uint8_t *data,size_t size) {
   const unsigned mx=info.sample_method==JPEG_DOWN_SAMPLING_YUV420 || info.sample_method==JPEG_DOWN_SAMPLING_YUV422?16:8;
   const unsigned my=info.sample_method==JPEG_DOWN_SAMPLING_YUV420?16:8;
   const unsigned stride=(info.width+mx-1)&~(mx-1);
-  const size_t need=2*stride*((info.height+my-1)&~(my-1));
+  const size_t pixel_count=stride*((info.height+my-1)&~(my-1));
+  bool full_range=false;
+#ifdef STUDY_LIVE
+  full_range=pulled_video && 3*pixel_count<=page_bytes;
+  if(full_range)cfg.output_format=JPEG_DECODE_OUT_FORMAT_YUV444;
+#endif
+  const size_t need=(full_range?3:2)*pixel_count;
   size_t capacity=page_bytes;
   uint8_t *decoded=previous_pixels;
   uint8_t *output=exact?previous_pixels:scratch;
@@ -3979,6 +4133,14 @@ static bool draw_jpeg(const uint8_t *data,size_t size) {
   }
 #ifdef STUDY_LIVE
   if(ok && pulled_video && page_pixels){
+    if(full_range){
+      // Forward conversion safely shrinks three-byte V/U/Y pixels in place.
+      auto *pixels=reinterpret_cast<uint16_t*>(decoded);
+      for(unsigned y=0;y<info.height;++y)for(unsigned x=0;x<stride;++x){
+        const size_t i=y*stride+x;
+        pixels[i]=jpeg_pixel(decoded[3*i],decoded[3*i+1],decoded[3*i+2],x,y);
+      }
+    }
     const bool presented=present_camera_pixels(reinterpret_cast<const uint16_t*>(decoded),info.width,info.height,stride);
     if(allocated)free(decoded);
     return presented;

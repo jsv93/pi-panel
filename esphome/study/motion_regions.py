@@ -14,7 +14,7 @@ def lamp_regions(manifest, artwork):
     variations=Image.new("RGB",base.size)
     for i,key in enumerate(("reading","slider")):
         reference=pixels(manifest["patches"][0][i])
-        rect=manifest[key]
+        rect=manifest.get("slider_paint",manifest["slider"]) if key=="slider" else manifest[key]
         x,y=rect["x"],rect["y"]
         changes=ImageChops.difference(reference,lamp.crop((x,y,x+reference.width,y+reference.height)))
         for patch in manifest["patches"]:

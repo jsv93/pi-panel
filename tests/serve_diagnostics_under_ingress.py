@@ -9,7 +9,7 @@ pid='diagnostics-qa'
 db.upsert_panel(pid,'Study QA','00:11:22:33:44:55','192.0.2.15','pi','qa-fixture')
 if not db.get_panel(pid)['claimed']:
     db.claim(pid,'Study','default')
-db.claim_panel_token(pid,'qa-device-token','qa-signing-key','test')
+db.claim_panel_token(pid,'qa-device-token-'+'t'*32,'qa-signing-key-'+'s'*32,'test')
 db.touch(pid,{'cpu_temp':46,'ram_used_mb':448,'ram_total_mb':1024,'ram_used_pct':43.8,
               'ha_connected':True,'browser_health':'Healthy','presence':'Ready',
               'disk_free':'82%','backlight':'180 / 255','bluetooth_status':'Running'},db.latest_version(pid))

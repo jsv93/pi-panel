@@ -1,5 +1,7 @@
 #pragma once
 #include "config_store.h"
+#include "fleet_socket.h"
+#include "telemetry.h"
 #include "esphome/components/network/util.h"
 #include <esp_http_client.h>
 #include <esp_crt_bundle.h>
@@ -60,6 +62,10 @@ template<typename Profile> class FleetClient {
   }
   const Profile &active()const{return active_;}
   bool online()const{return online_.load();}
+  FleetSocket::Action take_action(){return socket_.take_action();}
+  void display_metrics(float rendered_fps,float refresh_hz,int backlight){
+    rendered_fps_=rendered_fps;refresh_hz_=refresh_hz;backlight_=backlight;
+  }
   enum class Edit {membership,preset,display};
   bool submit(Edit edit,const std::string &body){
     if(!task_ || !changes_ || !online_ || pending_ || body.size()>=sizeof(Change::body))return false;
@@ -78,7 +84,6 @@ template<typename Profile> class FleetClient {
   bool tick(bool ha_connected){
     ha_connected_.store(ha_connected);
     if(latest_ && !task_ && esphome::network::is_connected()){
-      esphome::network::get_ip_addresses()[0].str_to(ip_);
       xTaskCreate(worker,"p4_fleet",12288,this,1,&task_);
     }
     Update update{};
@@ -102,13 +107,26 @@ template<typename Profile> class FleetClient {
   QueueHandle_t latest_{};
   TaskHandle_t task_{};
   std::atomic<bool> ha_connected_{false};
+  std::atomic<float> rendered_fps_{0},refresh_hz_{0};
+  std::atomic<int> backlight_{-1};
+  FleetSocket socket_;
+  Telemetry telemetry_;
   char ip_[48]{};
   std::string last_signature_;
   static void worker(void *ptr){static_cast<FleetClient*>(ptr)->run();}
   void run(){
     bool registered=false;
     int version=active_.version;
+    telemetry_.begin();
     for(;;){
+      char address[48]{};
+      esphome::network::get_ip_addresses()[0].str_to(address);
+      if(strcmp(address,ip_)){
+        snprintf(ip_,sizeof(ip_),"%s",address);
+        registered=false;
+      }
+      socket_.maintain();
+      const bool sync=socket_.take_sync();
       int edited_version=0;
       Change c{};
       if(changes_ && xQueueReceive(changes_,&c,0)==pdTRUE){
@@ -130,17 +148,32 @@ template<typename Profile> class FleetClient {
         auto r=request(settings_,"/api/register",identity);
         Json answer(cJSON_Parse(r.body.c_str()),cJSON_Delete);
         registered=r.status==200 && answer && !strcmp(field(answer.get(),"token"),"active");
+        if(!registered)online_=false;
       }
       if(registered){
-        const std::string heartbeat=std::string("{\"panel_id\":\"")+settings_.id+
-          "\",\"config_version\":"+std::to_string(version)+",\"metrics\":{\"ha_connected\":"+
-          (ha_connected_.load()?"true":"false")+"}}";
+        socket_.begin(settings_.url,settings_.id,settings_.token);
+        Json metrics(cJSON_CreateObject(),cJSON_Delete);
+        telemetry_.sample(metrics.get());
+        cJSON_AddBoolToObject(metrics.get(),"ha_connected",ha_connected_.load());
+        cJSON_AddStringToObject(metrics.get(),"renderer","native-p4");
+        cJSON_AddNumberToObject(metrics.get(),"render_fps",rendered_fps_.load());
+        cJSON_AddNumberToObject(metrics.get(),"display_refresh_hz",refresh_hz_.load());
+        if(backlight_>=0){
+          const auto brightness=std::to_string(backlight_.load())+"%";
+          cJSON_AddStringToObject(metrics.get(),"backlight",brightness.c_str());
+        }
+        char *serialized=cJSON_PrintUnformatted(metrics.get());
+        const std::string sample=serialized?serialized:"{}";cJSON_free(serialized);
+        const std::string heartbeat=std::string("{\"type\":\"heartbeat\",\"panel_id\":\"")+settings_.id+
+          "\",\"config_version\":"+std::to_string(version)+",\"metrics\":"+sample+"}";
+        socket_.send(heartbeat);
         auto h=request(settings_,"/api/heartbeat",heartbeat);
         online_=h.status==200;
+        if(online_)request(settings_,"/api/performance/"+std::string(settings_.id),sample);
         if(h.status==401 || h.status==404)registered=false;
         Json ack(cJSON_Parse(h.body.c_str()),cJSON_Delete);
         auto *want=ack?cJSON_GetObjectItemCaseSensitive(ack.get(),"config_version"):nullptr;
-        if(h.status==200 && cJSON_IsNumber(want) && (want->valueint!=version || last_signature_.empty())){
+        if(h.status==200 && cJSON_IsNumber(want) && (sync || want->valueint!=version || last_signature_.empty())){
           auto r=request(settings_,"/api/config/"+std::string(settings_.id));
           if(r.status==200 && r.signature.empty() && !unpack_legacy(r.body,r.signature)){
             ESP_LOGW("p4_fleet","Unsupported legacy signed configuration");
@@ -158,7 +191,7 @@ template<typename Profile> class FleetClient {
         }
       }
       if(edited_version)result_=version>=edited_version?1:-1;
-      ulTaskNotifyTake(pdTRUE,pdMS_TO_TICKS(15000));
+      ulTaskNotifyTake(pdTRUE,pdMS_TO_TICKS(5000));
     }
   }
 };

@@ -4,6 +4,7 @@
 #include <esp_netif.h>
 #include <esp_timer.h>
 #include <esp_event.h>
+#include "esphome/components/network/util.h"
 #include <atomic>
 #include <algorithm>
 #include <array>
@@ -56,6 +57,9 @@ class WifiClient {
     if(ready_)return true;
     if(!station_)station_=esp_netif_create_default_wifi_sta();
     if(!station_)return false;
+    // Publish only after the network stack has created the interface. Early
+    // connectivity checks must not call lwIP IPC before stack initialisation.
+    esphome::network::study_station_netif.store(station_);
     if(!disconnect_handler_ && esp_event_handler_instance_register(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,
       [](void *self,esp_event_base_t,int32_t,void *event){
         if(event)static_cast<WifiClient*>(self)->disconnect_reason_=static_cast<wifi_event_sta_disconnected_t*>(event)->reason;

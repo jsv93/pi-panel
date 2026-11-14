@@ -3,6 +3,7 @@
 #include "motion_tail.h"
 #include "esp_partition.h"
 #include "esp_heap_caps.h"
+#include "esp_attr.h"
 #include "esphome/core/application.h"
 #include "mbedtls/sha256.h"
 #include <algorithm>
@@ -112,7 +113,7 @@ class PaletteRenderer {
     if(!expand(palette_labels[selected_],scratch,page_bytes))return;
     for(int y=0;y<r.h;y++)memcpy(frame+(r.y+y)*width+r.x,scratch+2*y*r.w,2*r.w);
   }
-  void render(uint16_t *frame,int x,int y,int w,int h,bool exact)const{
+  void IRAM_ATTR __attribute__((optimize("O3"))) render(uint16_t *frame,int x,int y,int w,int h,bool exact)const{
     if(!selected_)return;
     for(int row=y;row<y+h;row++){
       if((row&63)==0)esphome::App.feed_wdt();

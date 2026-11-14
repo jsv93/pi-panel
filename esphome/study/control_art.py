@@ -188,6 +188,8 @@ def capture(config, states, dest):
         for selector in ("#archMenu",'#archRoomLinks [data-sheet=settings]',
                          '#archSettingsLinks [data-sheet=scene-edit]'):
             page.locator(selector).evaluate("e=>e.click()");page.wait_for_timeout(320)
+        back_area=(0,0,720,130)
+        page_backs=[sprite(Image.open(io.BytesIO(page.screenshot())),back_area)]
         view_names=[v["name"] for v in pages]
         table("int","edit_page",view_names.index("scene-edit"))
         table("int","members_page",view_names.index("scene-members"))
@@ -205,6 +207,10 @@ def capture(config, states, dest):
         table("Sprite","save_feedback[][2]",variants)
         page.locator('#s-scene-edit [data-sheet=scene-members]').evaluate("e=>e.click()")
         page.wait_for_timeout(320)
+        page_backs.append(sprite(Image.open(io.BytesIO(page.screenshot())),back_area))
+        tables.append("#define STUDY_PAGE_CRUMBS 1")
+        table("Rect","page_back",back_area)
+        table("Sprite","page_backs[]",page_backs)
         rows=[box(page,f"#archMembers button:nth-child({i+1})") for i in range(n)]
         table("Rect","member_buttons[]",rows)
         areas=[(x+w-190,y,190,h) for x,y,w,h in rows]
@@ -216,6 +222,7 @@ def capture(config, states, dest):
               row.setAttribute('aria-pressed',String(Boolean(s%2)));
               row.querySelector('.v').textContent=s>=2?'not saved':'';
             })""",state)
+            page.wait_for_timeout(250)
             im=Image.open(io.BytesIO(page.screenshot()))
             choices.append([sprite(im,r) for r in areas])
         table("Sprite","membership_modes[][light_count]",choices)

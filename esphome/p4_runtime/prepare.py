@@ -158,6 +158,15 @@ def main():
         f"constexpr unsigned volume_offset={volume_offset},volume_size={len(volume)};\n"
         f"constexpr unsigned char volume_sha[]={{{volume_sha}}};\n{text_settings}}}\n")
     source = (args.build / "study.yaml").read_text(encoding="utf-8")
+    artwork_header = args.build / "study_assets.h"
+    artwork_source = artwork_header.read_text(encoding="utf-8")
+    if "slider_paint=" not in artwork_source:
+        artwork_header.write_text(artwork_source + "\nnamespace study { constexpr auto slider_paint=slider; }\n",encoding="utf-8")
+    if args.architectural_only:
+        import sys
+        sys.path.insert(0,str(Path(__file__).parent.parent / "study"))
+        from identify_art import generate as generate_identify
+        generate_identify(config,args.build)
     if args.production:
         source = re.sub(r"(?ms)^    - action: (?:navigation_demo|lamp_demo)\n.*?(?=^    - action:|^\S|\Z)", "", source)
     source = source.replace("          for (const auto &p : touches) {",
@@ -176,7 +185,8 @@ def main():
         source=source.replace(", study.h",", palette_assets.h, study.h",1)
     source=source.replace("  includes:", "  platformio_options:\n    build_flags: [-DUSE_API_HOMEASSISTANT_ACTION_RESPONSES, -DUSE_API_HOMEASSISTANT_ACTION_RESPONSES_ERRORS, -DUSE_API_HOMEASSISTANT_ACTION_RESPONSES_JSON]\n  includes:",1)
     if args.architectural_only:
-        source=source.replace("build_flags: [","build_flags: [-DSTUDY_ARCHITECTURAL_ONLY,",1)
+        source=source.replace("build_flags: [","build_flags: [-DSTUDY_IDENTIFY, -DSTUDY_ARCHITECTURAL_ONLY,",1)
+        source=source.replace("  includes: [","  includes: [identify_assets.h, ",1)
         # The motion and palette banks remain memory mapped from NOR. During
         # an NVS erase, both cores must stop reading NOR, including the page
         # decoder on the second core. IDF's PSRAM XiP profile skips that guard.
@@ -185,6 +195,10 @@ def main():
         # meet the SDMMC driver's external-memory cache-line alignment.
         source=source.replace('CONFIG_CACHE_L2_CACHE_LINE_128B: "y"', 'CONFIG_CACHE_L2_CACHE_LINE_64B: "y"')
     source+="\njson:\n"
+    # Initialise network interfaces before allocating the optional renderer
+    # workers and restoring the palette. Physical display setup still runs
+    # at 400. Starting the UI at 230 requires no network connection.
+    source=source.replace("    - priority: 400\n", "    - priority: 230\n",1)
     if args.hosted_wifi:
         import esphome.components.network as network_component
         network_dir=args.build/"bench_components/network"
@@ -195,9 +209,11 @@ def main():
             if contents.count(old)!=1:raise ValueError(f"Unexpected ESPHome network component in {filename}")
             path.write_text(contents.replace(old,new),encoding="utf8")
         network_patch("util.h","namespace esphome::network {",'''#include <esp_netif.h>
+#include <atomic>
 namespace esphome::network {
+inline std::atomic<esp_netif_t*> study_station_netif{nullptr};
 inline bool study_station_ip(esp_netif_ip_info_t &info){
-  auto *netif=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+  auto *netif=study_station_netif.load();
   return netif && esp_netif_is_netif_up(netif) && esp_netif_get_ip_info(netif,&info)==ESP_OK && info.ip.addr;
 }''')
         network_patch("util.h","inline bool is_connected() {","inline bool is_connected() {\n  esp_netif_ip_info_t info{};if(study_station_ip(info))return true;")
@@ -211,8 +227,7 @@ inline bool study_station_ip(esp_netif_ip_info_t &info){
   }''')
         source=source.replace("components: [mipi_dsi]","components: [mipi_dsi, network]")
         source=source.replace("build_flags: [","build_flags: [-DSTUDY_EXTERNAL_TEXT, ",1)
-        # Display setup runs at 400. The default network event loop is created
-        # later at 300, and the hosted radio must also finish setup first.
+        # The hosted radio restores its station after component setup.
         source=source.replace("  on_boot:\n","  on_boot:\n    - priority: -100\n      then:\n        - lambda: 'study::station.restore();'\n",1)
         source+="""\nesp32_hosted:
   type: sdio
@@ -227,7 +242,13 @@ inline bool study_station_ip(esp_netif_ip_info_t &info){
   d3_pin: GPIO17
   use_psram: true
 """
-    source = source.replace("esp_driver_jpeg, esp_driver_ppa]", "esp_driver_jpeg, esp_driver_ppa, esp_http_client, json, nvs_flash]")
+    source = source.replace("esp_driver_jpeg, esp_driver_ppa]", "esp_driver_jpeg, esp_driver_ppa, esp_http_client, json, nvs_flash, esp_driver_tsens]")
+    source = source.replace("    type: esp-idf\n", "    type: esp-idf\n    components: [espressif/esp_websocket_client==1.4.0]\n", 1)
+    source = source.replace("    sdkconfig_options:\n", '''    sdkconfig_options:
+      CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS: "y"
+      CONFIG_FREERTOS_USE_TRACE_FACILITY: "y"
+      CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER: "y"
+''', 1)
     if args.card_assets:
         study=Path(__file__).parent.parent/"study"
         for name in ("card_assets.h","card_lights.h"):

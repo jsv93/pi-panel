@@ -4,6 +4,7 @@
 #include <cmath>
 #include "esphome/core/time.h"
 #include <esp_timer.h>
+#include <sys/time.h>
 
 namespace p4_runtime {
 // Transport goes directly through the encrypted HA connection. Never replay
@@ -20,7 +21,8 @@ class MediaClient {
   double position()const{
     double age=playing?(esp_timer_get_time()-position_at_)/1e6:0;
     if(playing && updated_at_>0){
-      const double reported=difftime(::time(nullptr),updated_at_);
+      timeval wall{};gettimeofday(&wall,nullptr);
+      const double reported=double(wall.tv_sec)+wall.tv_usec/1e6-updated_at_;
       if(reported>=0 && reported<86400)age=reported;
     }
     return std::clamp(reported_position_+age,0.,double(duration));
@@ -63,7 +65,14 @@ class MediaClient {
       auto zone=timestamp.find_first_of("+-",19);int hours=0,minutes=0;
       if(zone!=std::string::npos && sscanf(timestamp.c_str()+zone+1,"%2d:%2d",&hours,&minutes)==2)
         parsed.timestamp+=(timestamp[zone]=='+'?-1:1)*(hours*3600+minutes*60);
-      updated_at_=parsed.timestamp;dirty=true;
+      updated_at_=parsed.timestamp;
+      if(timestamp.size()>20 && timestamp[19]=='.'){
+        double scale=.1;
+        for(size_t i=20;i<timestamp.size() && timestamp[i]>='0' && timestamp[i]<='9';++i){
+          updated_at_+=(timestamp[i]-'0')*scale;scale*=.1;
+        }
+      }
+      dirty=true;
     });
     api->subscribe_home_assistant_state(speaker_,"supported_features",[this](esphome::StringRef s){
       can_seek=(esphome::parse_number<unsigned>(s.str()).value_or(0)&16)!=0;dirty=true;
@@ -148,7 +157,7 @@ class MediaClient {
  private:
   double reported_position_=0;
   int64_t position_at_=0;
-  time_t updated_at_=0;
+  double updated_at_=0;
   bool send_value(const char *service,const char *key,const std::string &value){
     auto *api=esphome::api::global_api_server;
     if(!api->is_connected_with_state_subscription())return false;

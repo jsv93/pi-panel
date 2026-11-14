@@ -136,6 +136,7 @@ with (D/"study_assets.h").open("w",encoding="ascii") as h:
     h.write("};\nconstexpr Sprite patches[][2] = {"+",".join(values(map(sprite,pair)) for pair in patches)+"};\n")
     for name in ("reading","slider"):
         h.write("constexpr Rect "+name+"="+rect(m[name])+";\n")
+    h.write("constexpr Rect slider_paint="+rect(m.get("slider_paint",m["slider"]))+";\n")
     for name in ("home","idle","doorbell","scenes","lights","media","light0"):
         h.write(f"constexpr int {name}={names.index(name)};\n")
     for key in ("room-menu","diagnostics","settings"):
