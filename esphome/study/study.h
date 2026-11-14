@@ -68,6 +68,7 @@ extern "C" size_t tinfl_decompress_mem_to_mem(void *, size_t, const void *, size
 namespace study {
 using esphome::display::Display;
 static Display *lcd;
+static bool startup_ready=false,startup_retry=false;
 static uint8_t *scratch;
 static int current=home, history[24], depth=0;
 static int levels[light_count];
@@ -262,6 +263,7 @@ static void request_popup_motion(bool ground=false){
 #endif
 }
 static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
+  if(!pixels)return false;
 #ifdef STUDY_CARD_ART
   if(card_switching)return true;
 #endif
@@ -1620,6 +1622,7 @@ static void paint_level(int value,bool update_display=true) {
   draw_patch(patches[value][1],slider_paint,update_display);
 }
 static void animate() {
+  if(!startup_ready)return;
 #ifdef STUDY_LIVE
 #ifdef STUDY_IDENTIFY
   if(clock_ms()<identify_until){
@@ -1723,6 +1726,7 @@ static void animate() {
   ++motion_frames;
 }
 static void show(int dest,int shift=14) {
+  if(!startup_ready)return;
 #ifdef STUDY_SD_NAVIGATION
   popup_motion.cancel();
 #endif
@@ -2683,8 +2687,11 @@ static void apply_screen_profile(const ScreenChoices &screen,bool render){
 }
 #endif
 static void begin(Display *display) {
+  if(startup_ready)return;
   lcd=display;
 #ifdef STUDY_LIVE
+  static bool connected=false;
+  if(!connected){room_start();connected=true;}
   const auto *part=esp_partition_find_first(ESP_PARTITION_TYPE_DATA,static_cast<esp_partition_subtype_t>(0x40),"motion");
   static esp_partition_mmap_handle_t volume_mapping;
   const void *mapped=nullptr;unsigned char digest[32];
@@ -2692,8 +2699,20 @@ static void begin(Display *display) {
   if(!palette.begin(part))ESP_LOGW("study","Palette bank unavailable");
 #endif
 #ifdef STUDY_SD_ONLY
-  volume_art=load_local_bank(local_volume);
-  if(!volume_art){ESP_LOGE("study","Local volume artwork missing");return;}
+  // Complete the retryable SD stage before allocating render buffers or
+  // starting their workers. Keep the encrypted API/fleet alive on failure.
+  startup_retry=true;
+  if(!volume_art)volume_art=load_local_bank(local_volume);
+  if(!volume_art || !palette.available()){ESP_LOGE("study","Local artwork unavailable; retrying");return;}
+  if(!text_art){
+    auto *encoded=load_local_bank(local_text);
+    auto *decoded=encoded?static_cast<uint8_t*>(heap_caps_malloc(text_bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)):nullptr;
+    const bool okay=decoded && tinfl_decompress_mem_to_mem(decoded,text_bytes,encoded,text_packed_size,1)==text_bytes;
+    heap_caps_free(encoded);
+    if(!okay){heap_caps_free(decoded);ESP_LOGE("study","Local text artwork unavailable; retrying");return;}
+    text_art=decoded;
+  }
+  startup_retry=false;
 #else
   if(part && esp_partition_mmap(part,volume_offset,volume_size,ESP_PARTITION_MMAP_DATA,&mapped,&volume_mapping)==ESP_OK &&
      !mbedtls_sha256(static_cast<const uint8_t*>(mapped),volume_size,digest,0) && !memcmp(digest,volume_sha,sizeof(digest)))
@@ -2706,12 +2725,12 @@ static void begin(Display *display) {
     ESP_LOGE("study","Page art allocation or decoding failed");return;
   }
 #ifdef STUDY_LIVE
+#ifndef STUDY_SD_ONLY
   text_art=static_cast<uint8_t*>(heap_caps_malloc(text_bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+#endif
 #ifdef STUDY_EXTERNAL_TEXT
 #ifdef STUDY_SD_ONLY
-  auto *encoded=load_local_bank(local_text);
-  const bool text_ok=encoded && text_art && tinfl_decompress_mem_to_mem(text_art,text_bytes,encoded,text_packed_size,1)==text_bytes;
-  heap_caps_free(encoded);
+  const bool text_ok=text_art!=nullptr;
 #else
   const void *encoded=nullptr;
   esp_partition_mmap_handle_t text_mapping{};
@@ -2747,7 +2766,6 @@ static void begin(Display *display) {
   }
 #ifdef STUDY_LIVE
   std::fill_n(levels,light_count,-1);
-  room_start();
   load_display_choice();
 #ifdef STUDY_SCREEN_OPTIONS
   apply_screen_profile(fleet.active().screen,false);
@@ -2767,6 +2785,10 @@ static void begin(Display *display) {
   std::copy_n(initial,light_count,levels);
 #endif
   const int64_t start=clock_ms();
+  if(!scratch || (lcd && (!page_pixels || !previous_pixels || (!scanout.active && !mixed_pixels)))){
+    ESP_LOGE("study","Display buffers unavailable");return;
+  }
+  startup_ready=true;
   show(home);
 #ifdef STUDY_CARD_ART
   if(lcd)card_assets_ready();
@@ -2997,6 +3019,7 @@ template<class Touches> static bool observe_touches(const Touches &touches){
 }
 #endif
 static void touch(int x,int y) {
+  if(!startup_ready)return;
   bench_demo=false;
 #ifdef STUDY_LIVE
   last_activity=clock_ms();
@@ -3253,6 +3276,7 @@ static void touch(int x,int y) {
   }
 }
 static void release() {
+  if(!startup_ready)return;
 #ifdef STUDY_CARD_BELL
   if(pressed==-163){
     down=false;pressed=-2;
@@ -3725,6 +3749,7 @@ static void release() {
   down=false;dragging=false;pressed=-2;
 }
 static void ring() {
+  if(!startup_ready)return;
   bench_demo=false;
 #ifdef STUDY_LIVE
   climate_drag=false;climate_preview=NAN;preview_brightness=-1;
@@ -3790,6 +3815,24 @@ static bool start_navigation_demo(){
   navigation_demo=bench_demo=true;demo_step=0;demo_at=clock_ms();return true;
 }
 static void tick() {
+#ifdef STUDY_SD_ONLY
+  static int64_t next_art_retry=30000;
+  if(clock_ms()>=next_art_retry){
+    next_art_retry=clock_ms()+30000;
+    if(!navigation_artwork.ready())navigation_artwork.warm();
+    if(!home_zoom_artwork.ready())home_zoom_artwork.warm();
+    if(!overlay_artwork.ready())overlay_artwork.warm();
+  }
+#endif
+  if(!startup_ready){
+#ifdef STUDY_LIVE
+    fleet.tick(ha_connected());
+    if(fleet.take_action()==p4_runtime::FleetSocket::Action::restart)esphome::App.safe_reboot();
+#endif
+    static int64_t next_start=0;
+    if(startup_retry && clock_ms()>=next_start){next_start=clock_ms()+10000;begin(lcd);}
+    return;
+  }
 #ifdef STUDY_LIVE
   if(identify_until){
     if(clock_ms()<identify_until){apply_brightness();return;}
@@ -4382,6 +4425,7 @@ static bool IRAM_ATTR __attribute__((optimize("O3"))) draw_jpeg(const uint8_t *d
   return presented;
 }
 static bool frame(const std::string &encoded) {
+  if(!startup_ready)return false;
   if(!scratch || current!=doorbell || encoded.empty() || encoded.size()>60000)return false;
   size_t bytes=0;
   if(mbedtls_base64_decode(scratch,45000,&bytes,reinterpret_cast<const unsigned char*>(encoded.data()),encoded.size())!=0)return false;

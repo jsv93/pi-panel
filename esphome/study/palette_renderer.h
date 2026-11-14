@@ -70,6 +70,7 @@ class PaletteRenderer {
   }
  public:
   bool begin(const esp_partition_t *part){
+    if(data_)return true;
 #ifdef STUDY_SD_ONLY
     data_=load_local_bank(local_palette);
     return data_!=nullptr;

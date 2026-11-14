@@ -7,6 +7,7 @@
 #include "mbedtls/sha256.h"
 #include "esp_heap_caps.h"
 #include "esp_task_wdt.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <algorithm>
@@ -23,6 +24,7 @@ class CardArt {
   inline static sdmmc_card_t *card_=nullptr;
   inline static sd_pwr_ctrl_handle_t power_=nullptr;
   inline static std::mutex mount_mutex_;
+  inline static int64_t retry_mount_at_=0;
   int file_=-1;
   uint8_t *read_buffer_=nullptr;
   static constexpr size_t read_block_size=8192;
@@ -121,22 +123,30 @@ class CardArt {
   bool mount(){
     const std::lock_guard<std::mutex> lock(mount_mutex_);
     if(card_)return true;
-    sd_pwr_ctrl_ldo_config_t ldo{};ldo.ldo_chan_id=4;
-    const auto powered=sd_pwr_ctrl_new_on_chip_ldo(&ldo,&power_);
-    if(powered!=ESP_OK){ESP_LOGW("study_card","SD power setup failed: %s",esp_err_to_name(powered));return false;}
-    sdmmc_host_t host=SDMMC_HOST_DEFAULT();
-    host.slot=SDMMC_HOST_SLOT_0;host.max_freq_khz=SDMMC_FREQ_DEFAULT;
-    host.pwr_ctrl_handle=power_;
-    sdmmc_slot_config_t slot=SDMMC_SLOT_CONFIG_DEFAULT();
-    slot.width=4;slot.clk=GPIO_NUM_43;slot.cmd=GPIO_NUM_44;
-    slot.d0=GPIO_NUM_39;slot.d1=GPIO_NUM_40;slot.d2=GPIO_NUM_41;slot.d3=GPIO_NUM_42;
-    slot.flags|=SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
-    esp_vfs_fat_mount_config_t options{};
-    options.format_if_mount_failed=false;options.max_files=12;
-    auto result=esp_vfs_fat_sdmmc_mount("/sd",&host,&slot,&options,&card_);
-    if(result==ESP_OK)return true;
-    card_=nullptr;sd_pwr_ctrl_del_on_chip_ldo(power_);power_=nullptr;
-    ESP_LOGW("study_card","Card mount failed: %s",esp_err_to_name(result));
+    if(esp_timer_get_time()<retry_mount_at_)return false;
+    // Retry transient initialization failures on this slot without resetting
+    // the shared hosted-radio controller or formatting the card.
+    for(unsigned attempt=0;attempt<3;++attempt){
+      sd_pwr_ctrl_ldo_config_t ldo{};ldo.ldo_chan_id=4;
+      const auto powered=sd_pwr_ctrl_new_on_chip_ldo(&ldo,&power_);
+      if(powered!=ESP_OK){ESP_LOGW("study_card","SD power setup failed: %s",esp_err_to_name(powered));return false;}
+      sdmmc_host_t host=SDMMC_HOST_DEFAULT();
+      host.slot=SDMMC_HOST_SLOT_0;host.max_freq_khz=SDMMC_FREQ_DEFAULT;
+      host.pwr_ctrl_handle=power_;
+      sdmmc_slot_config_t slot=SDMMC_SLOT_CONFIG_DEFAULT();
+      slot.width=4;slot.clk=GPIO_NUM_43;slot.cmd=GPIO_NUM_44;
+      slot.d0=GPIO_NUM_39;slot.d1=GPIO_NUM_40;slot.d2=GPIO_NUM_41;slot.d3=GPIO_NUM_42;
+      slot.flags|=SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
+      esp_vfs_fat_mount_config_t options{};
+      options.format_if_mount_failed=false;options.max_files=12;
+      auto result=esp_vfs_fat_sdmmc_mount("/sd",&host,&slot,&options,&card_);
+      if(result==ESP_OK)return true;
+      card_=nullptr;sd_pwr_ctrl_del_on_chip_ldo(power_);power_=nullptr;
+      ESP_LOGW("study_card","Card mount failed: %s",esp_err_to_name(result));
+      if(esp_task_wdt_status(nullptr)==ESP_OK)esp_task_wdt_reset();
+      vTaskDelay(pdMS_TO_TICKS(250));
+    }
+    retry_mount_at_=esp_timer_get_time()+5000000;
     return false;
   }
   bool space(uint64_t &total,uint64_t &free)const{
