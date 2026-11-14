@@ -3,15 +3,23 @@
 #include "card_art.h"
 #include "esp_timer.h"
 #include <atomic>
+#include "../study_lz4/lz4.h"
 
 namespace study {
 class NavigationArtwork {
-  struct Frame {uint32_t offset,bytes;};
+  struct Frame {uint32_t offset,bytes;
+#ifdef STUDY_NAV_LZ4
+    uint32_t raw;
+#endif
+  };
   static constexpr unsigned frames_per_route=10;
   static constexpr unsigned tiles_per_page=(720/16)*(1280/8);
   static constexpr size_t index_count=6*sd_navigation_routes*frames_per_route;
   CardArt file_;
   Frame *frames_=nullptr;
+#ifdef STUDY_NAV_LZ4
+  uint8_t *packed_=nullptr;
+#endif
   std::atomic<int> state_{0};
   std::atomic<uint32_t> retry_at_{0};
 
@@ -24,7 +32,14 @@ class NavigationArtwork {
       const auto &frame=frames[i];
       valid=frame.offset>=first_frame && frame.offset<=sd_navigation_size && frame.bytes &&
             frame.bytes<=sd_navigation_max_frame && frame.bytes<=sd_navigation_size-frame.offset;
+#ifdef STUDY_NAV_LZ4
+      valid=valid && frame.bytes<=sd_navigation_max_stored && frame.raw && frame.raw<=sd_navigation_max_frame;
+#endif
     }
+#ifdef STUDY_NAV_LZ4
+    if(valid && !packed_)packed_=static_cast<uint8_t*>(heap_caps_malloc(sd_navigation_max_stored,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+    valid=valid && packed_;
+#endif
     if(!valid){heap_caps_free(frames);file_.close();return false;}
     frames_=frames;
     return true;
@@ -52,13 +67,23 @@ class NavigationArtwork {
   }
   unsigned frame_size(unsigned palette,unsigned route,unsigned phase)const{
     if(!ready() || palette>=6 || route>=sd_navigation_routes || phase>=frames_per_route)return 0;
-    return frames_[(palette*sd_navigation_routes+route)*frames_per_route+phase].bytes;
+    const auto &frame=frames_[(palette*sd_navigation_routes+route)*frames_per_route+phase];
+#ifdef STUDY_NAV_LZ4
+    return frame.raw;
+#else
+    return frame.bytes;
+#endif
   }
   bool frame(unsigned palette,unsigned route,unsigned phase,uint8_t *destination,size_t capacity){
     const auto bytes=frame_size(palette,route,phase);
     if(!bytes || bytes>capacity)return false;
     const auto &frame=frames_[(palette*sd_navigation_routes+route)*frames_per_route+phase];
+#ifdef STUDY_NAV_LZ4
+    return file_.read(frame.offset,packed_,frame.bytes) &&
+      LZ4_decompress_safe(reinterpret_cast<const char*>(packed_),reinterpret_cast<char*>(destination),frame.bytes,frame.raw)==int(frame.raw);
+#else
     return file_.read(frame.offset,destination,bytes);
+#endif
   }
   bool hashes(unsigned palette,unsigned page,uint32_t *destination){
     if(!ready() || palette>=6 || page>=sd_navigation_pages)return false;

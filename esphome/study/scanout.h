@@ -19,7 +19,7 @@ class Scanout {
   }
   struct Slot {
     uint8_t *pixels{};
-    uint32_t safe_after{}, page{};
+    uint32_t safe_after{}, page{},fixed_page{};
     bool lamp_background=false;
     uint8_t *overlay_background{};
     bool has_overlay=false;

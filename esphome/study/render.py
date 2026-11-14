@@ -4,6 +4,9 @@ import argparse
 import io
 import json
 import math
+import os
+import re
+import sys
 from pathlib import Path
 import zlib
 
@@ -45,7 +48,13 @@ def fixture_page(cfg, states, browse_children=None, *, chromium_cdp=None):
       close(){this.readyState=3}
     };"""
     with sync_playwright() as pw:
-        browser = pw.chromium.connect_over_cdp(chromium_cdp) if chromium_cdp else pw.chromium.launch(channel="msedge", headless=True)
+        if chromium_cdp:
+            browser=pw.chromium.connect_over_cdp(chromium_cdp)
+        elif os.environ.get('PANEL_CHROMIUM_PATH'):
+            browser=pw.chromium.launch(executable_path=os.environ['PANEL_CHROMIUM_PATH'],headless=True,
+                args=['--no-sandbox'] if os.environ.get('PANEL_RENDER_CONTAINER')=='1' else [])
+        else:
+            browser=pw.chromium.launch(**({'channel':'msedge'} if sys.platform=='win32' else {}),headless=True)
         page = browser.new_page(viewport={"width": W, "height": H}, device_scale_factor=1,
                                 locale="en-AU", timezone_id="Australia/Brisbane")
         page.add_init_script("window.fixtureStates="+json.dumps(states)+";window.fixtureLibrary="+json.dumps(browse_children or [])+";"+fake)
@@ -56,6 +65,11 @@ def fixture_page(cfg, states, browse_children=None, *, chromium_cdp=None):
             name = url[len(ORIGIN)+1:].split("?")[0]
             if name in ("panel.html","abstract-room.webp") or name in {p.name for p in UI.glob("*.woff2")}:
                 return r.fulfill(path=UI/name)
+            assigned=cfg.get('display',{}).get('background',{}).get('image','')
+            if re.fullmatch(r'[0-9a-f]{64}',assigned) and name=='background-'+assigned+'.webp':
+                asset=Path(os.environ.get('PANEL_RENDER_ASSET_DIR',''))/name
+                if not asset.is_file():raise ValueError('Assigned background is missing from private build inputs')
+                return r.fulfill(path=asset)
             if name == "config.json":
                 return r.fulfill(json=cfg)
             if name == "secrets.json":
@@ -114,9 +128,9 @@ def generate(cfg, states, dest):
                     page.locator('#s-scenes [data-preset="'+preset+'"]').evaluate("e=>e.click()")
                     page.wait_for_timeout(300)
                     scene_sprites.append(store(preset))
-                # Restore the real Study baseline after simulating scene presses.
+                # Restore the room baseline after fixture-only scene presses.
                 page.reload()
-                page.wait_for_function("document.querySelector('#archRoom').textContent==='Study'")
+                page.wait_for_function("name=>document.querySelector('#archRoom').textContent===name",arg=cfg.get('room_label') or 'Room')
                 page.evaluate("document.fonts.ready")
         initial=[]
         for i in range(len(cfg["lights"])):

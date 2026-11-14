@@ -24,6 +24,7 @@ def main():
     p.add_argument("--overlay-assets",type=Path,help="Directory containing the Architectural overlay palette bank installed on the microSD card")
     p.add_argument("--navigation-assets",type=Path,help="Directory containing the six-palette SD navigation bank")
     p.add_argument("--home-zoom-assets",type=Path,help="Directory containing CM5 Home zoom frames and poses")
+    p.add_argument('--sd-only',action='store_true',help='Use immutable card artwork; OTA updates never rewrite the shared flash artwork partition')
     args = p.parse_args()
     if args.architectural_only and (args.card_assets or not args.hosted_wifi):
         p.error("Architectural-only builds use the onboard artwork and hosted Wi-Fi")
@@ -33,6 +34,8 @@ def main():
         p.error("The SD navigation bank belongs to the Architectural build")
     if args.home_zoom_assets and not args.navigation_assets:
         p.error("Home zoom requires the Architectural SD navigation renderer")
+    if args.sd_only and not (args.architectural_only and args.navigation_assets and args.home_zoom_assets and args.overlay_assets):
+        p.error('Card-based OTA builds require Architectural navigation, overlays and Home artwork')
     if not re.fullmatch(r"[a-z0-9-]{1,60}", args.id):
         p.error("invalid panel id")
     if not re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", args.mac):
@@ -51,6 +54,8 @@ def main():
         with identity_path.open("x") as f:
             json.dump(identity, f)
     config = json.loads(args.snapshot.read_text(encoding="utf-8"))["config"]
+    api_name=identity.get('api_name','p4-study-bench')
+    if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,62}',api_name):p.error('Invalid ESPHome API name')
     contract = {k: v for k, v in config.items() if not k.startswith("_")}
     lights = contract["lights"]
     if not lights or any(not re.fullmatch(r"light\.[a-z0-9_]+", light.get("entity_id", "")) for light in lights):
@@ -167,6 +172,22 @@ def main():
         f"constexpr unsigned volume_offset={volume_offset},volume_size={len(volume)};\n"
         f"constexpr unsigned char volume_sha[]={{{volume_sha}}};\n{text_settings}}}\n")
     source = (args.build / "study.yaml").read_text(encoding="utf-8")
+    if args.sd_only:
+        directory=args.build/'sd-assets';directory.mkdir(exist_ok=True)
+        banks=[]
+        for name,filename in (('volume','volume-art.bin'),('text','text-art.bin'),('palette','palette-art.bin')):
+            data=(args.build/filename).read_bytes();digest=hashlib.sha256(data).hexdigest()
+            shutil.copyfile(args.build/filename,directory/(digest+'.bin'))
+            banks.append(dict(name=name,sha256=digest,bytes=len(data)))
+        lines=['#pragma once','#include <cstdint>','namespace study {',
+               'struct LocalBank {const char *path;unsigned bytes;uint8_t sha[32];};']
+        for bank in banks:
+            lines.append('constexpr LocalBank local_'+bank['name']+'={"/sd/pi-panel/'+bank['sha256']+'.bin",'+str(bank['bytes'])+',{'+','.join(map(str,bytes.fromhex(bank['sha256'])))+'}};')
+        (dest/'local_bank_assets.h').write_text('\n'.join(lines+['}'])+'\n',encoding='ascii')
+        (directory/'local-banks.json').write_text(json.dumps(banks,indent=2))
+        shutil.copyfile(Path(__file__).parent.parent/'study/local_banks.h',dest/'local_banks.h')
+        shutil.copyfile(Path(__file__).parent.parent/'study/card_art.h',dest/'card_art.h')
+        source=source.replace('build_flags: [','build_flags: [-DSTUDY_SD_ONLY, ',1)
     artwork_header = args.build / "study_assets.h"
     artwork_source = artwork_header.read_text(encoding="utf-8")
     if "#define STUDY_LZ4_ARTWORK" in artwork_source:
@@ -227,10 +248,18 @@ def main():
             shutil.copyfile(study/name,dest/name)
         source=source.replace("build_flags: [","build_flags: [-DSTUDY_OVERLAY_PALETTES, ",1)
     if args.navigation_assets:
+        shutil.copyfile(Path(__file__).parent.parent/'study/popup_motion.inc',dest/'popup_motion.inc')
         import sys
         sys.path.insert(0,str(Path(__file__).parent.parent/"study"))
         from page_motion import routes
         metadata=json.loads((args.navigation_assets/"navigation.json").read_bytes())
+        from render import rgb565
+        from PIL import Image
+        import struct
+        patterns=[struct.unpack('<16H',rgb565(Image.new('RGB',(4,4),tuple(colour))))
+                  for colour in metadata['backgrounds']]
+        (dest/'popup_ground.h').write_text('#pragma once\nnamespace study {constexpr uint16_t popup_ground565[][16]={'+
+            ','.join('{'+','.join(map(str,pattern))+'}' for pattern in patterns)+'};}\n',encoding='ascii')
         views=json.loads((args.build/"screens.json").read_bytes())["views"]
         if metadata["pages"]!=[view["name"] for view in views] or metadata["routes"]!=[list(route) for route in routes(views)]:
             p.error("SD navigation artwork uses different page routes")
@@ -259,6 +288,10 @@ def main():
         values={"size":metadata["bytes"],"index":metadata["index_offset"],
                 "hashes":metadata["hashes_offset"],"max_frame":metadata["max_frame"],
                 "routes":len(metadata["routes"]),"pages":len(metadata["pages"])}
+        if metadata.get('codec')=='lz4-jpeg':
+            values['max_stored']=metadata['max_stored']
+            if '#define STUDY_NAV_LZ4' not in header:p.error('Missing compressed navigation decoder')
+        if bool(metadata.get('cropped'))!=('#define STUDY_NAV_CROPPED' in header):p.error('Navigation dimensions differ from the decoder')
         for key,value in values.items():
             match=re.search(r"\bsd_navigation_"+key+r"=(\d+)\b",header)
             if not match or int(match[1])!=value:p.error("SD navigation header differs from its metadata")
@@ -279,7 +312,8 @@ def main():
         if len(digest)!=32 or actual!=digest or asset.stat().st_size!=metadata['bytes']:
             p.error('Home zoom artwork does not match its identity')
         frames=metadata['frames'];poses=metadata['poses'];colours=metadata['colours']
-        if len(frames)!=60 or len(poses)!=10 or len(colours)!=6 or any(o<0 or n<=0 or o+n>metadata['bytes'] for o,n in frames):
+        lz4=metadata.get('codec')=='lz4-jpeg';columns=3 if lz4 else 2
+        if len(frames)!=60 or len(poses)!=10 or len(colours)!=6 or any(len(f)!=columns or f[0]<0 or f[1]<=0 or f[0]+f[1]>metadata['bytes'] or not 0<f[-1]<=512*1024 for f in frames):
             p.error('Invalid Home zoom index')
         if any(not .954<=pose['scale']<=1 or not 0<=pose['scrim']<=.55 for pose in poses):
             p.error('Invalid Home zoom pose')
@@ -289,13 +323,15 @@ def main():
         header=(args.home_zoom_assets/'home_zoom_assets.h').read_text()
         checks=[f'home_zoom_path[]="/sd/pi-panel/{digest.hex()}.bin"',
             'home_zoom_sha[]={'+','.join(map(str,digest))+'}',
-            f"home_zoom_size={metadata['bytes']},home_zoom_max_frame={max(n for _,n in frames)}",
-            'home_zoom_frames[][2]={'+','.join('{%d,%d}'%tuple(f) for f in frames)+'}',
+            f"home_zoom_size={metadata['bytes']},home_zoom_max_frame={max(f[-1] for f in frames)}",
+            f'home_zoom_frames[][{columns}]={{'+','.join('{'+','.join(map(str,f))+'}' for f in frames)+'}',
             'home_zoom_scales[]={'+','.join(str(round(p['scale']*65536)) for p in poses)+'}',
             'home_zoom_opacities[]={'+','.join(str(round(p['scrim']*255)) for p in poses)+'}',
             'home_zoom_scrims[]={'+','.join(str(packed(c['scrim'])) for c in colours)+'}',
             'home_zoom_inks[]={'+','.join(str(packed(c['ink'])) for c in colours)+'}']
         if any(value not in header for value in checks):p.error('Home zoom header differs from its metadata')
+        if lz4 and ('#define STUDY_HOME_LZ4' not in header or f'home_zoom_max_stored={max(f[1] for f in frames)}' not in header):p.error('Invalid compressed Home frame metadata')
+        if bool(metadata.get('cropped'))!=('#define STUDY_HOME_CROPPED' in header):p.error('Home dimensions differ from the decoder')
         shutil.copyfile(args.home_zoom_assets/'home_zoom_assets.h',dest/'home_zoom_assets.h')
         shutil.copyfile(Path(__file__).parent.parent/'study/home_zoom.inc',dest/'home_zoom.inc')
         source=source.replace('build_flags: [','build_flags: [-DSTUDY_HOME_ZOOM, ',1)
@@ -440,6 +476,25 @@ inline bool study_station_ip(esp_netif_ip_info_t &info){
     source = source.replace("study::begin(id(panel_display)", "study::screen_callbacks([](){auto t=id(study_clock).now();return t.is_valid()?int(t.hour)*60+t.minute:-1;}, [](int level){return id(backlight_ctrl).write_byte(0x96, (level*255+50)/100);}); study::begin(id(panel_display)")
     if "-DSTUDY_CARD_FIELDS" in source:
         source=source.replace("study::screen_callbacks(", "study::card_date_now=[](){auto t=id(study_clock).now(); std::string room=study::card_room_label; return t.is_valid()?t.strftime(\"%a, \")+std::to_string(t.day_of_month)+t.strftime(\" %b\")+\"  ·  \"+room:room;}; study::screen_callbacks(",1)
+    source=source.replace('name: p4-study-bench\n','name: '+api_name+'\n',1)
+    if args.sd_only:
+        generation=identity.get('generation',0)
+        if type(generation) is not int or not 0<=generation<2147483647:p.error('Invalid deployment generation')
+        (dest/'deployment_build.h').write_text(f'#pragma once\n#define STUDY_BUILD_GENERATION {generation}\n',encoding='ascii')
+        source=source.replace('build_flags: [','build_flags: [-DSTUDY_SD_ONLY, -DUSE_OTA_ROLLBACK, ',1)
+        source=source.replace('    sdkconfig_options:\n','    sdkconfig_options:\n      CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE: "y"\n',1)
+        # Confirm a boot only after local rendering and every required bank work.
+        # HA and Panel Server availability deliberately play no role here.
+        marker='interval:\n'
+        source=source.replace(marker,marker+'''  - interval: 1s
+    then:
+      - lambda: |-
+          static p4_runtime::Deployment deployment(study::fleet_settings);
+          deployment.tick(!id(panel_touch).is_failed() && study::lcd && study::scanout.active && study::scanout.visible_pixels() &&
+            study::volume_art && study::text_art && study::control_art && study::palette.available() &&
+            study::navigation_artwork.ready() && study::home_zoom_artwork.ready() && study::overlay_artwork.ready(),
+            !study::moving && !study::down && study::current!=study::doorbell && study::clock_ms()-study::last_activity>30000);
+''',1)
     (args.build / "study-live.yaml").write_text(source, encoding="utf-8")
 
 

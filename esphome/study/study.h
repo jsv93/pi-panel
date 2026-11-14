@@ -254,6 +254,13 @@ static void restore_media_palette(uint8_t *frame,const Rect &paint);
 #endif
 #endif
 static uint32_t revision=1;
+static bool popup_requested=false,popup_ground=false;
+static bool start_popup_motion(Scanout::Slot *target,bool ground);
+static void request_popup_motion(bool ground=false){
+#ifdef STUDY_SD_NAVIGATION
+  popup_requested=true;popup_ground=ground;
+#endif
+}
 static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
 #ifdef STUDY_CARD_ART
   if(card_switching)return true;
@@ -301,6 +308,13 @@ static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
       palette.label(reinterpret_cast<uint16_t*>(slot->pixels),scratch);
   }
 #endif
+  if(full && popup_requested){
+    popup_requested=false;
+#ifdef STUDY_SD_NAVIGATION
+    if(start_popup_motion(slot,popup_ground))return true;
+#endif
+  }
+  if(full || seed)slot->fixed_page=revision;
   return scanout.present(slot,seed?0:y,seed?height:y+h);
 }
 static ppa_client_handle_t blender;
@@ -313,6 +327,9 @@ static void await_page();
 static bool unpack(const Sprite &s,uint8_t *out);
 }
 #include "navigation.h"
+#ifdef STUDY_SD_NAVIGATION
+#include "live_runtime/popup_motion.inc"
+#endif
 namespace study {
 static uint8_t *page_buffer() {
   return static_cast<uint8_t*>(heap_caps_aligned_alloc(128,page_bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
@@ -1030,6 +1047,7 @@ static bool choose_palette(int value){
 }
 static void open_palette(){
   if(!palette.picker(page_pixels))return;
+  request_popup_motion(true);
   picker_open=true;++revision;blit(0,0,width,height,page_pixels);
 }
 #endif
@@ -1095,8 +1113,11 @@ static void playback_time(const TextArea &area,int seconds,uint8_t *frame,uint8_
 }
 static uint16_t interpolate_pixel(uint16_t first,uint16_t second,unsigned weight){
   const unsigned inverse=256-weight;
-  return ((((first&0xf81f)*inverse+(second&0xf81f)*weight)>>8)&0xf81f) |
-         ((((first&0x07e0)*inverse+(second&0x07e0)*weight)>>8)&0x07e0);
+  // Eight-bit interpolation needs more separation than RGB565's packed red/
+  // blue fields provide. Fractional red bits otherwise spill into blue.
+  return (((((first>>11)*inverse+(second>>11)*weight+128)>>8)<<11) |
+          (((((first>>5)&63)*inverse+((second>>5)&63)*weight+128)>>8)<<5) |
+          (((first&31)*inverse+(second&31)*weight+128)>>8));
 }
 static void progress_fields(uint8_t *frame=page_pixels,uint8_t *work=scratch){
   const double pos=seek_drag>=0?seek_drag:player().position();
@@ -1635,6 +1656,9 @@ static void animate() {
   present_bell_video();
   if(current==idle || current==doorbell)return;
 #endif
+#ifdef STUDY_SD_NAVIGATION
+  if(popup_motion.active()){if(popup_motion.draw())moving=false;return;}
+#endif
   if(!moving){prepare_lamp();nav.prepare(current);return;}
   const int elapsed=clock_ms()-motion_start;
   if(playback_direction>=0){animate_cached(elapsed);return;}
@@ -1699,6 +1723,9 @@ static void animate() {
   ++motion_frames;
 }
 static void show(int dest,int shift=14) {
+#ifdef STUDY_SD_NAVIGATION
+  popup_motion.cancel();
+#endif
 #ifdef STUDY_OVERLAY_PALETTES
   overlay_frame=false;
 #endif
@@ -2664,10 +2691,15 @@ static void begin(Display *display) {
 #ifdef STUDY_PALETTE_PICKER
   if(!palette.begin(part))ESP_LOGW("study","Palette bank unavailable");
 #endif
+#ifdef STUDY_SD_ONLY
+  volume_art=load_local_bank(local_volume);
+  if(!volume_art){ESP_LOGE("study","Local volume artwork missing");return;}
+#else
   if(part && esp_partition_mmap(part,volume_offset,volume_size,ESP_PARTITION_MMAP_DATA,&mapped,&volume_mapping)==ESP_OK &&
      !mbedtls_sha256(static_cast<const uint8_t*>(mapped),volume_size,digest,0) && !memcmp(digest,volume_sha,sizeof(digest)))
     volume_art=static_cast<const uint8_t*>(mapped);
   else ESP_LOGE("study","Volume art verification failed");
+#endif
 #endif
   artwork=static_cast<uint8_t*>(heap_caps_malloc(artwork_bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
   if(!artwork || tinfl_decompress_mem_to_mem(artwork,artwork_bytes,packed_pages,sizeof(packed_pages)-1,1)!=artwork_bytes){
@@ -2676,6 +2708,11 @@ static void begin(Display *display) {
 #ifdef STUDY_LIVE
   text_art=static_cast<uint8_t*>(heap_caps_malloc(text_bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
 #ifdef STUDY_EXTERNAL_TEXT
+#ifdef STUDY_SD_ONLY
+  auto *encoded=load_local_bank(local_text);
+  const bool text_ok=encoded && text_art && tinfl_decompress_mem_to_mem(text_art,text_bytes,encoded,text_packed_size,1)==text_bytes;
+  heap_caps_free(encoded);
+#else
   const void *encoded=nullptr;
   esp_partition_mmap_handle_t text_mapping{};
   if(!part || esp_partition_mmap(part,text_offset,text_packed_size,ESP_PARTITION_MMAP_DATA,&encoded,&text_mapping)!=ESP_OK){
@@ -2684,6 +2721,7 @@ static void begin(Display *display) {
   const bool text_ok=text_art && !mbedtls_sha256(static_cast<const uint8_t*>(encoded),text_packed_size,digest,0) &&
     !memcmp(digest,text_sha,sizeof(digest)) && tinfl_decompress_mem_to_mem(text_art,text_bytes,encoded,text_packed_size,1)==text_bytes;
   esp_partition_munmap(text_mapping);
+#endif
 #else
   const bool text_ok=text_art && tinfl_decompress_mem_to_mem(text_art,text_bytes,packed_text,sizeof(packed_text)-1,1)==text_bytes;
 #endif
@@ -2814,6 +2852,7 @@ static void draw_light_sheet(bool background){
 }
 static void set_light_sheet(LightSheet next){
   if(next==LightSheet::closed){show(current,0);return;}
+  if(next!=light_sheet && next!=LightSheet::effects && light_sheet!=LightSheet::effects)request_popup_motion();
   light_sheet=next;sheet_drag=-1;draw_light_sheet(true);
 }
 static bool sheet_touch(int x,int y){
@@ -3558,9 +3597,10 @@ static void release() {
     const int x=x0+dx,y=y0+dy;
     if(!library_open){
       if(!browse_button.contains(x,y))return;
+      request_popup_motion(true);
       library_scroll=0;library_open=true;library.open(speaker_ids[selected_speaker]);
     }else if(browse_back.contains(x,y)){
-      if(library.folders.empty()){show(media,0);return;}
+      if(library.folders.empty()){request_popup_motion(true);show(media,0);return;}
       library_scroll=0;library.up();
     }else if(browse_switch.contains(x,y)){
       library_mode=1-library_mode;
@@ -3589,6 +3629,7 @@ static void release() {
     const int x=x0+dx,y=y0+dy;
     if(!speakers_open){
       if(!speaker_button.contains(x,y))return;
+      request_popup_motion();
       speakers_open=true;speaker_scroll=0;if(!transfer_busy)transfer_status=nullptr;
     }else if(speaker_back.contains(x,y)){show(media,0);return;}
     else if(y>=speaker_top && y<speaker_end && !transfer_busy){
@@ -3619,6 +3660,7 @@ static void release() {
     if(std::abs(dx)<35 && std::abs(dy)<35){
       if(queue_open && queue_back.contains(x0+dx,y0+dy))show(media,0);
       else if(!queue_open && queue_button.contains(x0+dx,y0+dy)){
+        request_popup_motion();
         queue_open=true;transport_fields();++revision;blit(0,0,width,height,page_pixels);
       }
     }
@@ -3654,7 +3696,9 @@ static void release() {
   }
   if(dragging && slider_updates){
     const auto index=light_index();
-    if(index>=0){ha_lights.request(index,levels[index]);live_dirty[index]=true;}
+    // Keep the released preview until a *new* HA reading arrives. Repainting
+    // the old confirmed value here caused an immediate backwards jump.
+    if(index>=0 && ha_lights.request(index,levels[index]))live_dirty[index]=false;
   }
 #endif
   if(dragging && slider_updates)

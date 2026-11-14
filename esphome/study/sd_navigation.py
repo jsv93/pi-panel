@@ -7,6 +7,7 @@ from pathlib import Path
 import struct
 import zlib
 import re
+from lz4.block import compress, decompress
 
 import numpy as np
 from PIL import Image
@@ -24,7 +25,7 @@ def encode_route(job):
     if background.size != (W, H) or foreground.size != (W, H):
         raise ValueError("Navigation artwork must be 720 by 1280")
     return [
-        panel_jpeg(motion_image(background, foreground, phase, travel, clip),
+        panel_jpeg(motion_image(background, foreground, phase, travel, clip).crop((0,0,W,(clip+15)//16*16)),
                    quality=94, subsampling=2)
         for phase in range(10)
     ]
@@ -49,14 +50,14 @@ def build(root, destination, workers):
         backgrounds.append(tuple(round(a*.45+b*.55) for a,b in zip(rgb('--bg-bot'),rgb('--scrim'))))
     frame_count = len(PALETTES) * len(paths) * 10
     index_offset = 16
-    hashes_offset = index_offset + frame_count * 8
+    hashes_offset = index_offset + frame_count * 12
     tiles_per_page = (W // 16) * (H // 8)
     frames_offset = hashes_offset + len(PALETTES) * len(views) * tiles_per_page * 4
     temporary = destination / "navigation.bin.part"
     index = []
     jobs = []
     with temporary.open("w+b") as output:
-        output.write(struct.pack("<8sHHHH", b"PNAV1\0\0\0", W, H, len(paths), len(views)))
+        output.write(struct.pack("<8sHHHH", b"PNAV2\0\0\0", W, H, len(paths), len(views)))
         output.seek(hashes_offset)
         for palette, colour in zip(PALETTES, backgrounds):
             directory = root / palette
@@ -74,15 +75,20 @@ def build(root, destination, workers):
                 jobs.append((str(directory), names[target], travel, clip, colour))
         assert output.tell() == frames_offset
         maximum = 0
+        max_stored = 0
         unique = list(dict.fromkeys(jobs))
         records = {}
         with ProcessPoolExecutor(max_workers=workers) as pool:
             for number, (job, frames) in enumerate(zip(unique, pool.map(encode_route, unique))):
                 positions = []
                 for frame in frames:
-                    positions.append((output.tell(), len(frame)))
-                    output.write(frame)
+                    packed = compress(frame,store_size=False)
+                    if decompress(packed,uncompressed_size=len(frame))!=frame:
+                        raise ValueError('Navigation frame compression failed verification')
+                    positions.append((output.tell(), len(packed), len(frame)))
+                    output.write(packed)
                     maximum = max(maximum, len(frame))
+                    max_stored = max(max_stored, len(packed))
                 records[job] = positions
                 if number % 20 == 0 or number + 1 == len(unique):
                     print(f"Encoded {number + 1}/{len(unique)} shared destination fades", flush=True)
@@ -91,17 +97,20 @@ def build(root, destination, workers):
         if size >= 2**32:
             raise ValueError("Navigation bank exceeds its 32-bit index")
         output.seek(index_offset)
-        for offset, length in index:
-            output.write(struct.pack("<II", offset, length))
+        for record in index:
+            output.write(struct.pack("<III", *record))
     with temporary.open("rb") as source:
         digest = hashlib.file_digest(source, "sha256").digest()
     name = digest.hex() + ".bin"
     temporary.replace(destination / name)
     metadata = dict(palettes=list(PALETTES), pages=names, routes=paths, bytes=size,
                     sha256=digest.hex(), index_offset=index_offset,
-                    hashes_offset=hashes_offset, max_frame=maximum, motion='theme-fade', backgrounds=backgrounds)
+                    hashes_offset=hashes_offset, max_frame=maximum, max_stored=max_stored,
+                    codec='lz4-jpeg',cropped=True,motion='theme-fade', backgrounds=backgrounds)
     (destination / "navigation.json").write_text(json.dumps(metadata, indent=2))
     header = ["#pragma once", "#include <cstdint>", "namespace study {",
+              '#define STUDY_NAV_LZ4\n#define STUDY_NAV_CROPPED\n',
+              f'constexpr unsigned sd_navigation_max_stored={max_stored};',
               f'constexpr char sd_navigation_path[]="/sd/pi-panel/{name}";',
               "constexpr unsigned char sd_navigation_sha[]={" + ",".join(map(str, digest)) + "};",
               f"constexpr unsigned sd_navigation_size={size}, sd_navigation_index={index_offset};",

@@ -9,6 +9,9 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#ifdef STUDY_SD_ONLY
+#include "local_banks.h"
+#endif
 
 extern "C" size_t tinfl_decompress_mem_to_mem(void *,size_t,const void *,size_t,int);
 namespace study {
@@ -67,6 +70,10 @@ class PaletteRenderer {
   }
  public:
   bool begin(const esp_partition_t *part){
+#ifdef STUDY_SD_ONLY
+    data_=load_local_bank(local_palette);
+    return data_!=nullptr;
+#else
     if(!part)return false;
     const void *data=nullptr;uint8_t digest[32];
     if(esp_partition_mmap(part,palette_offset,palette_size,ESP_PARTITION_MMAP_DATA,&data,&mapping_)!=ESP_OK)return false;
@@ -74,6 +81,7 @@ class PaletteRenderer {
       esp_partition_munmap(mapping_);return false;
     }
     data_=static_cast<const uint8_t*>(data);return true;
+#endif
   }
   bool available()const{return data_!=nullptr;}
   int selection()const{return selected_;}

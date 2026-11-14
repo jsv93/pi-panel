@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include "../study_lz4/lz4.h"
 
 namespace study {
 class HomeZoomArtwork {
@@ -15,11 +16,18 @@ class HomeZoomArtwork {
   std::atomic<uint32_t> retry_at_{0};
   uint8_t *mask_=nullptr,*glyph_=nullptr;
   uint16_t *shade_=nullptr;
+#ifdef STUDY_HOME_LZ4
+  uint8_t *packed_=nullptr;
+#endif
   int shade_mode_=-1;
   bool player_visible_=false;
   static constexpr size_t glyph_capacity=8192;
   bool load(){
     if(!file_.mount() || !file_.open(home_zoom_path,home_zoom_size,home_zoom_sha))return false;
+#ifdef STUDY_HOME_LZ4
+    if(!packed_)packed_=static_cast<uint8_t*>(heap_caps_malloc(home_zoom_max_stored,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+    if(!packed_)return false;
+#endif
     const auto &r=number_rects[0];
     if(!mask_)mask_=static_cast<uint8_t*>(heap_caps_malloc(r.w*r.h,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
     if(!glyph_)glyph_=static_cast<uint8_t*>(heap_caps_malloc(glyph_capacity,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
@@ -55,11 +63,22 @@ class HomeZoomArtwork {
     }
   }
   unsigned frame_size(unsigned palette,unsigned phase)const{
+#ifdef STUDY_HOME_LZ4
+    return ready() && palette<6 && phase<10?home_zoom_frames[palette*10+phase][2]:0;
+#else
     return ready() && palette<6 && phase<10?home_zoom_frames[palette*10+phase][1]:0;
+#endif
   }
   bool frame(unsigned palette,unsigned phase,uint8_t *destination,size_t capacity){
     const auto bytes=frame_size(palette,phase);
+#ifdef STUDY_HOME_LZ4
+    if(!bytes || bytes>capacity)return false;
+    const auto &frame=home_zoom_frames[palette*10+phase];
+    return frame[1]<=home_zoom_max_stored && file_.read(frame[0],packed_,frame[1]) &&
+      LZ4_decompress_safe(reinterpret_cast<const char*>(packed_),reinterpret_cast<char*>(destination),frame[1],bytes)==int(bytes);
+#else
     return bytes && bytes<=capacity && file_.read(home_zoom_frames[palette*10+phase][0],destination,bytes);
+#endif
   }
   void prepare(int mode,float temperature,bool playing){
     if(!ready())return;

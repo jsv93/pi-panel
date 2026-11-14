@@ -11,10 +11,24 @@ from PIL import Image
 from page_motion import W,H,routes,pose
 
 def panel_jpeg(image, **options):
-    """Encode for the P4 JPEG DMA's video-range BT.601 to RGB converter."""
-    y = [16 + round(v * 219 / 255) for v in range(256)]
-    chroma = [128 + round((v - 128) * 224 / 255) for v in range(256)]
-    planes = image.convert("YCbCr").point(y + chroma + chroma)
+    """Encode for the P4 DMA's video-range BT.601 and truncated RGB565.
+
+    Converting through Pillow's integer YCbCr before range conversion rounds
+    twice. The hardware then truncates R/B to five bits but G to six, making
+    dark neutral colours green. One floating conversion, half-step bias and
+    channel bias reduce the unequal truncation at panel precision. Transition
+    JPEGs deliberately have no added periodic pattern: even a low-amplitude
+    DCT basis is visible as stripes on the physical display. Stationary artwork
+    keeps its existing fine RGB565 dither.
+    Calibrated against the physical IDF 5.5 P4 decoder, not a desktop decoder.
+    """
+    rgb = np.asarray(image.convert('RGB'), dtype=np.float32)
+    rgb = (rgb*np.array([248/255,252/255,248/255])+[3,1.5,4]).clip(0,255)
+    r,g,b = rgb.transpose(2,0,1)
+    y = (.299*r+.587*g+.114*b)*219/255+16
+    cb = (-.168736*r-.331264*g+.5*b)*224/255+128
+    cr = (.5*r-.418688*g-.081312*b)*224/255+128
+    planes = Image.fromarray(np.rint(np.stack((y,cb,cr),axis=-1)).clip(0,255).astype('uint8'),'YCbCr')
     output = io.BytesIO()
     planes.save(output, "JPEG", **options)
     return output.getvalue()
@@ -127,7 +141,7 @@ def emit(d):
     scenes=np.logical_or.reduce([pix(v)!=scene_base for v in m["scene_sprites"]])
     lamps=np.zeros((H,W),dtype=bool)
     for j,key in enumerate(("reading","slider")):
-        r=m[key];x,y=r["x"],r["y"]
+        r=m.get('slider_paint',m[key]) if key=='slider' else m[key];x,y=r["x"],r["y"]
         reference=pix(m["patches"][0][j])
         mask=np.logical_or.reduce([pix(p[j])!=reference for p in m["patches"]])
         for v in m["views"]:

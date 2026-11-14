@@ -116,7 +116,7 @@ static void paint_network(){
   ++revision;blit(0,0,width,height,page_pixels);
 }
 static void network_refresh(){
-  if(!network_open || !wifi_pending || down)return;
+  if(!network_open || !wifi_pending || down || moving)return;
   auto next=station.snapshot();
   if(next.state==Wifi::State::joining || next.state==Wifi::State::scanning)return;
   if(wifi_scan_after_restore){
@@ -129,6 +129,7 @@ static void network_refresh(){
 }
 static void network_action(int x,int y){
   if(!network_open){
+    request_popup_motion();
     close_network();network_open=true;wifi_scroll=0;
 #ifdef STUDY_CARD_WIFI
     card_network_open=selected_theme<2 && card_assets_ready();

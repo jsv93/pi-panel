@@ -527,6 +527,7 @@ class Navigation {
       for(int y=0;y<height;y+=8)
         for(int x=0;x<width;x+=16)
           if(affected(page,x,y,true))overlay_rows_[page][y/8]|=uint64_t(1)<<(x/16);
+#ifndef STUDY_SD_ONLY
     const auto *part=esp_partition_find_first(ESP_PARTITION_TYPE_DATA,static_cast<esp_partition_subtype_t>(0x40),"motion");
     const void *base=nullptr;
     if(!part || esp_partition_mmap(part,0,motion_bytes,ESP_PARTITION_MMAP_DATA,&base,&mapping_)!=ESP_OK ||
@@ -550,6 +551,7 @@ class Navigation {
     segment_lengths_=data+checkpoint_bytes;
 #endif
     entropy_=header_+header_bytes;maps_=entropy_+entropy_bytes;
+#endif
     jpeg_decode_memory_alloc_cfg_t cfg{};cfg.buffer_direction=JPEG_DEC_ALLOC_INPUT_BUFFER;
     size_t frame_capacity=max_frame;
 #ifdef STUDY_SD_NAVIGATION
@@ -568,6 +570,7 @@ class Navigation {
     prepare_ids_=static_cast<uint32_t*>(heap_caps_malloc(map_buffer_bytes,MALLOC_CAP_SPIRAM));
     play_ids_=static_cast<uint32_t*>(heap_caps_malloc(map_buffer_bytes,MALLOC_CAP_SPIRAM));
     if(!input_ || !play_ids_ || !decoder()){input_=nullptr;ESP_LOGW("study","Navigation decoder unavailable");return;}
+#ifndef STUDY_SD_ONLY
     if(!check_colors()){input_=nullptr;ESP_LOGW("study","Native color check failed; using page blend");return;}
     make_chunks();
     if(prepare_ids_)for(size_t size=4*1024*1024;size>=512*1024;size/=2){
@@ -575,6 +578,9 @@ class Navigation {
       arena_=static_cast<uint8_t*>(heap_caps_malloc(size,MALLOC_CAP_SPIRAM));
       if(arena_){arena_size_=size;break;}
     }
+#else
+    sd_memory_=true;
+#endif
     next_input_=static_cast<uint8_t*>(jpeg_alloc_decoder_mem(frame_capacity,&cfg,&input_size_));
     if(next_input_){
       ready_=xSemaphoreCreateBinary();
@@ -602,6 +608,9 @@ class Navigation {
       warm_fade_background(mode);
       return;
     }
+#endif
+#ifdef STUDY_SD_ONLY
+    return;
 #endif
     if(warm_chunk_>=0){warm_chunks();return;}
     release_job();
@@ -642,6 +651,9 @@ class Navigation {
     }
 #endif
     if(mode_ && !sd_active_)return;
+#ifdef STUDY_SD_ONLY
+    if(!sd_active_)return;
+#endif
     if(!input_)return;
     for(int i=0;i<paths;i++){
       const auto &p=nav_paths[i];
@@ -726,18 +738,34 @@ class Navigation {
         queued_=std::min(8,std::max(phase+1,elapsed/18+1));xTaskNotifyGive(producer_);
       }
       jpeg_decode_cfg_t cfg{};cfg.output_format=JPEG_DECODE_OUT_FORMAT_RGB565;cfg.rgb_order=panel_jpeg_order;
+      int decoded_height=height;
+#ifdef STUDY_NAV_CROPPED
+      if(sd_active_ && !home_zoom_)decoded_height=(clip_+15)&~15;
+#endif
+#ifdef STUDY_HOME_CROPPED
+      if(home_zoom_)decoded_height=1152;
+#endif
       uint32_t written=0;
-      if(jpeg_decoder_process(decoder(),&cfg,input_,frame_bytes,slot->pixels,page_bytes,&written)!=ESP_OK || written!=page_bytes){
+      if(jpeg_decoder_process(decoder(),&cfg,input_,frame_bytes,slot->pixels,page_bytes,&written)!=ESP_OK || written!=unsigned(decoded_height*width*2)){
         ESP_LOGW("study","Navigation decode failed");release_job();route_=-1;return false;
       }
       overlay(reinterpret_cast<uint16_t*>(slot->pixels),phase,first_y,end_y);
+      // The CM5 navigation bar is stationary. Keep its native RGB565 pixels,
+      // including the dark palette dither, instead of re-quantizing via JPEG.
+      if(clip_<height){
+        await_page();
+        const int last=slot->fixed_page==revision?decoded_height:height;
+        if(last>clip_)scanout.copy_pixels(slot->pixels+clip_*width*2,foreground_pixels()+clip_*width*2,(last-clip_)*width*2);
+        slot->fixed_page=revision;
+        if(end_y>clip_)end_y=clip_;
+      }
     }
     slot->lamp_background=false;
     // The decoder wrote directly to the scanout frame. Only CPU-painted
     // rows need a writeback before selecting it at the refresh boundary.
     if(end_y==0){first_y=0;end_y=1;}
     if(!scanout.present(slot,first_y,end_y))return false;
-    slot->page=phase==10?revision:0;phase_=phase;++motion_frames;
+    slot->page=phase==10?revision:0;if(phase==10)slot->fixed_page=revision;phase_=phase;++motion_frames;
     if(!first_at_)first_at_=clock_ms();
     if(phase!=10)return false;
     ESP_LOGI("study","Navigation %s > %s (%d): %d frames in %lld ms; first %lld ms from request",

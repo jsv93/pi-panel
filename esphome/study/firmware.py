@@ -19,8 +19,12 @@ from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent
 D = Path(sys.argv[1]).resolve()
-ensure(D)
-emit_chunks(D)
+if '--sd-only' in sys.argv:
+    from sd_firmware import generate
+    generate(D)
+else:
+    ensure(D)
+    emit_chunks(D)
 # Keep the installed ESPHome driver untouched. The trial needs access to
 # three IDF-owned scanout buffers and the refresh counter.
 driver=D/"bench_components/mipi_dsi"

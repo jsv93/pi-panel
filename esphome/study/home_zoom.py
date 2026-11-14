@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 from PIL import Image
+from lz4.block import compress, decompress
 from render import fixture_page, W, H
 from palette_art import PALETTES
 from jpeg_motion import panel_jpeg
@@ -37,8 +38,10 @@ def capture(root, states, destination, cdp=None):
                 }""",phase*18)
                 png=page.screenshot()
                 (destination/f'{palette}-{phase}.png').write_bytes(png)
-                frame=panel_jpeg(Image.open(io.BytesIO(png)),quality=94,subsampling=2)
-                frames.append([len(output),len(frame)]);output.extend(frame);current.append(pose)
+                frame=panel_jpeg(Image.open(io.BytesIO(png)).crop((0,0,W,1152)),quality=94,subsampling=2)
+                packed=compress(frame,store_size=False)
+                if decompress(packed,uncompressed_size=len(frame))!=frame:raise ValueError('Home frame compression failed verification')
+                frames.append([len(output),len(packed),len(frame)]);output.extend(packed);current.append(pose)
             if poses and current!=poses:raise ValueError('Home motion differs between palettes')
             poses=current
         print('Captured Home zoom',palette,flush=True)
@@ -49,14 +52,16 @@ def capture(root, states, destination, cdp=None):
         return list(map(int,value.removeprefix('rgb(').removesuffix(')').split(',')))
     metadata=dict(sha256=digest,bytes=len(output),width=W,height=H,palettes=list(PALETTES),
                   frames=frames,poses=poses,colours=[{k:rgb(v) for k,v in colour.items()} for colour in colours],
-                  motion='cm5-home-zoom',duration_ms=180,origin=[360,640])
+                  motion='cm5-home-zoom',duration_ms=180,origin=[360,640],codec='lz4-jpeg',cropped=True)
     (destination/'home_zoom.json').write_text(json.dumps(metadata,indent=2))
     def packed(v):return (v[0]>>3)<<11 | (v[1]>>2)<<5 | (v[2]>>3)
     lines=['#pragma once','#include <cstdint>','namespace study {',
+        '#define STUDY_HOME_LZ4\n#define STUDY_HOME_CROPPED',
+        f'constexpr unsigned home_zoom_max_stored={max(f[1] for f in frames)};',
         f'constexpr char home_zoom_path[]="/sd/pi-panel/{digest}.bin";',
         'constexpr uint8_t home_zoom_sha[]={'+','.join(map(str,bytes.fromhex(digest)))+'};',
-        f'constexpr unsigned home_zoom_size={len(output)},home_zoom_max_frame={max(f[1] for f in frames)};',
-        'constexpr uint32_t home_zoom_frames[][2]={'+','.join('{%d,%d}'%tuple(f) for f in frames)+'};',
+        f'constexpr unsigned home_zoom_size={len(output)},home_zoom_max_frame={max(f[2] for f in frames)};',
+        'constexpr uint32_t home_zoom_frames[][3]={'+','.join('{%d,%d,%d}'%tuple(f) for f in frames)+'};',
         'constexpr uint32_t home_zoom_scales[]={'+','.join(str(round(p['scale']*65536)) for p in poses)+'};',
         'constexpr uint8_t home_zoom_opacities[]={'+','.join(str(round(p['scrim']*255)) for p in poses)+'};',
         'constexpr uint16_t home_zoom_scrims[]={'+','.join(str(packed(c['scrim'])) for c in metadata['colours'])+'};',

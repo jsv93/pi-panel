@@ -1,0 +1,22 @@
+name: P4 update worker
+on:
+  pull_request:
+    paths: ['esphome/**', 'server/**', 'tests/test_p4*', '.github/workflows/p4-validation.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release image
+        run: docker build -f server/Dockerfile -t panel-p4-test .
+      - name: Test update isolation and image service
+        run: |
+          docker run --rm -v "$PWD:/src:ro" panel-p4-test python /src/tests/test_p4_deployment.py
+          docker run --rm -v "$PWD:/src:ro" panel-p4-test python /src/tests/test_p4_signed_config.py
+          docker run --rm -v "$PWD:/src:ro" panel-p4-test python /src/tests/test_p4_artwork.py
+      - name: Render and compile a complete room on Linux
+        run: docker run --rm --shm-size=2g -v "$PWD:/src:ro" panel-p4-test python /src/tests/test_p4_builder.py

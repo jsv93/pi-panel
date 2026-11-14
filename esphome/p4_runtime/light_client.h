@@ -143,10 +143,18 @@ template<size_t N> class LightClient {
  private:
   struct State { int power=-1,brightness=-1; };
   std::array<State,N> lights_{};
+  std::array<int,N> notified_{};
+  std::array<bool,N> has_notified_{};
   std::array<Detail,N> detail_{};
   const char *const *entities_{};
   Handler changed_;
   bool received_=false;
-  void notify(size_t i) {changed_(i,confirmed(i));}
+  void notify(size_t i) {
+    const int value=confirmed(i);
+    // HA sends power and brightness separately and may repeat unchanged
+    // state. An identical echo must not replace an in-progress local preview.
+    if(has_notified_[i] && notified_[i]==value)return;
+    has_notified_[i]=true;notified_[i]=value;changed_(i,value);
+  }
 };
 }
