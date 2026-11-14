@@ -17,7 +17,8 @@ class PaletteRenderer {
   struct Key {uint16_t colour,first;};
   struct Table {
     Key *keys=nullptr;
-    uint16_t *colours=nullptr,*blocks=nullptr,*indices=nullptr;
+    uint16_t *colours=nullptr,*blocks=nullptr;
+    uint32_t *indices=nullptr;
     size_t count=0,rows=0;
     void make_index(){
       if(indices)return;
@@ -30,23 +31,29 @@ class PaletteRenderer {
         auto &page=blocks[keys[i].colour>>shift];
         if(!page)page=++pages;
       }
-      indices=static_cast<uint16_t*>(heap_caps_calloc(pages<<shift,sizeof(uint16_t),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+      indices=static_cast<uint32_t*>(heap_caps_calloc(pages<<shift,sizeof(uint32_t),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
       if(!indices){heap_caps_free(blocks);blocks=nullptr;return;}
       for(size_t i=0;i<count;i++){
         const unsigned code=keys[i].colour;
-        indices[((blocks[code>>shift]-1)<<shift)+(code&63)]=i+1;
+        const unsigned first=keys[i].first;
+        const unsigned limit=i+1<count?keys[i+1].first:rows;
+        indices[((blocks[code>>shift]-1)<<shift)+(code&63)]=((limit-first)<<16)|first;
       }
     }
-    const Key *find(uint16_t colour)const{
+    uint16_t map(uint16_t colour,unsigned rank)const{
       if(indices){
         const auto page=blocks[colour>>6];
-        if(!page)return nullptr;
+        if(!page)return colour;
         const auto index=indices[((page-1)<<6)+(colour&63)];
-        return index?keys+index-1:nullptr;
+        const unsigned choices=index>>16;
+        if(!choices)return colour;
+        return colours[(index&0xffff)+(rank<choices?rank:0)];
       }
       const auto *end=keys+count;
       const auto *key=std::lower_bound(static_cast<const Key*>(keys),end,colour,[](const Key &k,uint16_t c){return k.colour<c;});
-      return key!=end && key->colour==colour?key:nullptr;
+      if(key==end || key->colour!=colour)return colour;
+      const size_t first=key->first,limit=key+1==end?rows:(key+1)->first;
+      return colours[first+(first+rank<limit?rank:0)];
     }
   };
   const uint8_t *data_=nullptr;
@@ -115,18 +122,24 @@ class PaletteRenderer {
   }
   void IRAM_ATTR __attribute__((optimize("O3"))) render(uint16_t *frame,int x,int y,int w,int h,bool exact)const{
     if(!selected_)return;
+    // Flat surfaces repeat the same Bayer-position colour and rank. Keep the
+    // last conversion for each position in this call's internal-memory stack.
+    std::array<uint32_t,16> previous;
+    previous.fill(UINT32_MAX);
+    std::array<uint16_t,16> converted{};
     for(int row=y;row<y+h;row++){
       if((row&63)==0)esphome::App.feed_wdt();
       for(int column=x;column<x+w;column++){
         const unsigned position=row*width+column;
         auto &pixel=frame[position];
-        const auto &t=tables_[(row%4)*4+column%4];
-        auto end=t.keys+t.count;
-        const auto *key=t.find(pixel);
-        if(!key)continue;
-        const size_t first=key->first,limit=key+1==end?t.rows:(key+1)->first;
-        const size_t wanted=first+(exact && page_>=0?ranks_[position]:0);
-        pixel=t.colours[wanted<limit?wanted:first];
+        const unsigned slot=(row%4)*4+column%4;
+        const unsigned rank=exact && page_>=0?ranks_[position]:0;
+        const uint32_t key=(uint32_t(pixel)<<8)|rank;
+        if(previous[slot]!=key){
+          converted[slot]=tables_[slot].map(pixel,rank);
+          previous[slot]=key;
+        }
+        pixel=converted[slot];
       }
     }
   }

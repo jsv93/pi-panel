@@ -1,5 +1,8 @@
 #pragma once
 #include "study_assets.h"
+#ifdef STUDY_LZ4_ARTWORK
+#include "study_lz4/lz4.h"
+#endif
 #ifdef STUDY_IDENTIFY
 #include "identify_assets.h"
 #endif
@@ -320,6 +323,14 @@ static bool unpack(const Sprite &s,uint8_t *out) {
     heap_caps_free(strip);return ok;
   }
   const size_t size=size_t(s.w)*s.h*2;
+#ifdef STUDY_LZ4_ARTWORK
+  if(s.size&(1u<<30)){
+    const unsigned compressed_size=s.size&~(1u<<30);
+    return out && s.offset<=artwork_bytes && compressed_size<=artwork_bytes-s.offset &&
+      LZ4_decompress_safe(reinterpret_cast<const char*>(artwork+s.offset),
+                          reinterpret_cast<char*>(out),compressed_size,size)==int(size);
+  }
+#endif
   return out && tinfl_decompress_mem_to_mem(out,size,artwork+s.offset,s.size,1)==size;
 }
 // The foreground can present prepared JPEGs while the other core restores
@@ -3933,7 +3944,7 @@ static size_t camera_bitstream(uint8_t *jpg,size_t size){
 // Ordinary JPEG artwork uses full-range YCbCr. The P4's RGB output applies
 // video-range conversion, which clips shadows and oversaturates album covers.
 // Decode packed V/U/Y and resize before quantizing to the display's RGB565.
-static uint16_t jpeg_pixel(int v,int u,int luma,int x,int y){
+static inline __attribute__((always_inline)) uint16_t jpeg_pixel(int v,int u,int luma,int x,int y){
   constexpr int bayer[4][4]={{0,8,2,10},{12,4,14,6},{3,11,1,9},{15,7,13,5}};
   v-=128;u-=128;
   const int red=std::clamp(luma+((359*v+128)>>8),0,255);
@@ -4044,7 +4055,7 @@ static void update_cover(){
 }
 #endif
 #ifdef STUDY_LIVE
-static bool present_camera_pixels(const uint16_t *pixels,int source_w,int source_h,int stride){
+static bool IRAM_ATTR __attribute__((optimize("O3"))) present_camera_pixels(const uint16_t *pixels,int source_w,int source_h,int stride){
   const Rect &v=
 #ifdef STUDY_CARD_BELL
     card_bell_active?bell_view().video:
@@ -4087,7 +4098,7 @@ static bool present_camera_pixels(const uint16_t *pixels,int source_w,int source
   return presented;
 }
 #endif
-static bool draw_jpeg(const uint8_t *data,size_t size) {
+static bool IRAM_ATTR __attribute__((optimize("O3"))) draw_jpeg(const uint8_t *data,size_t size) {
   if(!scratch || current!=doorbell || !size || size>384*1024)return false;
   auto engine=decoder();
   if(!engine || !previous_pixels)return false;

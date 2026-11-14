@@ -160,6 +160,10 @@ def main():
     source = (args.build / "study.yaml").read_text(encoding="utf-8")
     artwork_header = args.build / "study_assets.h"
     artwork_source = artwork_header.read_text(encoding="utf-8")
+    if "#define STUDY_LZ4_ARTWORK" in artwork_source:
+        shutil.copytree(Path(__file__).parent.parent/"study/study_lz4",args.build/"study_lz4",dirs_exist_ok=True)
+        if "study_lz4" not in source:
+            source=source.replace("includes: [","includes: [study_lz4, ",1)
     if "slider_paint=" not in artwork_source:
         artwork_header.write_text(artwork_source + "\nnamespace study { constexpr auto slider_paint=slider; }\n",encoding="utf-8")
     if args.architectural_only:
@@ -180,7 +184,7 @@ def main():
     shutil.copyfile(Path(__file__).parent.parent/"study/text_renderer.h",args.build/"text_renderer.h")
     shutil.copyfile(Path(__file__).parent.parent/"study/network_screen.h",dest/"network_screen.h")
     source = source.replace("study_assets.h, study.h", "study_assets.h, control_art.h, media_art.h, text_art.h, text_renderer.h, study.h")
-    source = source.replace("includes: [scanout.h", "includes: [live_runtime, scanout.h")
+    source = source.replace("includes: [", "includes: [live_runtime, ",1)
     if palette_file.is_file():
         source=source.replace(", study.h",", palette_assets.h, study.h",1)
     source=source.replace("  includes:", "  platformio_options:\n    build_flags: [-DUSE_API_HOMEASSISTANT_ACTION_RESPONSES, -DUSE_API_HOMEASSISTANT_ACTION_RESPONSES_ERRORS, -DUSE_API_HOMEASSISTANT_ACTION_RESPONSES_JSON]\n  includes:",1)

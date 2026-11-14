@@ -4,7 +4,7 @@ This target uses the architectural linen Study layout at 720 × 1280 on the Wave
 
 ## Build
 
-Use Python 3.11 with ESPHome 2026.6.5, NumPy, Pillow and Playwright with Microsoft Edge. From the repository root, run:
+Use Python 3.11 with ESPHome 2026.6.5, NumPy, Pillow, LZ4 4.4.4 and Playwright with Microsoft Edge. From the repository root, run:
 
     python esphome/study/render.py config-export.json states.json PRIVATE_BUILD
     python esphome/study/control_art.py config-export.json states.json PRIVATE_BUILD

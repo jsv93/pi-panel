@@ -14,6 +14,7 @@ from motion_chunks import emit as emit_chunks
 import io
 import numpy as np
 import zlib
+import lz4.block
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent
@@ -65,7 +66,15 @@ def pack(content,w,h):
     return dict(offset=offsets[content],size=len(content),w=w,h=h)
 def pack_sprite(v):
     return pack(data[v["offset"]:v["offset"]+v["size"]],v["w"],v["h"])
-pages=[pack_sprite(v) for v in m["views"]]
+pages=[]
+for view in m["views"]:
+    raw=zlib.decompress(data[view["offset"]:view["offset"]+view["size"]])
+    compressed=lz4.block.compress(raw,mode="high_compression",compression=12,store_size=False)
+    if lz4.block.decompress(compressed,uncompressed_size=view["w"]*view["h"]*2)!=raw:
+        raise ValueError(f"Lossless artwork verification failed for {view['name']}")
+    page=pack(compressed,view["w"],view["h"])
+    page["size"]|=1<<30
+    pages.append(page)
 # The large percentage digits share identical vertical strips across levels.
 # Store each strip once, keeping Chromium's RGB565 pixels exactly.
 digit_strips=[]
@@ -110,7 +119,7 @@ for selected,reference in enumerate(captures):
     if not np.array_equal(reconstructed,reference):
         raise ValueError("Scene patches do not reproduce the captured screen")
 with (D/"study_assets.h").open("w",encoding="ascii") as h:
-    h.write("#pragma once\n#include <cstdint>\nnamespace study {\n")
+    h.write("#pragma once\n#define STUDY_LZ4_ARTWORK\n#include <cstdint>\nnamespace study {\n")
     h.write(f"constexpr unsigned artwork_bytes={len(packed)};\nstatic uint8_t *artwork;\n")
     h.write("static const unsigned char packed_pages[] =\n")
     compressed=zlib.compress(packed,9)
@@ -179,10 +188,11 @@ with (D/"study_assets.h").open("w",encoding="ascii") as h:
 shutil.copyfile(ROOT/"study.h",D/"study.h")
 shutil.copyfile(ROOT/"scanout.h",D/"scanout.h")
 shutil.copyfile(ROOT/"navigation.h",D/"navigation.h")
+shutil.copytree(ROOT/"study_lz4",D/"study_lz4",dirs_exist_ok=True)
 secret=D/"bench.key"
 if not secret.exists():
     secret.write_text(base64.b64encode(os.urandom(32)).decode(),encoding="ascii")
-base=section("esphome").replace("name: panel-poc","name: p4-study-bench").replace("friendly_name: Wall Panel PoC","friendly_name: Study P4 Bench\n  includes: [scanout.h, navigation_assets.h, motion_chunks.h, study_assets.h, study.h, navigation.h]")
+base=section("esphome").replace("name: panel-poc","name: p4-study-bench").replace("friendly_name: Wall Panel PoC","friendly_name: Study P4 Bench\n  includes: [study_lz4, scanout.h, navigation_assets.h, motion_chunks.h, study_assets.h, study.h, navigation.h]")
 base=base.replace("id(backlight_ctrl).write_byte(0x95, 0x11);","""if (!id(backlight_ctrl).write_byte(0x95, 0x11)) {
             id(panel_display).mark_failed();
             id(panel_touch).mark_failed();
