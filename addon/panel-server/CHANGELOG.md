@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.26.3
+
+- Supply Home Assistant library provider logos through the enrolled P4 connection, with bounded image conversion and transparency for local device caching.
+
 ## 0.26.2
 
 - Show the native ESP32-P4 renderer, rendered frames per second and display refresh rate in device diagnostics.

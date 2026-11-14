@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 
-from . import backgrounds, db, firstboot, ha, ssh, screen, performance, access, doorbell, p4_video
+from . import backgrounds, db, firstboot, ha, ssh, screen, performance, access, doorbell, p4_video, p4_artwork
 
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme")
 WEAK_DEFAULTS = {"changeme", "change-me", ""}
@@ -1307,6 +1307,32 @@ ACCESS_LAST = {}
 DOORBELL_LAST = {}
 P4_BELL_WAITERS = {}
 P4_VIDEO_ACTIVE = set()
+P4_ARTWORK_ACTIVE = set()
+
+
+@app.get("/api/panel/{panel_id}/artwork/{domain}/{image}")
+async def p4_provider_artwork(panel_id: str, domain: str, image: str, request: Request):
+    if not db.get_panel_token(panel_id) or not _token_ok(request.headers, panel_id):
+        raise HTTPException(401, "Paired panel authentication required")
+    panel = db.get_panel(panel_id)
+    if not panel or panel.get("kind") != "esp" or not panel.get("claimed"):
+        raise HTTPException(403, "Claim this ESP panel first")
+    if not p4_artwork.valid(domain, image):
+        raise HTTPException(400, "Invalid provider artwork path")
+    if not ha.configured():
+        raise HTTPException(503, "Home Assistant connection unavailable")
+    if panel_id in P4_ARTWORK_ACTIVE:
+        raise HTTPException(409, "An artwork request is already active")
+    P4_ARTWORK_ACTIVE.add(panel_id)
+    try:
+        async with asyncio.timeout(10):
+            data = await p4_artwork.image(domain, image)
+        return Response(data, media_type="application/vnd.pi-panel.rgba-zlib",
+                        headers={"Cache-Control": "private, max-age=86400"})
+    except (TimeoutError, ValueError, OSError, p4_artwork.httpx.HTTPError):
+        raise HTTPException(502, "Provider artwork unavailable") from None
+    finally:
+        P4_ARTWORK_ACTIVE.discard(panel_id)
 
 
 def p4_bell_settings(panel_id, request):
