@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import struct
 import zlib
+import re
 
 import numpy as np
 from PIL import Image
@@ -16,9 +17,8 @@ from palette_art import PALETTES, load_pages
 
 
 def encode_route(job):
-    directory, source, target, travel, clip = job
-    with Image.open(Path(directory) / (source + "-rgb.png")) as image:
-        background = image.convert("RGB")
+    directory, target, travel, clip, colour = job
+    background = Image.new("RGB", (W, H), colour)
     with Image.open(Path(directory) / (target + "-rgb.png")) as image:
         foreground = image.convert("RGB")
     if background.size != (W, H) or foreground.size != (W, H):
@@ -35,6 +35,18 @@ def build(root, destination, workers):
     views = json.loads((root / "linen/screens.json").read_bytes())["views"]
     names = [view["name"] for view in views]
     paths = routes(views)
+    css = (Path(__file__).parent.parent.parent / "panel-ui/panel.html").read_text(encoding="utf8")
+    backgrounds = []
+    for palette in PALETTES:
+        rules = re.findall(r"\.pal-" + palette + r"\{([^}]+)\}", css)
+        values = dict(re.findall(r"(--[\w-]+):([^;]+)", ";".join(rules)))
+        def rgb(key):
+            colour = values[key].strip().removeprefix('#')
+            if len(colour) != 6: raise ValueError("Expected explicit six-digit palette colour")
+            return tuple(int(colour[i:i+2], 16) for i in (0, 2, 4))
+        # The Architectural sheet replaces its predecessor. Its underlay is
+        # the theme ground with the persistent 55% scrim, never the old page.
+        backgrounds.append(tuple(round(a*.45+b*.55) for a,b in zip(rgb('--bg-bot'),rgb('--scrim'))))
     frame_count = len(PALETTES) * len(paths) * 10
     index_offset = 16
     hashes_offset = index_offset + frame_count * 8
@@ -46,7 +58,7 @@ def build(root, destination, workers):
     with temporary.open("w+b") as output:
         output.write(struct.pack("<8sHHHH", b"PNAV1\0\0\0", W, H, len(paths), len(views)))
         output.seek(hashes_offset)
-        for palette in PALETTES:
+        for palette, colour in zip(PALETTES, backgrounds):
             directory = root / palette
             current = json.loads((directory / "screens.json").read_bytes())["views"]
             page_names, pages = load_pages(root, palette)
@@ -59,17 +71,22 @@ def build(root, destination, workers):
                 output.write(np.asarray(hashes, dtype="<u4").tobytes())
             for source, target, travel in paths:
                 clip = min([link["y"] for link in current[target]["links"] if link["root"]] + [H])
-                jobs.append((str(directory), names[source], names[target], travel, clip))
+                jobs.append((str(directory), names[target], travel, clip, colour))
         assert output.tell() == frames_offset
         maximum = 0
+        unique = list(dict.fromkeys(jobs))
+        records = {}
         with ProcessPoolExecutor(max_workers=workers) as pool:
-            for number, frames in enumerate(pool.map(encode_route, jobs)):
+            for number, (job, frames) in enumerate(zip(unique, pool.map(encode_route, unique))):
+                positions = []
                 for frame in frames:
-                    index.append((output.tell(), len(frame)))
+                    positions.append((output.tell(), len(frame)))
                     output.write(frame)
                     maximum = max(maximum, len(frame))
-                if number % 20 == 0 or number + 1 == len(jobs):
-                    print(f"Encoded {number + 1}/{len(jobs)} routes", flush=True)
+                records[job] = positions
+                if number % 20 == 0 or number + 1 == len(unique):
+                    print(f"Encoded {number + 1}/{len(unique)} shared destination fades", flush=True)
+        for job in jobs: index.extend(records[job])
         size = output.tell()
         if size >= 2**32:
             raise ValueError("Navigation bank exceeds its 32-bit index")
@@ -82,14 +99,16 @@ def build(root, destination, workers):
     temporary.replace(destination / name)
     metadata = dict(palettes=list(PALETTES), pages=names, routes=paths, bytes=size,
                     sha256=digest.hex(), index_offset=index_offset,
-                    hashes_offset=hashes_offset, max_frame=maximum)
+                    hashes_offset=hashes_offset, max_frame=maximum, motion='theme-fade', backgrounds=backgrounds)
     (destination / "navigation.json").write_text(json.dumps(metadata, indent=2))
-    header = ["#pragma once", "namespace study {",
+    header = ["#pragma once", "#include <cstdint>", "namespace study {",
               f'constexpr char sd_navigation_path[]="/sd/pi-panel/{name}";',
               "constexpr unsigned char sd_navigation_sha[]={" + ",".join(map(str, digest)) + "};",
               f"constexpr unsigned sd_navigation_size={size}, sd_navigation_index={index_offset};",
               f"constexpr unsigned sd_navigation_hashes={hashes_offset}, sd_navigation_max_frame={maximum};",
               f"constexpr unsigned sd_navigation_routes={len(paths)}, sd_navigation_pages={len(views)};",
+              "constexpr bool sd_navigation_theme_fade=true;",
+              "constexpr uint16_t sd_navigation_backgrounds[]={" + ",".join(str((r>>3)<<11 | (g>>2)<<5 | (b>>3)) for r,g,b in backgrounds) + "};",
               "}"]
     (destination / "navigation_art_assets.h").write_text("\n".join(header) + "\n", encoding="ascii")
     print(f"Built {size:,} bytes, largest frame {maximum:,} bytes", flush=True)

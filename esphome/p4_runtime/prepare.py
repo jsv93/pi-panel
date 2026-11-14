@@ -233,6 +233,8 @@ def main():
             p.error("SD navigation artwork uses different page routes")
         if metadata["palettes"]!=["linen","midnight","ember","slate","heath","mono"]:
             p.error("SD navigation artwork uses a different palette order")
+        if metadata.get("motion")!="theme-fade":
+            p.error("SD navigation artwork must use the Architectural theme fade")
         digest=bytes.fromhex(metadata["sha256"])
         asset=args.navigation_assets/(digest.hex()+".bin")
         with asset.open("rb") as stream:
@@ -245,6 +247,12 @@ def main():
             p.error("SD navigation header belongs to a different artwork bank")
         if f'"/sd/pi-panel/{digest.hex()}.bin"' not in header:
             p.error("SD navigation header uses a different card path")
+        colours=metadata.get("backgrounds",[])
+        if len(colours)!=6 or any(len(rgb)!=3 or any(type(v)!=int or not 0<=v<=255 for v in rgb) for rgb in colours):
+            p.error("Invalid navigation background colours")
+        packed=[(r>>3)<<11 | (g>>2)<<5 | (b>>3) for r,g,b in colours]
+        if "constexpr bool sd_navigation_theme_fade=true;" not in header or ("sd_navigation_backgrounds[]={"+','.join(map(str,packed))+"}") not in header:
+            p.error("SD navigation header differs from its fade metadata")
         values={"size":metadata["bytes"],"index":metadata["index_offset"],
                 "hashes":metadata["hashes_offset"],"max_frame":metadata["max_frame"],
                 "routes":len(metadata["routes"]),"pages":len(metadata["pages"])}

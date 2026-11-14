@@ -607,6 +607,23 @@ class Navigation {
     }
   }
   bool active()const{return route_>=0;}
+  bool theme_fade()const{
+#ifdef STUDY_SD_NAVIGATION
+    return active() && sd_active_ && sd_navigation_theme_fade;
+#else
+    return false;
+#endif
+  }
+  void prepare_background(){
+#ifdef STUDY_SD_NAVIGATION
+    if(theme_fade()){
+      // One uniform underlay replaces the old full-page scanout copy.
+      const uint32_t pixel=sd_navigation_backgrounds[mode_];
+      std::fill_n(reinterpret_cast<uint32_t*>(previous_pixels),page_bytes/4,pixel|(pixel<<16));
+      from_variant_=false;
+    }
+#endif
+  }
   void prefetch(){
     if(sd_active_ && active() && producer_ && queued_<0){
       queued_=0;job_done_=false;xTaskNotifyGive(producer_);

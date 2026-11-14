@@ -1747,6 +1747,7 @@ static void show(int dest,int shift=14) {
     if(current==light0 && dest==lights)playback_direction=1;
   }
   nav.select(current,dest,shift,request_at);
+  if(nav.theme_fade())playback_direction=-1;
 #ifdef STUDY_PALETTE_PICKER
   if(palette.selection())playback_direction=-1;
 #endif
@@ -1756,11 +1757,12 @@ static void show(int dest,int shift=14) {
   palette_motion=false;
 #ifdef STUDY_PALETTE_PICKER
   if(transition && scanout.active && palette.selection() && scratch && scanout.visible_pixels()){
-    scanout.copy_pixels(previous_pixels,scanout.visible_pixels(),page_bytes);
+    if(!nav.theme_fade())scanout.copy_pixels(previous_pixels,scanout.visible_pixels(),page_bytes);
     palette_motion=true;
   }
 #endif
   moving=false;
+  if(transition)nav.prepare_background();
   current=dest;
   ++revision;
 #ifdef STUDY_CARD_PLAYER
