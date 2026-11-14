@@ -1,7 +1,7 @@
 name: P4 update worker
 on:
   pull_request:
-    paths: ['esphome/**', 'server/**', 'tests/test_p4*', '.github/workflows/p4-validation.yml']
+    paths: ['esphome/**', 'server/**', 'tests/test_p4*', '.dockerignore', '.github/workflows/p4-validation.yml']
   workflow_dispatch:
 permissions:
   contents: read

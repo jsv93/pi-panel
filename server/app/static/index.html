@@ -1119,6 +1119,8 @@ async function loadP4Updates(){
     const result=await api('/panels/'+encodeURIComponent(id)+'/p4');
     if(CUR?.panel?.id!==id)return;
     const job=result.jobs[0];
+    $('#p4PairingLabel').hidden=result.enrolled;
+    if(result.enrolled)$('#p4PairingKey').value='';
     $('#p4Enable').hidden=result.enabled;
     $('#p4Retry').hidden=!result.enabled;
     $('#p4UpdateStatus').textContent=job?`Build ${job.id} · configuration ${job.version} · ${job.state} — ${job.report?.detail||job.detail||'Waiting'}`:'Automatic updates are not configured.';
