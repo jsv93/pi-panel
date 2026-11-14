@@ -5,14 +5,14 @@ from PIL import Image
 from render import fixture_page
 
 
-def capture_advanced(config,states,table,sprite,box):
+def capture_advanced(config,states,table,sprite,box,*,chromium_cdp=None):
     pages=[];backs=[];members=[];member_modes=[];selectors=[];effects=[];keys=[];starts=[0]
     popups=[];rows=[];menu_rects=[];ct_hit=[];ct_paint=[];ct_labels=[];temperatures=[]
     colours=[];colour_pages=[];colour_backs=[];swatches=[];swatch_highlights=[]
     hues=[];hue_paint=[];hue_labels=[];hue_levels=[]
     blank=(0,0,0,0);empty=(0,0,0,0)
     state={s["entity_id"]:s.get("attributes",{}) for s in states}
-    with fixture_page(config,states) as page:
+    with fixture_page(config,states,chromium_cdp=chromium_cdp) as page:
         def click(s):
             page.locator(s).first.evaluate("e=>e.click()");page.wait_for_timeout(320)
         def snap():

@@ -248,6 +248,10 @@ namespace study {
 static PaletteRenderer palette;
 static bool picker_open=false;
 static void restore_media_colours(uint8_t *frame,const Rect &paint);
+#ifdef STUDY_OVERLAY_PALETTES
+static uint8_t *palette_work=nullptr;
+static void restore_media_palette(uint8_t *frame,const Rect &paint);
+#endif
 #endif
 static uint32_t revision=1;
 static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
@@ -274,6 +278,9 @@ static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
   slot->lamp_background=current==lights || current==light0;
 #ifdef STUDY_PALETTE_PICKER
   if(!picker_open && current!=doorbell && palette.selection()
+#ifdef STUDY_OVERLAY_PALETTES
+     && !overlay_frame
+#endif
 #ifdef STUDY_CARD_ART
      && !card_page_visible
 #ifdef STUDY_CARD_WIFI
@@ -286,6 +293,9 @@ static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
     const Rect paint=full || seed?Rect{0,0,width,height}:Rect{x,y,w,h};
     palette.render(reinterpret_cast<uint16_t*>(slot->pixels),paint.x,paint.y,paint.w,paint.h,true);
     restore_media_colours(slot->pixels,paint);
+#ifdef STUDY_OVERLAY_PALETTES
+    restore_media_palette(slot->pixels,paint);
+#endif
     auto &button=palette_buttons[0];
     if(current==display_page && (full || seed || (y<button.y+button.h && y+h>button.y)))
       palette.label(reinterpret_cast<uint16_t*>(slot->pixels),scratch);
@@ -458,6 +468,13 @@ static int light_index() {
 static void control_patch(uint8_t *target,const Sprite &s,const Rect &area){
   if(!target || !scratch)return;
   const size_t bytes=2*s.w*s.h;
+#ifdef STUDY_OVERLAY_CONTROLS
+  if(text_palette>=0){
+    if(!overlay_artwork.control(s.offset,s.size,text_palette,scratch,bytes))return;
+    for(int y=0;y<s.h;++y)memcpy(target+2*((area.y+y)*width+area.x),scratch+2*y*s.w,2*s.w);
+    return;
+  }
+#endif
   uint32_t offset=s.offset,size=s.size;
   if(size&(1u<<30)){
     struct Dictionary {uint32_t offset,length,bytes;} dict;
@@ -575,6 +592,9 @@ static int8_t library_ground_ok[2]={-1,-1};
 // an entire tile for each item. Keep the uncached path for tight PSRAM.
 static uint8_t *library_background[2]={nullptr,nullptr};
 static int library_cache_mode=-1;
+#ifdef STUDY_OVERLAY_PALETTES
+static int library_cache_palette=-1;
+#endif
 #ifdef STUDY_CARD_LIBRARY
 static uint8_t *card_library_background=nullptr;
 static int card_library_index=-1;
@@ -594,10 +614,19 @@ static const uint8_t *library_tile(int mode,int variant,size_t bytes){
     cached=static_cast<uint8_t*>(heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
   auto *out=cached?cached:scratch;
   const auto &art=library_art[variant];
-  if(tinfl_decompress_mem_to_mem(out,bytes,text_art+art[0],art[1],1)==bytes)return out;
+  if(text_image(out,bytes,art[0],art[1]))return out;
   heap_caps_free(cached);cached=nullptr;return nullptr;
 }
 static void paint_library(int movement=0){
+#ifdef STUDY_OVERLAY_PALETTES
+  TextPaletteScope colours(palette.selection());
+  if(library_cache_palette!=text_palette){
+    release_library_backgrounds();
+    library_ground_ok[0]=library_ground_ok[1]=-1;
+    library_cache_palette=text_palette;
+    movement=0;
+  }
+#endif
   const int mode=library_mode,cols=library_steps[mode][0],step=library_steps[mode][1];
   const auto &v=library_list;
   int top=v.y,end=v.y+v.h;
@@ -670,7 +699,7 @@ static void paint_library(int movement=0){
       auto icon=library_note_rects[mode];icon.x+=x-library_tiles[2*mode].x;icon.y+=y-library_tiles[2*mode].y;
       const auto &artwork=library_notes[mode];
       const size_t n=2u*icon.w*icon.h;
-      if(tinfl_decompress_mem_to_mem(scratch,n,text_art+artwork[0],artwork[1],1)==n)
+      if(text_image(scratch,n,artwork[0],artwork[1]))
         for(int j=std::max(0,top-icon.y);j<icon.h && icon.y+j<end;j++)
           memcpy(page_pixels+2*((icon.y+j)*width+icon.x),scratch+2*j*icon.w,2*icon.w);
     }
@@ -967,6 +996,9 @@ static bool save_display_choice(bool enabled){
 }
 #ifdef STUDY_PALETTE_PICKER
 static bool choose_palette(int value){
+#ifdef STUDY_OVERLAY_PALETTES
+  if(!value){heap_caps_free(palette_work);palette_work=nullptr;}
+#endif
   if(value==palette.selection()){
 #ifdef STUDY_SCREEN_OPTIONS
     card_mode=value;
@@ -1057,29 +1089,30 @@ static void label(const TextArea &field,const char *value){text_field(page_pixel
 #undef STUDY_RENDER_NETWORK
 #endif
 namespace study {
-static void playback_time(const TextArea &area,int seconds){
-  char out[24];snprintf(out,sizeof(out),"%d:%02d",seconds/60,seconds%60);label(area,out);
+static void playback_time(const TextArea &area,int seconds,uint8_t *frame,uint8_t *work){
+  char out[24];snprintf(out,sizeof(out),"%d:%02d",seconds/60,seconds%60);
+  text_field(frame,width,work,area,out);
 }
 static uint16_t interpolate_pixel(uint16_t first,uint16_t second,unsigned weight){
   const unsigned inverse=256-weight;
   return ((((first&0xf81f)*inverse+(second&0xf81f)*weight)>>8)&0xf81f) |
          ((((first&0x07e0)*inverse+(second&0x07e0)*weight)>>8)&0x07e0);
 }
-static void progress_fields(){
+static void progress_fields(uint8_t *frame=page_pixels,uint8_t *work=scratch){
   const double pos=seek_drag>=0?seek_drag:player().position();
   const int duration=player().duration;
   const auto &r=seek_slider;
   const double position=duration?std::clamp(pos*r.w/duration,0.,double(r.w)):0;
   const int end=int(position);
   const unsigned fraction=unsigned((position-end)*256);
-  text_background(page_pixels,width,scratch,seek_background,seek_art[0][0],seek_art[0][1]);
+  text_background(frame,width,work,seek_background,seek_art[0][0],seek_art[0][1]);
   const int n=player().playing?44:1;
   const unsigned phase=player().playing?(clock_ms()*44*256/2800)%(44*256):0;
   const auto &fill=seek_art[player().playing?2:1];
-  if(tinfl_decompress_mem_to_mem(scratch,2*n*r.h,text_art+fill[0],fill[1],1)==size_t(2*n*r.h)){
+  if(text_image(work,2*n*r.h,fill[0],fill[1])){
     for(int y=std::max(0,r.h/2-16);y<std::min(r.h,r.h/2+16);y++){
-      auto *dst=reinterpret_cast<uint16_t*>(page_pixels)+(r.y+y)*width+r.x;
-      auto *src=reinterpret_cast<const uint16_t*>(scratch)+y*n;
+      auto *dst=reinterpret_cast<uint16_t*>(frame)+(r.y+y)*width+r.x;
+      auto *src=reinterpret_cast<const uint16_t*>(work)+y*n;
       for(int x=0;x<=end && x<r.w;x++){
         const int sample=(x+(phase>>8))%n;
         const auto pixel=interpolate_pixel(src[sample],src[(sample+1)%n],phase&255);
@@ -1089,16 +1122,56 @@ static void progress_fields(){
   }
   const Rect thumb{r.x+end-5,r.y+r.h/2-4,10,10};
   const auto &art=seek_art[3];
-  if(tinfl_decompress_mem_to_mem(scratch,200,text_art+art[0],art[1],1)==200){
+  if(text_image(work,200,art[0],art[1])){
     for(int y=0;y<10;y++){
-      auto *dst=reinterpret_cast<uint16_t*>(page_pixels)+(thumb.y+y)*width+thumb.x;
-      auto *src=reinterpret_cast<const uint16_t*>(scratch)+10*y;
+      auto *dst=reinterpret_cast<uint16_t*>(frame)+(thumb.y+y)*width+thumb.x;
+      auto *src=reinterpret_cast<const uint16_t*>(work)+10*y;
       for(int x=0;x<=10;x++)
         dst[x]=interpolate_pixel(x<10?src[x]:dst[x],x?src[x-1]:dst[x],fraction);
     }
   }
-  playback_time(elapsed_time,int(pos));playback_time(total_time,duration);
+  playback_time(elapsed_time,int(pos),frame,work);playback_time(total_time,duration,frame,work);
 }
+#ifdef STUDY_OVERLAY_PALETTES
+static void restore_media_palette(uint8_t *frame,const Rect &paint){
+  if((current!=media && current!=home) || library_open || speakers_open || queue_open)return;
+  TextPaletteScope colours(palette.selection(),false);
+  if(text_palette<0)return;
+  uint8_t *work=scratch;
+  size_t capacity=page_bytes;
+  if(frame==scratch){
+    capacity=2*width*160;
+    if(!palette_work)palette_work=static_cast<uint8_t*>(heap_caps_malloc(capacity,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+    if(!palette_work)return;
+    work=palette_work;
+  }
+  auto intersects=[&](const Rect &r){
+    return paint.x<r.x+r.w && paint.x+paint.w>r.x && paint.y<r.y+r.h && paint.y+paint.h>r.y;
+  };
+  auto field=[&](const TextArea &area,const char *value){
+    if(intersects(area.rect))text_field(frame,width,work,area,value);
+  };
+  if(current==home){
+    if(!player().playing)return;
+    const bool cover=cover_ready && mini_art_enabled;
+    field(cover?home_cover_title:home_title,player().title.empty()?"Music":player().title.c_str());
+    field(cover?home_cover_artist:home_artist,player().title.empty()?"Nothing playing":player().artist.empty()?"Playing":player().artist.c_str());
+    return;
+  }
+  field(song_title,player().title.empty()?"Nothing playing":player().title.c_str());
+  field(song_artist,player().title.empty()?"Browse your music library":player().artist.empty()?speaker_labels[selected_speaker]:player().artist.c_str());
+  if(intersects(seek_background) || intersects(elapsed_time.rect) || intersects(total_time.rect))
+    progress_fields(frame,work);
+#ifdef STUDY_OVERLAY_CONTROLS
+  const int level=volume_drag>=0?volume_drag:std::max(0,player().volume);
+  for(int kind=0;kind<(volume_open?2:1);++kind){
+    const auto &r=kind?volume_popup:volume_button;
+    if(intersects(r) && overlay_artwork.volume(text_palette,kind,level,work,2*r.w*r.h,capacity))
+      for(int row=0;row<r.h;++row)memcpy(frame+2*((r.y+row)*width+r.x),work+2*row*r.w,2*r.w);
+  }
+#endif
+}
+#endif
 static bool progress_active(){
   return current==media && player().playing && player().duration && !blanked &&
     !down && !moving && !volume_open && !queue_open && !speakers_open && !library_open;
@@ -1111,10 +1184,24 @@ static void animate_progress(){
   static int64_t previous=0;
   const auto now=clock_ms();
   if(now-previous<16 || (scanout.active && !scanout.acquire(false)))return;
-  progress_fields();
   const int top=std::min({seek_background.y,elapsed_time.rect.y,total_time.rect.y});
   const int bottom=std::max({seek_background.y+seek_background.h,
     elapsed_time.rect.y+elapsed_time.rect.h,total_time.rect.y+total_time.rect.h});
+#ifdef STUDY_OVERLAY_PALETTES
+  if(palette.selection() && overlay_artwork.ready() && scanout.active){
+    auto *slot=scanout.acquire(false);
+    if(slot && slot->page==revision){
+      // A seeded scanout buffer already contains the selected palette. Paint
+      // the changing timeline once, using that palette's native artwork.
+      TextPaletteScope colours(palette.selection(),false);
+      progress_fields(slot->pixels,scratch);
+      scanout.present(slot,top,bottom);
+      previous=now;
+      return;
+    }
+  }
+#endif
+  progress_fields();
   static int shown_second=-1,labels_remaining=0;
   const int second=int(player().position());
   if(second!=shown_second){shown_second=second;labels_remaining=3;}
@@ -1259,6 +1346,9 @@ static void status_fields(){
 }
 static void transport_fields(){
   if(library_open){paint_library();return;}
+#ifdef STUDY_OVERLAY_PALETTES
+  TextPaletteScope colours(speakers_open || queue_open?palette.selection():-1);
+#endif
   if(speakers_open){
     text_background(page_pixels,width,scratch,{0,0,width,height},speaker_base[0],speaker_base[1]);
     label(speaker_now,transfer_status?transfer_status:speaker_labels[selected_speaker]);
@@ -1272,7 +1362,7 @@ static void transport_fields(){
       const int h=art[2],x=r[0],w=r[1],ax=r[2];
       auto draw=[&](const unsigned *a,int left,int sw){
         const size_t bytes=2*sw*h;
-        if(tinfl_decompress_mem_to_mem(scratch,bytes,text_art+a[0],a[1],1)!=bytes)return;
+        if(!text_image(scratch,bytes,a[0],a[1]))return;
         for(int row=std::max(0,speaker_top-y);row<h && y+row<speaker_end;row++)
           memcpy(page_pixels+2*((y+row)*width+left),scratch+2*row*sw,2*sw);
       };
@@ -1609,6 +1699,9 @@ static void animate() {
   ++motion_frames;
 }
 static void show(int dest,int shift=14) {
+#ifdef STUDY_OVERLAY_PALETTES
+  overlay_frame=false;
+#endif
 #ifdef STUDY_LIVE
   identify_until=0;
 #endif
@@ -1716,6 +1809,9 @@ static void show(int dest,int shift=14) {
       scanout.copy_pixels(scratch,page_pixels,page_bytes);
       palette.render(reinterpret_cast<uint16_t*>(scratch),0,0,width,height,true);
       restore_media_colours(scratch,{0,0,width,height});
+#ifdef STUDY_OVERLAY_PALETTES
+      restore_media_palette(scratch,{0,0,width,height});
+#endif
     }
 #endif
     if(playback_direction<0)nav.prepare_live_tiles();
@@ -2549,6 +2645,9 @@ static void apply_screen_profile(const ScreenChoices &screen,bool render){
      old_library==library_mode && old_diagnostics==diagnostics_enabled && old_mini==mini_art_enabled)return;
   if(!palette.selection() && card_mode)nav.use_palette_memory();
   if(!palette.choose(card_mode,scratch))return;
+#ifdef STUDY_OVERLAY_PALETTES
+  if(!card_mode){heap_caps_free(palette_work);palette_work=nullptr;}
+#endif
   if(!card_mode && selected_theme==2)nav.restore_chunks();
   if(current!=doorbell && current!=idle){depth=0;show(home,0);}
 }
@@ -2678,6 +2777,9 @@ static int warmth_percent(int i){
 static void draw_light_sheet(bool background){
   const int i=light_index();
   if(i<0 || light_sheet==LightSheet::closed || !page_pixels)return;
+#ifdef STUDY_OVERLAY_CONTROLS
+  TextPaletteScope colours(palette.selection());
+#endif
   const auto &d=ha_lights.detail(i);
   const Rect screen{0,0,width,height};
   if(light_sheet==LightSheet::colour){

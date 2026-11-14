@@ -21,9 +21,12 @@ def main():
     p.add_argument("--architectural-only", action="store_true", help="Use the onboard Architectural layout and its six palettes")
     p.add_argument("--hosted-wifi",action="store_true",help="Include the Waveshare C6 radio and external text artwork")
     p.add_argument("--card-assets",type=Path,help="Directory containing the generated card_assets.h and card_lights.h for this room")
+    p.add_argument("--overlay-assets",type=Path,help="Directory containing the Architectural overlay palette bank installed on the microSD card")
     args = p.parse_args()
     if args.architectural_only and (args.card_assets or not args.hosted_wifi):
         p.error("Architectural-only builds use the onboard artwork and hosted Wi-Fi")
+    if args.overlay_assets and not args.architectural_only:
+        p.error("The overlay palette bank belongs to the Architectural build")
     if not re.fullmatch(r"[a-z0-9-]{1,60}", args.id):
         p.error("invalid panel id")
     if not re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", args.mac):
@@ -198,6 +201,27 @@ def main():
         # The hosted C6 pool has a 1600-byte stride. Every TX block must
         # meet the SDMMC driver's external-memory cache-line alignment.
         source=source.replace('CONFIG_CACHE_L2_CACHE_LINE_128B: "y"', 'CONFIG_CACHE_L2_CACHE_LINE_64B: "y"')
+    if args.overlay_assets:
+        study=Path(__file__).parent.parent/"study"
+        overlay_header=(args.overlay_assets/"overlay_assets.h").read_text()
+        def overlay_digest(name):
+            match=re.search(r"\b"+name+r"\[\]=\{([0-9,]+)\}",overlay_header)
+            if not match:p.error(f"Missing overlay identity {name}")
+            digest=bytes(map(int,match[1].split(',')))
+            if len(digest)!=32:p.error("Invalid overlay artwork identity")
+            return digest
+        if overlay_digest("overlay_text_sha")!=hashlib.sha256((args.build/"text-art.bin").read_bytes()).digest():
+            p.error("Overlay palettes were captured against a different text artwork bank")
+        digest=overlay_digest("overlay_sha")
+        asset=args.overlay_assets/(digest.hex()+".bin")
+        if not asset.is_file() or hashlib.sha256(asset.read_bytes()).digest()!=digest:
+            p.error("Overlay artwork file is missing or does not match its index")
+        shutil.copyfile(args.overlay_assets/"overlay_assets.h",dest/"overlay_assets.h")
+        for name in ("overlay_artwork.h","card_art.h"):
+            shutil.copyfile(study/name,dest/name)
+        source=source.replace("build_flags: [","build_flags: [-DSTUDY_OVERLAY_PALETTES, ",1)
+        source=source.replace("    advanced:\n","    advanced:\n      disable_fatfs: false\n      disable_vfs_support_dir: false\n",1)
+        source=source.replace("    sdkconfig_options:\n",'    sdkconfig_options:\n      CONFIG_FATFS_LFN_NONE: "n"\n      CONFIG_FATFS_LFN_HEAP: "y"\n',1)
     source+="\njson:\n"
     # Initialise network interfaces before allocating the optional renderer
     # workers and restoring the palette. Physical display setup still runs
@@ -247,6 +271,9 @@ inline bool study_station_ip(esp_netif_ip_info_t &info){
   use_psram: true
 """
     source = source.replace("esp_driver_jpeg, esp_driver_ppa]", "esp_driver_jpeg, esp_driver_ppa, esp_http_client, json, nvs_flash, esp_driver_tsens]")
+    if args.overlay_assets:
+        source=source.replace("  on_boot:\n","  on_boot:\n    - priority: -200\n      then:\n        - lambda: 'study::overlay_artwork.warm();'\n",1)
+        source=source.replace("esp_driver_tsens]", "esp_driver_tsens, fatfs, sdmmc, esp_driver_sdmmc]")
     source = source.replace("    type: esp-idf\n", "    type: esp-idf\n    components: [espressif/esp_websocket_client==1.4.0]\n", 1)
     source = source.replace("    sdkconfig_options:\n", '''    sdkconfig_options:
       CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS: "y"

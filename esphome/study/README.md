@@ -16,7 +16,21 @@ Use Python 3.11 with ESPHome 2026.6.5, NumPy, Pillow, LZ4 4.4.4 and Playwright w
 
 The export contains a top-level `config` object. The renderer takes a JSON array of HA state objects. Rendering uses an isolated browser with fixture sockets. Keep private firmware, state exports and provisioning files out of Git.
 
-For a paired Architectural-only panel, render the text artwork with `text_art.py --architectural-only`, build the six-palette bank described below, and pass `--hosted-wifi --architectural-only --production` to `prepare.py`. All six palettes and the room artwork reside in onboard flash. The diagnostics page retains its live readings and connection badges. The standalone scroll benchmark is omitted. Generate the artwork for the same room export used for enrollment.
+For a paired Architectural-only panel, render the text artwork with `text_art.py --architectural-only`, build the six-palette bank described below, and pass `--hosted-wifi --architectural-only --production` to `prepare.py`. The base pages and palette bank reside in onboard flash. Palette-specific overlays use the card package described below. The diagnostics page retains its live readings and connection badges. The standalone scroll benchmark is omitted. Generate the artwork for the same room export used for enrollment.
+
+### Architectural overlays
+
+Capture the library, speaker picker, queue, Wi-Fi picker, music text, light-detail sheets and volume controls with the same browser and fonts used for the CM5 comparison. `overlay_capture.py` accepts an optional `--chromium-cdp` loopback endpoint for an isolated Chromium instance on the CM5. It generates a subdirectory for each of the six Architectural palettes.
+
+    python esphome/study/overlay_capture.py config-export.json states.json PRIVATE_CAPTURES --chromium-cdp http://127.0.0.1:9222
+
+Copy `PRIVATE_CAPTURES/linen/text_art.h` and `text-art.bin` into `PRIVATE_BUILD`, then pack the overlays against that native text bank and the existing control headers.
+
+    python esphome/study/overlay_art.py PRIVATE_BUILD PRIVATE_CAPTURES PRIVATE_OVERLAYS --controls PRIVATE_CAPTURES
+
+Copy the generated hash-named `.bin` file into the existing microSD card's `pi-panel` directory and pass `--overlay-assets PRIVATE_OVERLAYS` to `prepare.py`. Keep the card inserted during use. The firmware verifies the package SHA-256, loads it locally after boot and caches frequently reused patches. The artwork remains available when Panel Server is offline. The packer checks the captured geometry and font metrics, and `prepare.py` verifies that the overlay index matches the native text bank.
+
+Provision the generated application, `text-art.bin` and `palette-art.bin` together using the offsets and hashes in the new `live_runtime/motion_tail.h`. A changed text-bank size can move the palette bank. Preserve the previous application and its matching banks for rollback. Card packages have immutable hash-based filenames so both application versions can retain their own artwork.
 
 ### Card-backed artwork in the candidate
 

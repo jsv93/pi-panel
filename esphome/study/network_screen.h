@@ -60,6 +60,9 @@ static void close_network(){
   explicit_bzero(passphrase,sizeof(passphrase));
 }
 static void paint_network(){
+#ifdef STUDY_OVERLAY_PALETTES
+  TextPaletteScope colours(palette.selection());
+#endif
 #ifdef STUDY_CARD_WIFI
   if(card_network_open){
     if(paint_card_network()){++revision;blit(0,0,width,height,page_pixels);return;}
@@ -85,10 +88,19 @@ static void paint_network(){
       const int y=r.y+int(i)*wifi_row_step()-wifi_scroll;
       if(y+r.h<=r.y || y>=wifi_list_bottom())continue;
       const auto &net=wifi_result.networks[i];const auto *art=wifi_row_art[net.secure?0:1];
-      if(tinfl_decompress_mem_to_mem(scratch,2*r.w*r.h,text_art+art[0],art[1],1)!=size_t(2*r.w*r.h))continue;
+      auto name=wifi_name,signal=wifi_signal;
+      bool rendered=false;
+#ifdef STUDY_OVERLAY_WIFI
+      const auto *row=overlay_artwork.wifi(text_palette,!strcmp(net.ssid,wifi_result.ssid),
+                                          net.secure,net.signal,scratch,2*r.w*r.h);
+      if(row){
+        name.rect=row->name;signal.rect=row->signal;name.colour=row->colour;
+        rendered=true;
+      }
+#endif
+      if(!rendered && !text_image(scratch,2*r.w*r.h,art[0],art[1]))continue;
       for(int row=std::max(0,r.y-y);row<r.h && y+row<wifi_list_bottom();row++)
         memcpy(page_pixels+2*((y+row)*width+r.x),scratch+2*row*r.w,2*r.w);
-      auto name=wifi_name,signal=wifi_signal;
       name.rect.y+=y-r.y;signal.rect.y+=y-r.y;
       text_field(page_pixels,width,scratch,name,net.ssid,r.y,wifi_list_bottom(),false);
       const char *bars=net.signal>=75?"▂▄▆█":net.signal>=50?"▂▄▆":net.signal>=25?"▂▄":"▂";

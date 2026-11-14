@@ -8,7 +8,7 @@ from render import fixture_page,rgb565
 from control_art import box
 
 
-def capture(config,states,dest,architectural_only=False):
+def capture(config,states,dest,architectural_only=False,chromium_cdp=None):
     # Include the punctuation used by the HA player and the dashboard.
     chars="".join(chr(i) for i in range(32,127))+" °·éèëàáäöóñüß–—‘’“”…•←›✓✗▂▄▆█"
     bank=bytearray();offsets={};fonts={};fields=[]
@@ -23,7 +23,7 @@ def capture(config,states,dest,architectural_only=False):
             attrs.update(media_title="Track",media_artist="Artist");attrs.pop("entity_picture",None)
     library_fixture=[dict(title=f"Folder {i}",media_class="directory" if i%2==0 else "track",
                           can_expand=i%2==0,can_play=i%2!=0,media_content_id=str(i),media_content_type="music") for i in range(8)]
-    with fixture_page(config,samples,library_fixture) as page:
+    with fixture_page(config,samples,library_fixture,chromium_cdp=chromium_cdp) as page:
         def click(sel):page.locator(sel).first.evaluate("e=>e.click()");page.wait_for_timeout(350)
         def field(name,sel,kind="full",alignment=None,subset=chars):
             el=page.locator(sel)
@@ -343,5 +343,6 @@ if __name__=="__main__":
     parser=argparse.ArgumentParser(description=__doc__)
     for arg in ("snapshot","states","dest"):parser.add_argument(arg,type=Path)
     parser.add_argument("--architectural-only",action="store_true")
+    parser.add_argument("--chromium-cdp")
     args=parser.parse_args()
-    capture(json.loads(args.snapshot.read_bytes())["config"],json.loads(args.states.read_bytes()),args.dest,args.architectural_only)
+    capture(json.loads(args.snapshot.read_bytes())["config"],json.loads(args.states.read_bytes()),args.dest,args.architectural_only,args.chromium_cdp)

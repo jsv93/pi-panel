@@ -12,8 +12,8 @@ from render import fixture_page,rgb565
 from control_art import box
 
 
-def capture(config,states,dest):
-    with fixture_page(config,states) as page:
+def capture(config,states,dest,*,chromium_cdp=None):
+    with fixture_page(config,states,chromium_cdp=chromium_cdp) as page:
         page.locator('.nav [data-sheet=media]').evaluate("e=>e.click()")
         page.wait_for_timeout(360)
         toggle=box(page,"#mpVolumeButton")

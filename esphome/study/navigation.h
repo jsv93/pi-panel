@@ -327,7 +327,10 @@ class Navigation {
     }
   }
   void make_chunks(){
-    if(allocate_chunks())while(warm_chunk_>=0)warm_chunks();
+    if(allocate_chunks())while(warm_chunk_>=0){
+      warm_chunks();
+      esphome::App.feed_wdt();
+    }
   }
   bool load_chunks(int route,int phase,uint16_t *out)const{
     if(!chunks_ready_)return false;
