@@ -30,7 +30,10 @@ class AlbumClient {
     last_=value;
     if(value.size()<sizeof(job.url))memcpy(job.url,value.data(),value.size());
     xQueueOverwrite(jobs_,&job);
-    if(!worker_)xTaskCreate([](void *p){static_cast<AlbumClient*>(p)->run();},"study_art",8192,this,1,&worker_);
+    // The ROM inflater keeps roughly 11 KiB of Huffman state on its stack.
+    // Provider validation needs room for that state and the HTTP call chain.
+    if(!worker_)xTaskCreate([](void *p){static_cast<AlbumClient*>(p)->run();},
+                           "study_art",thumbnails_?24576:8192,this,1,&worker_);
   }
   bool take(Frame &f){return result_ && xQueueReceive(result_,&f,0)==pdTRUE;}
  private:
