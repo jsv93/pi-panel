@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.27.1
+
+- Show the latest build log inside P4 Diagnostics, restricted to authenticated administrators and the selected device's builds, with pairing credentials removed.
+
 ## 0.27.0
 
 - Build and deploy private P4 firmware and artwork automatically after room changes, with progress and retry controls in Diagnostics.
@@ -7,6 +11,7 @@
 - Retain current and previous local artwork for offline use and recovery; bound storage used by completed server builds.
 - Match Architectural popup entry motion, correct playback colour leakage and light-slider echoes, and remove transition colour banding.
 - Bound framebuffer DMA allocations to keep Home's final frame consistent when internal memory is fragmented.
+- Retry transient SD startup failures and keep encrypted management reachable while local artwork recovers.
 
 ## 0.26.3
 

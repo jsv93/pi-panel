@@ -101,6 +101,25 @@ def queue(panel_id, retry=False):
                   (generation, panel_id, fingerprint, db.latest_version(panel_id), time.time()))
 
 
+def build_log(panel_id, generation):
+    with db.conn() as c:
+        job=c.execute('SELECT id FROM p4_builds WHERE id=? AND panel_id=?',(generation,panel_id)).fetchone()
+        device=c.execute('SELECT api_key FROM p4_devices WHERE panel_id=?',(panel_id,)).fetchone()
+    if not job:raise HTTPException(404,'Unknown build for this panel')
+    path=ROOT/str(generation)/'build.log'
+    if path.is_symlink() or not path.resolve().is_relative_to(ROOT.resolve()):raise HTTPException(404)
+    try:
+        with path.open('rb') as f:
+            f.seek(0,2);size=f.tell();f.seek(max(0,size-65536));raw=f.read(65536)
+    except FileNotFoundError:return dict(text='Build log is not available yet.',truncated=False)
+    text=raw.decode('utf8','replace')
+    for secret in (device['api_key'] if device else '',db.get_panel_token(panel_id),
+                   db.get_panel_sign_key(panel_id),ha.token(),os.environ.get('ADMIN_PASSWORD','')):
+        if secret:text=text.replace(secret,'[redacted]')
+    text=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]','',text)
+    return dict(text=text,truncated=size>len(raw))
+
+
 def set_state(job, state, detail=''):
     with db.conn() as c:
         c.execute('UPDATE p4_builds SET state=?,detail=? WHERE id=?', (state, detail[:200], job['id']))
@@ -264,6 +283,10 @@ def install(app, admin, owner, panel_auth, server_url):
 
     @app.get('/api/panels/{pid}/p4', dependencies=[Depends(admin)])
     async def read_status(pid: str): return status(pid)
+
+    @app.get('/api/panels/{pid}/p4/log/{generation}', dependencies=[Depends(admin)])
+    async def read_build_log(pid: str, generation: int):
+        return Response(canonical(build_log(pid,generation)),media_type='application/json',headers={'Cache-Control':'no-store'})
 
     @app.post('/api/panels/{pid}/p4', dependencies=[Depends(admin), Depends(owner)])
     async def enroll(pid: str, request: Request):

@@ -33,6 +33,18 @@ async def check(server, db, deploy):
         assert deploy.shape(dynamic)==deploy.shape(cfg)
         dynamic['room_label']='Another room';assert deploy.shape(dynamic)!=deploy.shape(cfg)
         directory=deploy.ROOT/str(generation);(directory/'artifacts').mkdir(parents=True)
+        secret=base64.b64encode(bytes(32)).decode()
+        (directory/'build.log').write_text('x'*70000+'\x1b[31mFAIL '+token+' '+signing+' '+secret)
+        logroute=route+'/log/'+str(generation)
+        log=await client.get(logroute)
+        assert log.status_code==200 and log.json()['truncated']
+        assert token not in log.text and signing not in log.text and secret not in log.text
+        assert '\x1b' not in log.json()['text'] and 'FAIL' in log.json()['text']
+        assert log.headers['Cache-Control']=='no-store'
+        assert (await client.get(logroute.replace(pid,'another-panel'))).status_code==404
+        client.cookies.clear()
+        assert (await client.get(logroute,headers=auth)).status_code==401
+        client.cookies.set('psid','test-session')
         items=[]
         for role in ('application','volume','text','palette','navigation','home','overlays'):
             data=('private-'+role).encode();digest=hashlib.sha256(data).hexdigest()
