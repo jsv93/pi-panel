@@ -60,6 +60,42 @@ class Navigation {
   static constexpr int tile_columns=width/16;
   static_assert(tile_columns+2<64);
   uint64_t overlay_rows_[doorbell+1][height/8]{};
+  uint64_t changed_rows_[2][height/8]{};
+  uint8_t *light_reference_{};
+  // Keep only the Lights tiles which the live controls can repaint. Home
+  // already has its own immutable full-page background.
+  void remember_light_tiles(){
+    if(!lights_pixels)return;
+    size_t count=0;
+    for(auto row:overlay_rows_[lights])count+=__builtin_popcountll(row);
+    light_reference_=static_cast<uint8_t*>(heap_caps_malloc(count*8*32,MALLOC_CAP_SPIRAM));
+    if(!light_reference_)return;
+    uint8_t *dst=light_reference_;
+    for(int y=0;y<height;y+=8)
+      for(auto bits=overlay_rows_[lights][y/8];bits;bits&=bits-1){
+        const int x=16*__builtin_ctzll(bits);
+        for(int dy=0;dy<8;dy++,dst+=32)
+          memcpy(dst,lights_pixels+2*((y+dy)*width+x),32);
+      }
+  }
+  void find_changes(int page,const uint8_t *live,uint64_t *rows)const{
+    memcpy(rows,overlay_rows_[page],sizeof(changed_rows_[0]));
+    const bool full=page==home && room_pixels;
+    if(!full && (page!=lights || !light_reference_))return;
+    const uint8_t *packed=light_reference_;
+    for(int y=0;y<height;y+=8){
+      for(auto bits=rows[y/8];bits;bits&=bits-1){
+        const int x=16*__builtin_ctzll(bits);
+        bool changed=false;
+        for(int dy=0;dy<8 && !changed;++dy){
+          const auto pos=2*((y+dy)*width+x);
+          changed=memcmp(live+pos,full?room_pixels+pos:packed+32*dy,32)!=0;
+        }
+        if(!changed)rows[y/8]&=~(bits & -bits);
+        if(!full)packed+=8*32;
+      }
+    }
+  }
   int64_t tap_at_{},first_at_{};
   TaskHandle_t producer_{};
   SemaphoreHandle_t ready_{};
@@ -111,9 +147,9 @@ class Navigation {
     const unsigned a=pose.alpha,b=32-a;
     auto *bg=reinterpret_cast<uint16_t*>(previous_pixels),*fg=reinterpret_cast<uint16_t*>(page_pixels);
     for(int y=0;y<height;y+=8){
-      uint64_t tiles=from_variant_ && y<clip_?overlay_rows_[p.from][y/8]:0;
+      uint64_t tiles=from_variant_ && y<clip_?changed_rows_[0][y/8]:0;
       if(to_variant_){
-        const auto base=overlay_rows_[p.to][y/8];
+        const auto base=changed_rows_[1][y/8];
         const unsigned distance=unsigned(std::abs(pose.shift));
         const unsigned whole=distance/16;
         const auto shifted=pose.shift>=0?base<<whole:base>>whole;
@@ -344,6 +380,7 @@ class Navigation {
       ready_=xSemaphoreCreateBinary();
       if(ready_)xTaskCreatePinnedToCore(produce,"study_motion",24576,this,2,&producer_,xPortGetCoreID()^1);
     }
+    remember_light_tiles();
     ESP_LOGI("study","Navigation decoder ready: %d routes, %u KiB runs, %u KiB cache, %u KiB free PSRAM",paths,chunks_?chunk_bytes/1024:0,unsigned(arena_size_/1024),unsigned(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)/1024));
   }
   void prepare(int page){
@@ -384,6 +421,12 @@ class Navigation {
     }
   }
   bool active()const{return route_>=0;}
+  void prepare_live_tiles(){
+    if(!active())return;
+    const auto &p=nav_paths[route_];
+    if(from_variant_)find_changes(p.from,previous_pixels,changed_rows_[0]);
+    if(to_variant_)find_changes(p.to,page_pixels,changed_rows_[1]);
+  }
   bool can_prepare_endpoint()const{return active() && !from_variant_ && !to_variant_;}
   bool draw(int elapsed){
     int phase=std::min(10,(elapsed+9)/18);

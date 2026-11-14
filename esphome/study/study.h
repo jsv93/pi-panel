@@ -101,6 +101,7 @@ static void apply_brightness(){
 #endif
 constexpr int width=720, height=1280, page_bytes=width*height*2;
 static uint8_t *room_pixels, *page_pixels, *previous_pixels, *mixed_pixels, *lights_pixels, *lamp_pixels;
+static bool light_list_cached;
 #ifdef STUDY_LIVE
 static void control_patch(uint8_t *target,const Sprite &s,const Rect &area);
 #endif
@@ -287,6 +288,7 @@ static ppa_client_handle_t blender;
 static int64_t motion_start;
 static int travel, motion_frames, motion_height;
 static bool moving;
+static esphome::HighFrequencyLoopRequester motion_loop;
 static void await_page();
 }
 #include "navigation.h"
@@ -712,8 +714,12 @@ static bool can_transfer(int i){
     !src.player_type.empty() && !src.queue.empty() && dst.available &&
     !dst.player_type.empty() && dst.queue!=src.queue;
 }
+static bool cover_ready=false;
+static int cover_speaker=-1;
+static std::string cover_picture;
 static void select_speaker(int i){
   selected_speaker=i;player().dirty=true;
+  cover_ready=cover_speaker==i && cover_picture==player().picture;
   speakers_open=false;
 }
 static void transfer_speaker(int i){
@@ -748,7 +754,6 @@ static void transfer_speaker(int i){
 #endif
 }
 static uint16_t *cover_pixels=nullptr;
-static bool cover_ready=false;
 static bool mini_art_enabled=default_mini_art;
 static bool diagnostics_enabled=diagnostic_default;
 #ifdef STUDY_PALETTE_PICKER
@@ -1392,6 +1397,7 @@ static void paint_level(int value,bool update_display=true) {
   draw_patch(patches[value][1],slider,update_display);
 }
 static void animate() {
+  if(moving)motion_loop.start();else motion_loop.stop();
 #ifdef STUDY_LIVE
 #ifndef STUDY_ARCHITECTURAL_ONLY
   if(diagnostic_pass>=0){diagnostic_scroll_frame();return;}
@@ -1532,7 +1538,7 @@ static void show(int dest,int shift=14) {
     if(page_pixels && i>=0)paint_level(levels[i],false);
     if(page_pixels && dest==scenes)scene_fields();
 #ifdef STUDY_LIVE
-    if(dest==lights)draw_light_list(target);
+    if(dest==lights && (!cached || !light_list_cached))draw_light_list(target);
     if(dest==climate_page || dest==home)climate_field();
     if(dest==edit_page || dest==members_page)edit_fields();
     if(dest==display_page)display_field(screen_level());
@@ -1543,6 +1549,7 @@ static void show(int dest,int shift=14) {
 #endif
   }
   if(transition) {
+    if(playback_direction<0)nav.prepare_live_tiles();
     motion_height=height;
     for(const auto &link:links)if(link.page==dest && link.root)
       motion_height=std::min(motion_height,link.area.y);
@@ -3320,7 +3327,7 @@ static void release() {
         top+=h;
       }
     }
-    if(!speakers_open){cover_ready=false;show(media,0);return;}
+    if(!speakers_open){show(media,0);return;}
     transport_fields();++revision;blit(0,0,width,height,page_pixels);return;
   }
   if(pressed==-154 || pressed==-155){
@@ -3685,6 +3692,7 @@ static void tick() {
     if(selected>=0 && ha_lights.take_detail(selected) && light_sheet!=LightSheet::closed)draw_light_sheet(false);
     if(list_changed && lights_pixels){
       draw_light_list(lights_pixels);
+      light_list_cached=true;
       scanout.invalidate_lamp();
       prepared_level=-2;
       if(current==lights
@@ -3828,7 +3836,8 @@ static void update_cover(){
   const bool previously=cover_ready;
   bool changed=false;
   if(cover_generation!=album_client.generation()){
-    cover_generation=album_client.generation();cover_ready=false;
+    cover_generation=album_client.generation();
+    cover_ready=cover_speaker==selected_speaker && cover_picture==player().picture;
   }
   p4_runtime::AlbumClient::Frame f;
   if(album_client.take(f)){
@@ -3853,6 +3862,7 @@ static void update_cover(){
               const auto *row=src+((info.height-side)/2+y*side/album_rect.h)*stride+(info.width-side)/2;
               for(int x=0;x<album_rect.w;x++)cover_pixels[y*album_rect.w+x]=row[x*side/album_rect.w];
             }
+            cover_speaker=selected_speaker;cover_picture=player().picture;
             cover_ready=true;changed=true;ESP_LOGD("study","Album artwork decoded %ux%u",info.width,info.height);
           }
         }
@@ -3866,7 +3876,10 @@ static void update_cover(){
     player().dirty=true;return;
   }
 #endif
-  if(volume_open || queue_open)return;
+  if(queue_open)return;
+  if(volume_open){
+    transport_fields();++revision;blit(0,0,width,height,page_pixels);return;
+  }
 #ifdef STUDY_CARD_FIELDS
   if(card_page_visible){
 #ifdef STUDY_CARD_PLAYER
