@@ -1,5 +1,8 @@
 # Automatic P4 deployment
 
+See the [combined acceptance record](P4-ACCEPTANCE.md) for measured coverage,
+hardware limitations and outstanding checks.
+
 Supported target: Waveshare ESP32-P4 Wi-Fi 6 board with 32 MB flash, the 5-inch
 720 × 1280 DSI display, and a FAT microSD card. Architectural and all six of its
 palettes are supported. The current layout accepts 1–12 Home Assistant lights.
