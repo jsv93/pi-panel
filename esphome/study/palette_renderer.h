@@ -77,6 +77,9 @@ class PaletteRenderer {
   }
   bool available()const{return data_!=nullptr;}
   int selection()const{return selected_;}
+  uint16_t colour(uint16_t value,int x,int y)const{
+    return selected_?tables_[(y%4)*4+x%4].map(value,0):value;
+  }
   bool choose(int mode,uint8_t *temporary){
     if(mode<0 || mode>5 || !data_ || !temporary)return false;
     if(!mode){

@@ -119,7 +119,7 @@ static void room_start(){
   for(int i=0;i<speaker_count;i++)players[i].start(speaker_ids[i]);
 #ifndef STUDY_BENCH_TEST
   album_client.start(ha_origin);
-  thumbnail_client.start(ha_origin,true);
+  thumbnail_client.start(ha_origin,true,&fleet_settings);
 #endif
   if(bell_enabled)bell_client.begin(fleet_settings,bell_trigger,bell_camera,ha_origin);
   ha_lights.start(room_entities,[](size_t i,int value){

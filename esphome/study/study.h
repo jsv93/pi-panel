@@ -513,8 +513,41 @@ static bool queue_open=false;
 static bool library_open=false;
 static int library_mode=0,library_scroll=0,library_down_scroll=0;
 static constexpr int thumbnail_side=96,thumbnail_slots=12;
-struct Thumbnail {std::string url;uint16_t *pixels=nullptr;uint32_t used=0;bool ready=false;};
+struct Thumbnail {
+  std::string url;
+  uint16_t *pixels=nullptr;
+  uint8_t *alpha=nullptr;
+  uint32_t used=0;
+  int64_t retry_after=0;
+  bool ready=false;
+};
 static Thumbnail thumbnails[thumbnail_slots];
+static uint16_t thumbnail_ground[2][16];
+static void draw_library_thumbnail(uint8_t *frame,const Thumbnail &thumb,const Rect &icon,
+                                   int top,int bottom,int left,int right,bool themed=false){
+  const int radius=library_mode?11:13;
+  for(int y=std::max(top,icon.y+1);y<std::min(bottom,icon.y+icon.h-1);++y){
+    const int row=y-icon.y;
+    auto *out=reinterpret_cast<uint16_t*>(frame)+y*width;
+    for(int x=std::max(left,icon.x+1);x<std::min(right,icon.x+icon.w-1);++x){
+      const int col=x-icon.x;
+      const int dx=std::max({radius-col,0,col-(icon.w-1-radius)});
+      const int dy=std::max({radius-row,0,row-(icon.h-1-radius)});
+      if(dx*dx+dy*dy>radius*radius)continue;
+      const int sample=(row*thumbnail_side/icon.h)*thumbnail_side+col*thumbnail_side/icon.w;
+      const uint16_t pixel=thumb.pixels[sample];
+      const unsigned alpha=thumb.alpha?thumb.alpha[sample]:255;
+      uint16_t ground=thumbnail_ground[library_mode][(row%4)*4+col%4];
+#ifdef STUDY_PALETTE_PICKER
+      if(themed)ground=palette.colour(ground,x,y);
+#endif
+      const unsigned red=((pixel>>11)*alpha+(ground>>11)*(255-alpha)+127)/255;
+      const unsigned green=(((pixel>>5)&63)*alpha+((ground>>5)&63)*(255-alpha)+127)/255;
+      const unsigned blue=((pixel&31)*alpha+(ground&31)*(255-alpha)+127)/255;
+      out[x]=(red<<11)|(green<<5)|blue;
+    }
+  }
+}
 static int thumbnail_job=-1;static uint32_t thumbnail_stamp=0;
 static void load_library_thumbnail();
 static void label(const TextArea &field,const char *value);
@@ -626,6 +659,11 @@ static void paint_library(int movement=0){
     const size_t bytes=2*ref.w*ref.h;
     const auto *tile=library_tile(mode,variant,bytes);
     if(!tile)continue;
+    const int local_x=library_note_rects[mode].x-library_tiles[2*mode].x;
+    const int local_y=library_note_rects[mode].y-library_tiles[2*mode].y;
+    const auto *surface=reinterpret_cast<const uint16_t*>(tile);
+    for(int j=0;j<4;++j)for(int col=0;col<4;++col)
+      thumbnail_ground[mode][j*4+col]=surface[(local_y+16+j)*ref.w+local_x+16+col];
     for(int row=std::max(0,top-y);row<ref.h && row+y<end;row++)
       memcpy(page_pixels+2*((y+row)*width+x),tile+2*row*ref.w,2*ref.w);
     if(item.expand && item.category!="directory"){
@@ -638,10 +676,7 @@ static void paint_library(int movement=0){
     }
     if(!item.thumbnail.empty())for(auto &thumb:thumbnails)if(thumb.ready && thumb.url==item.thumbnail){
       auto icon=library_note_rects[mode];icon.x+=x-library_tiles[2*mode].x;icon.y+=y-library_tiles[2*mode].y;
-      for(int j=std::max(0,top-icon.y);j<icon.h && icon.y+j<end;j++){
-        auto *dst=reinterpret_cast<uint16_t*>(page_pixels)+(icon.y+j)*width+icon.x;
-        for(int col=0;col<icon.w;col++)dst[col]=thumb.pixels[(j*thumbnail_side/icon.h)*thumbnail_side+col*thumbnail_side/icon.w];
-      }
+      draw_library_thumbnail(page_pixels,thumb,icon,top,end,0,width);
       thumb.used=++thumbnail_stamp;break;
     }
     auto field=[&](TextArea area,const std::string &value){
@@ -795,11 +830,13 @@ static void restore_media_colours(uint8_t *frame,const Rect &paint){
       const int y=library_list.y+int((library.first+i)/cols)*step-library_scroll;
       if(y>=library_list.y+library_list.h)break;
       const auto &url=library.items[i].thumbnail;
-      if(url.empty() || !std::any_of(thumbnails,thumbnails+thumbnail_slots,[&](const Thumbnail &t){return t.ready && t.url==url;}))continue;
+      const auto *thumb=std::find_if(thumbnails,thumbnails+thumbnail_slots,[&](const Thumbnail &t){return t.ready && t.url==url;});
+      if(url.empty() || thumb==thumbnails+thumbnail_slots)continue;
       Rect icon=library_note_rects[library_mode];
       icon.x+=library_list.x+(i%cols)*library_steps[library_mode][2]-tile.x;
       icon.y+=y-tile.y;
-      restore(icon,library_list.y,library_list.y+library_list.h);
+      draw_library_thumbnail(frame,*thumb,icon,std::max(paint.y,library_list.y),
+        std::min(paint.y+paint.h,library_list.y+library_list.h),paint.x,paint.x+paint.w,true);
     }
   }else if(cover_ready && !queue_open && !speakers_open){
     if(current==media)restore(album_rect,0,height);
@@ -3990,6 +4027,22 @@ static bool decode_artwork(const p4_runtime::AlbumClient::Frame &frame,
   return true;
 }
 static bool decode_library_thumbnail(const p4_runtime::AlbumClient::Frame &f,Thumbnail &out){
+  if(f.data && f.size>=8 && !memcmp(f.data,"P4RA",4)){
+    constexpr size_t count=thumbnail_side*thumbnail_side;
+    if(tinfl_decompress_mem_to_mem(scratch,count*4,f.data+4,f.size-4,1)!=count*4)return false;
+    if(!out.pixels)out.pixels=static_cast<uint16_t*>(heap_caps_malloc(count*2,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+    if(!out.alpha)out.alpha=static_cast<uint8_t*>(heap_caps_malloc(count,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+    if(!out.pixels || !out.alpha)return false;
+    constexpr int bayer[4][4]={{0,8,2,10},{12,4,14,6},{3,11,1,9},{15,7,13,5}};
+    for(int y=0;y<thumbnail_side;++y)for(int x=0;x<thumbnail_side;++x){
+      const int at=y*thumbnail_side+x,threshold=(2*bayer[y%4][x%4]+1)*255/32;
+      const auto *rgba=scratch+4*at;
+      out.pixels[at]=(((rgba[0]*31+threshold)/255)<<11)|(((rgba[1]*63+threshold)/255)<<5)|((rgba[2]*31+threshold)/255);
+      out.alpha[at]=rgba[3];
+    }
+    return true;
+  }
+  heap_caps_free(out.alpha);out.alpha=nullptr;
   return decode_artwork(f,out.pixels,thumbnail_side,thumbnail_side);
 }
 static void load_library_thumbnail(){
@@ -3999,6 +4052,7 @@ static void load_library_thumbnail(){
     if(!thumbnail_client.take(f))return;
     auto &thumb=thumbnails[thumbnail_job];
     thumb.ready=f.version==thumbnail_client.generation() && decode_library_thumbnail(f,thumb);
+    thumb.retry_after=clock_ms()+10000;
     if(thumb.ready){player().dirty=true;ESP_LOGD("study","Music library thumbnail decoded");}
     heap_caps_free(f.data);thumbnail_job=-1;
   }
@@ -4012,10 +4066,12 @@ static void load_library_thumbnail(){
     const auto &url=library.items[i].thumbnail;
     const int y=int((library.first+i)/cols)*step-library_scroll;
     if(url.empty() || url.size()>=1536 || y>=viewport || y+step<=0)continue;
-    if(std::any_of(thumbnails,thumbnails+thumbnail_slots,[&](const Thumbnail &t){return t.url==url;}))continue;
-    auto *slot=std::min_element(thumbnails,thumbnails+thumbnail_slots,[](const Thumbnail &a,const Thumbnail &b){return a.used<b.used;});
+    auto *slot=std::find_if(thumbnails,thumbnails+thumbnail_slots,[&](const Thumbnail &t){return t.url==url;});
+    if(slot!=thumbnails+thumbnail_slots && (slot->ready || clock_ms()<slot->retry_after))continue;
+    if(slot==thumbnails+thumbnail_slots)
+      slot=std::min_element(thumbnails,thumbnails+thumbnail_slots,[](const Thumbnail &a,const Thumbnail &b){return a.used<b.used;});
     slot->url=url;slot->ready=false;slot->used=++thumbnail_stamp;thumbnail_job=slot-thumbnails;
-    thumbnail_client.select("",url);return;
+    thumbnail_client.select("",url,true);return;
   }
 }
 static void update_cover(){
