@@ -41,6 +41,17 @@ const {chromium}=require('playwright'),assert=require('node:assert/strict');
  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth));
  await page.locator('#sectNav [data-s=access]').click();
  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth));
+ const nativeMetrics={renderer:'native-p4',cpu_temp:39.4000015,ram_used_mb:30,ram_total_mb:32,
+  ram_used_pct:93.75,render_fps:27,display_refresh_hz:55,ha_connected:true};
+ const deviceHeaders={'X-Panel-Token':'qa-device-token-'+'t'.repeat(32)};
+ assert((await api.post(base+'/api/heartbeat',{headers:deviceHeaders,data:{panel_id:'diagnostics-qa',config_version:1,metrics:nativeMetrics}})).ok());
+ assert((await api.post(base+'/api/performance/diagnostics-qa',{headers:deviceHeaders,data:nativeMetrics})).ok());
+ await page.locator('#sectNav [data-s=diag]').click();
+ await page.locator('[data-period="live"]').click();
+ await page.waitForFunction(()=>document.querySelector('#pe-ram_used_pct').textContent.includes('32.0 MiB'));
+ assert.match(await page.locator('#diagStrip').textContent(),/ESP32-P4 native/);
+ assert.match(await page.locator('#diagStrip').textContent(),/39\.4°C/);
+ assert.match(await page.locator('#deviceDiagnostics').textContent(),/27 fps/);
  assert(!requests.some(u=>new URL(u).pathname.startsWith('/api/panels')),'requests must retain ingress prefix');
  assert.deepEqual(errors,[]);await browser.close();
  console.log('PASS ingress UI: shared navigation, four ranges, no sample slider, history confirmation, preserved edits, access form, protected keys, settings navigation and mobile overflow');

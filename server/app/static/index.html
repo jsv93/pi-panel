@@ -2034,7 +2034,9 @@ function drawPerformance(){
   $('#pc-'+s.key).innerHTML=markup;
   const chart=perfCharts.get(s.key);chart.x=x;chart.y=y;showPerformanceTip(chart);
   $('#pv-'+s.key).textContent=metricNumber(latest[s.key],s.key==='load_1m'?2:1);
-  $('#pe-'+s.key).textContent=s.second?'Send '+metricNumber(latest[s.second])+' KB/s':s.key==='ram_used_pct'&&Number.isFinite(latest.ram_used_mb)?metricNumber(latest.ram_used_mb/1024)+' of '+metricNumber(latest.ram_total_mb/1024)+' GiB':s.key==='load_1m'&&latest.cpu_cores?latest.cpu_cores+' CPU cores':'';
+  const memoryScale=latest.ram_total_mb>=1024?1024:1;
+  const memoryUnit=memoryScale===1024?' GiB':' MiB';
+  $('#pe-'+s.key).textContent=s.second?'Send '+metricNumber(latest[s.second])+' KB/s':s.key==='ram_used_pct'&&Number.isFinite(latest.ram_used_mb)?metricNumber(latest.ram_used_mb/memoryScale)+' of '+metricNumber(latest.ram_total_mb/memoryScale)+memoryUnit:s.key==='load_1m'&&latest.cpu_cores?latest.cpu_cores+' CPU cores':'';
   $('#pl-'+s.key).innerHTML=s.second?html`<span><i class="swatch" style="border-color:#78bcf6"></i>Receive</span> <span style="margin-left:10px"><i class="swatch" style="border-color:var(--violet);border-top-style:dashed"></i>Send</span>`:html`${values.length?'Average '+metricNumber(values.reduce((a,v)=>a+v,0)/values.length)+s.unit+' · Peak '+metricNumber(Math.max(...values))+s.unit:'Measurements appear after the panel updates'}`;
  });
  $('#performanceTable').innerHTML=html`${points.map(p=>html`<tr><td>${new Date(p.at*1000).toLocaleString()}</td>${['cpu_usage_pct','cpu_temp','ram_used_pct','net_rx_kbps','net_tx_kbps','disk_write_kbps','load_1m'].map(k=>html`<td>${metricNumber(p[k])}</td>`)}</tr>`)}`;
@@ -2055,7 +2057,7 @@ setInterval(refreshPerformance,5000);document.addEventListener('visibilitychange
 function renderDetailedDiagnostics(){
   const m = CUR.panel.metrics||{};
   $("#diagStrip").innerHTML = [
-    ["CPU", m.cpu_temp?m.cpu_temp+"°C":"—"],
+    ["CPU", Number.isFinite(m.cpu_temp)?metricNumber(m.cpu_temp)+"°C":"—"],
     ["RAM", ramUsage(m)], ["Disk free", m.disk_free||"—"],
     /* Raw value over the device's own maximum, not a percentage: two panels at
        "100%" are two different numbers, which is the whole question when one
@@ -2064,7 +2066,7 @@ function renderDetailedDiagnostics(){
     ["UI version", m.ui_version||"—"],
     ["Running config", "v"+(CUR.panel.config_version||0)],
     ["Socket", CUR.live?"live":"polling"],
-    ["Browser", m.browser_health||"Waiting for updated agent"],
+    [m.renderer==='native-p4'?"Renderer":"Browser", m.renderer==='native-p4'?'ESP32-P4 native':m.browser_health||"Waiting for updated agent"],
     ["Adaptive brightness", m.adaptive_status||"—"],
     /* Shown separately from the launcher on disk on purpose. Equal is the
        answer; "off, pending restart" means the update arrived and chromium has
@@ -2130,7 +2132,14 @@ function updateDeviceDiagnostics(){
  $('#deviceMeta').textContent=[p.hostname,p.ip||'No address',p.kind==='pi'?'Raspberry Pi':'ESP panel','Config v'+p.config_version].join(' · ');
  pill($('#deviceStatus'),p.online?'Online':'Offline',p.online?'ok':'bad');
  $('#connectionSummary').textContent=p.online?'Last heartbeat '+ago(p.last_seen):'Panel offline';
- const rows=[['Panel agent',CUR.live?'Connected':'Polling / disconnected'],['Home Assistant',m.ha_connected?'Connected':'Disconnected'],['Display browser',m.browser_health||'Not reported'],['Bluetooth proxy',m.bluetooth_status||m.bluetooth_service||'See room detection'],['Presence',m.presence||'Not reported'],['Backlight',m.backlight||'Not reported'],['Browser recoveries',Number.isFinite(m.browser_recoveries_hour)?m.browser_recoveries_hour+' in the last hour':'Not reported'],['Storage free',m.disk_free||'Not reported']];
+ const native=m.renderer==='native-p4';
+ const rows=[['Panel agent',CUR.live?'Connected':'Polling / disconnected'],['Home Assistant',m.ha_connected?'Connected':'Disconnected']];
+ if(native){
+   rows.push(['Renderer','ESP32-P4 native'],['Rendered frames',Number.isFinite(m.render_fps)?m.render_fps.toFixed(0)+' fps · last second':'Not reported'],['Display refresh',Number.isFinite(m.display_refresh_hz)?m.display_refresh_hz.toFixed(1)+' Hz':'Not reported']);
+ }else{
+   rows.push(['Display browser',m.browser_health||'Not reported'],['Bluetooth proxy',m.bluetooth_status||m.bluetooth_service||'See room detection'],['Presence',m.presence||'Not reported'],['Browser recoveries',Number.isFinite(m.browser_recoveries_hour)?m.browser_recoveries_hour+' in the last hour':'Not reported'],['Storage free',m.disk_free||'Not reported']);
+ }
+ rows.push(['Backlight',m.backlight||'Not reported']);
  $('#deviceDiagnostics').innerHTML=html`<dl class="device-list">${rows.map(([k,v])=>html`<div><dt>${k}</dt><dd>${v}</dd></div>`)}</dl>`;
 }
 function renderConfigHistory(){
