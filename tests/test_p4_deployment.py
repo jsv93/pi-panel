@@ -69,6 +69,14 @@ async def check(server, db, deploy):
         deploy.queue(pid);assert len(deploy.status(pid)['jobs'])==2
         new=deploy.status(pid)['jobs'][0];deploy.set_state(dict(id=new['id'],panel_id=pid),'building')
         deploy.init();assert deploy.status(pid)['jobs'][0]['state']=='queued'
+        # A changed room must terminate obsolete compiler work promptly. This
+        # exercises a real child process, without compiling or touching devices.
+        process=await asyncio.create_subprocess_exec(sys.executable,'-c','import time; time.sleep(120)',start_new_session=os.name!='nt')
+        try:
+            obsolete=dict(panel_id=pid,shape='obsolete-shape')
+            assert await deploy.wait_build(process,obsolete,interval=.05) is None
+            assert process.returncode is not None
+        finally:await deploy.stop_build(process)
         asset=directory/'artifacts'/(items[1]['sha256']+'.bin');asset.write_bytes(b'corrupt')
         try:deploy.validate_product(product,directory/'artifacts');raise AssertionError('accepted corruption')
         except ValueError:pass

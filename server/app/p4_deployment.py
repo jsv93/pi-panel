@@ -160,6 +160,34 @@ async def existing_api_name(panel,key):
     finally:await client.disconnect()
 
 
+async def stop_build(process):
+    if process.returncode is not None:return
+    try:
+        if os.name!='nt':os.killpg(process.pid,signal.SIGTERM)
+        else:process.terminate()
+    except ProcessLookupError:return
+    try:await asyncio.wait_for(process.wait(),10)
+    except asyncio.TimeoutError:
+        if os.name!='nt':os.killpg(process.pid,signal.SIGKILL)
+        else:process.kill()
+        await process.wait()
+
+
+async def wait_build(process,job,interval=15):
+    deadline=time.monotonic()+4*60*60
+    try:
+        while time.monotonic()<deadline:
+            try:return await asyncio.wait_for(process.wait(),interval)
+            except asyncio.TimeoutError:pass
+            with db.conn() as c:
+                device=c.execute('SELECT enabled FROM p4_devices WHERE panel_id=?',(job['panel_id'],)).fetchone()
+            if not device or not device['enabled'] or shape(db.merged_config(job['panel_id']))!=job['shape']:
+                await stop_build(process);return None
+        raise asyncio.TimeoutError()
+    except (asyncio.TimeoutError,asyncio.CancelledError):
+        await stop_build(process);raise
+
+
 async def worker():
     while True:
         try:
@@ -196,16 +224,11 @@ async def worker():
             with (directory/'build.log').open('wb') as log:
                 process = await asyncio.create_subprocess_exec(sys.executable, str(SOURCE/'esphome/p4_runtime/build.py'), str(directory),
                     stdout=log, stderr=log, env=dict(os.environ, PYTHONUNBUFFERED='1'),start_new_session=os.name!='nt')
-                try: code = await asyncio.wait_for(process.wait(), 4*60*60)
-                except (asyncio.TimeoutError, asyncio.CancelledError):
-                    if os.name!='nt':os.killpg(process.pid,signal.SIGTERM)
-                    else:process.terminate()
-                    try:await asyncio.wait_for(process.wait(),10)
-                    except asyncio.TimeoutError:
-                        if os.name!='nt':os.killpg(process.pid,signal.SIGKILL)
-                        else:process.kill()
-                        await process.wait()
-                    raise
+                code=await wait_build(process,job)
+            if code is None:
+                set_state(job,'superseded','Room changed during build; preparing its latest configuration')
+                await asyncio.to_thread(trim_storage,pid)
+                continue
             if code: raise RuntimeError('Build failed; the installed panel is unchanged. Private compiler log retained on server.')
             product = json.loads((directory/'product.json').read_bytes())
             await asyncio.to_thread(validate_product, product, directory/'artifacts')
