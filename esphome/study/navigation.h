@@ -6,6 +6,9 @@
 #ifdef STUDY_SD_NAVIGATION
 #include "live_runtime/navigation_art.h"
 #endif
+#ifdef STUDY_HOME_ZOOM
+#include "live_runtime/home_zoom.inc"
+#endif
 #ifdef STUDY_LIVE
 #include "live_runtime/motion_tail.h"
 #include "mbedtls/sha256.h"
@@ -61,6 +64,7 @@ class Navigation {
   bool from_variant_{},to_variant_{};
   int mode_=0,reference_mode_=0;
   bool sd_active_=false,sd_memory_=false;
+  bool home_zoom_=false;
   uint16_t *fade_background_=nullptr;
   int fade_background_mode_=-1;
   bool warm_fade_background(int mode){
@@ -312,6 +316,9 @@ class Navigation {
     patch.phase=phase;
   }
   void overlay(uint16_t *out,int phase,int &first_y,int &end_y)const{
+#ifdef STUDY_HOME_ZOOM
+    if(home_zoom_){home_zoom_artwork.draw(out,foreground_pixels(),mode_,phase,first_y,end_y);return;}
+#endif
     if(!from_variant_ && !to_variant_)return;
     const auto &p=nav_paths[route_];
     const auto pose=nav_pose[p.travel==14?0:p.travel==24?1:2][phase];
@@ -407,6 +414,9 @@ class Navigation {
     return tinfl_decompress_mem_to_mem(out,sizeof(play_chunks_),run_data+b.offset,b.size,1)==sizeof(play_chunks_);
   }
   bool assemble(int phase,uint8_t *out){
+#ifdef STUDY_HOME_ZOOM
+    if(home_zoom_)return home_zoom_artwork.frame(mode_,phase,out,input_size_);
+#endif
 #ifdef STUDY_SD_NAVIGATION
     if(sd_active_)return navigation_artwork.frame(mode_,route_,phase,out,input_size_);
 #endif
@@ -546,6 +556,9 @@ class Navigation {
     static_assert(paths==sd_navigation_routes);
     frame_capacity=std::max(frame_capacity,size_t(sd_navigation_max_frame));
 #endif
+#ifdef STUDY_HOME_ZOOM
+    frame_capacity=std::max(frame_capacity,size_t(home_zoom_max_frame));
+#endif
     input_=static_cast<uint8_t*>(jpeg_alloc_decoder_mem(frame_capacity,&cfg,&input_size_));
 #ifdef STUDY_PLANAR_MAPS
     constexpr size_t map_buffer_bytes=blocks*7;
@@ -575,6 +588,9 @@ class Navigation {
     ESP_LOGI("study","Navigation decoder ready: %d routes, %u KiB runs, %u KiB cache, %u KiB free PSRAM",paths,chunks_?chunk_bytes/1024:0,unsigned(arena_size_/1024),unsigned(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)/1024));
   }
   void prepare(int page){
+#ifdef STUDY_HOME_ZOOM
+    home_zoom_artwork.warm();
+#endif
 #ifdef STUDY_SD_NAVIGATION
     navigation_artwork.warm();
     if(navigation_artwork.ready()){
@@ -614,7 +630,7 @@ class Navigation {
     release_job();
     route_=-1;phase_=-1;first_at_=0;tap_at_=tap;
     play_patch_->phase=next_patch_->phase=-1;
-    sd_active_=false;mode_=0;
+    sd_active_=false;home_zoom_=false;mode_=0;
 #ifdef STUDY_PALETTE_PICKER
     mode_=palette.selection();
 #endif
@@ -631,6 +647,9 @@ class Navigation {
       const auto &p=nav_paths[i];
       if(p.from==from && p.to==to && p.travel==travel){
         route_=i;from_variant_=variant(from);to_variant_=variant(to);clip_=height;
+#ifdef STUDY_HOME_ZOOM
+        home_zoom_=sd_active_ && to==home && home_zoom_artwork.ready();
+#endif
         for(const auto &l:links)if(l.page==to && l.root)clip_=std::min(clip_,l.area.y);
         return;
       }
@@ -665,6 +684,9 @@ class Navigation {
   void cancel(){release_job();route_=-1;}
   void prepare_live_tiles(){
     if(!active())return;
+#ifdef STUDY_HOME_ZOOM
+    if(home_zoom_){home_zoom_artwork.prepare(mode_,thermostat.temperature,player().playing);return;}
+#endif
     const auto &p=nav_paths[route_];
     if(from_variant_)find_changes(p.from,previous_pixels,changed_rows_[0]);
     if(to_variant_)find_changes(p.to,foreground_pixels(),changed_rows_[1]);
@@ -692,6 +714,9 @@ class Navigation {
       size_t frame_bytes=b.bytes;
 #ifdef STUDY_SD_NAVIGATION
       if(sd_active_)frame_bytes=navigation_artwork.frame_size(mode_,route_,phase);
+#endif
+#ifdef STUDY_HOME_ZOOM
+      if(home_zoom_)frame_bytes=home_zoom_artwork.frame_size(mode_,phase);
 #endif
       if(queued_>=0){
         std::swap(input_,next_input_);std::swap(play_patch_,next_patch_);queued_=-1;job_done_=false;

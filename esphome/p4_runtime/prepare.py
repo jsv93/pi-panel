@@ -23,6 +23,7 @@ def main():
     p.add_argument("--card-assets",type=Path,help="Directory containing the generated card_assets.h and card_lights.h for this room")
     p.add_argument("--overlay-assets",type=Path,help="Directory containing the Architectural overlay palette bank installed on the microSD card")
     p.add_argument("--navigation-assets",type=Path,help="Directory containing the six-palette SD navigation bank")
+    p.add_argument("--home-zoom-assets",type=Path,help="Directory containing CM5 Home zoom frames and poses")
     args = p.parse_args()
     if args.architectural_only and (args.card_assets or not args.hosted_wifi):
         p.error("Architectural-only builds use the onboard artwork and hosted Wi-Fi")
@@ -30,6 +31,8 @@ def main():
         p.error("The overlay palette bank belongs to the Architectural build")
     if args.navigation_assets and not args.architectural_only:
         p.error("The SD navigation bank belongs to the Architectural build")
+    if args.home_zoom_assets and not args.navigation_assets:
+        p.error("Home zoom requires the Architectural SD navigation renderer")
     if not re.fullmatch(r"[a-z0-9-]{1,60}", args.id):
         p.error("invalid panel id")
     if not re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", args.mac):
@@ -264,6 +267,38 @@ def main():
         for name in ("navigation_art.h","card_art.h","scanout_dma.h"):
             shutil.copyfile(study/name,dest/name)
         source=source.replace("build_flags: [",'build_flags: [-DSTUDY_SD_NAVIGATION, -DSTUDY_DMA_RETIRE, "-Wl,--wrap=dw_gdma_channel_register_event_callbacks", ',1)
+    if args.home_zoom_assets:
+        metadata=json.loads((args.home_zoom_assets/"home_zoom.json").read_bytes())
+        if (metadata.get('motion')!='cm5-home-zoom' or metadata.get('width')!=720 or metadata.get('height')!=1280 or
+            metadata.get('duration_ms')!=180 or metadata.get('origin')!=[360,640] or
+            metadata.get('palettes')!=['linen','midnight','ember','slate','heath','mono']):
+            p.error('Home zoom geometry or palette order differs')
+        digest=bytes.fromhex(metadata['sha256'])
+        asset=args.home_zoom_assets/(digest.hex()+'.bin')
+        with asset.open('rb') as stream:actual=hashlib.file_digest(stream,'sha256').digest()
+        if len(digest)!=32 or actual!=digest or asset.stat().st_size!=metadata['bytes']:
+            p.error('Home zoom artwork does not match its identity')
+        frames=metadata['frames'];poses=metadata['poses'];colours=metadata['colours']
+        if len(frames)!=60 or len(poses)!=10 or len(colours)!=6 or any(o<0 or n<=0 or o+n>metadata['bytes'] for o,n in frames):
+            p.error('Invalid Home zoom index')
+        if any(not .954<=pose['scale']<=1 or not 0<=pose['scrim']<=.55 for pose in poses):
+            p.error('Invalid Home zoom pose')
+        def packed(v):
+            if len(v)!=3 or any(type(n)!=int or not 0<=n<=255 for n in v):p.error('Invalid Home zoom colour')
+            return (v[0]>>3)<<11 | (v[1]>>2)<<5 | (v[2]>>3)
+        header=(args.home_zoom_assets/'home_zoom_assets.h').read_text()
+        checks=[f'home_zoom_path[]="/sd/pi-panel/{digest.hex()}.bin"',
+            'home_zoom_sha[]={'+','.join(map(str,digest))+'}',
+            f"home_zoom_size={metadata['bytes']},home_zoom_max_frame={max(n for _,n in frames)}",
+            'home_zoom_frames[][2]={'+','.join('{%d,%d}'%tuple(f) for f in frames)+'}',
+            'home_zoom_scales[]={'+','.join(str(round(p['scale']*65536)) for p in poses)+'}',
+            'home_zoom_opacities[]={'+','.join(str(round(p['scrim']*255)) for p in poses)+'}',
+            'home_zoom_scrims[]={'+','.join(str(packed(c['scrim'])) for c in colours)+'}',
+            'home_zoom_inks[]={'+','.join(str(packed(c['ink'])) for c in colours)+'}']
+        if any(value not in header for value in checks):p.error('Home zoom header differs from its metadata')
+        shutil.copyfile(args.home_zoom_assets/'home_zoom_assets.h',dest/'home_zoom_assets.h')
+        shutil.copyfile(Path(__file__).parent.parent/'study/home_zoom.inc',dest/'home_zoom.inc')
+        source=source.replace('build_flags: [','build_flags: [-DSTUDY_HOME_ZOOM, ',1)
     if args.overlay_assets or args.navigation_assets:
         source=source.replace("    advanced:\n","    advanced:\n      disable_fatfs: false\n      disable_vfs_support_dir: false\n",1)
         source=source.replace("    sdkconfig_options:\n",'    sdkconfig_options:\n      CONFIG_FATFS_LFN_NONE: "n"\n      CONFIG_FATFS_LFN_HEAP: "y"\n      CONFIG_FATFS_USE_FASTSEEK: "y"\n',1)
@@ -320,6 +355,8 @@ inline bool study_station_ip(esp_netif_ip_info_t &info){
         source=source.replace("  on_boot:\n","  on_boot:\n    - priority: -200\n      then:\n        - lambda: 'study::overlay_artwork.warm();'\n",1)
     if args.navigation_assets:
         source=source.replace("  on_boot:\n","  on_boot:\n    - priority: -200\n      then:\n        - lambda: 'study::navigation_artwork.warm();'\n",1)
+    if args.home_zoom_assets:
+        source=source.replace("  on_boot:\n","  on_boot:\n    - priority: -200\n      then:\n        - lambda: 'study::home_zoom_artwork.warm();'\n",1)
     if args.overlay_assets or args.navigation_assets:
         source=source.replace("esp_driver_tsens]", "esp_driver_tsens, fatfs, sdmmc, esp_driver_sdmmc]")
     source = source.replace("    type: esp-idf\n", "    type: esp-idf\n    components: [espressif/esp_websocket_client==1.4.0]\n", 1)

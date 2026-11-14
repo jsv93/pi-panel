@@ -44,7 +44,13 @@ The firmware checks the complete package SHA-256 in a background task after boot
 
 Transition frames decode at 720 × 1280. The incoming page fades up against the palette's dark ground and scrim, using the CM5's 180 ms ease-out and slight horizontal movement. The outgoing page is excluded, including its live text and artwork. Changed incoming regions blend through the P4 graphics accelerator. The first frame is prefetched while preparing the destination page. The SD build wraps ESP-IDF 5.5's DSI DMA callback registration to retire framebuffers after their actual DMA completion; unrelated DMA clients retain their original callbacks. Revalidate this driver contract before changing the IDF minor version. If tracking is unavailable, the renderer retains its conservative two-refresh retirement rule.
 
-The current six-palette Study package occupies about 67 MiB. Full integrity verification runs after each cold boot; navigation remains usable through the existing compositor meanwhile. Animation artwork is JPEG-compressed, while settled pages retain their native RGB565 rendering. The fade uses the settled scrim colour, and does not reproduce the browser's separate Home scale animation. Live album blending and non-Linen destination preparation can still increase frame time and initial response latency.
+The current six-palette Study package occupies about 67 MiB. Full integrity verification runs after each cold boot; navigation remains usable through the existing compositor meanwhile. Animation artwork is JPEG-compressed, while settled pages retain their native RGB565 rendering. Live album blending and non-Linen destination preparation can still increase frame time and initial response latency.
+
+Home's separate scale and scrim animations use an optional small companion package. Capture it from the same room configuration and Chromium/font environment as the native pages:
+
+    python esphome/study/home_zoom.py PALETTE_DIRECTORY states.json PRIVATE_HOME_ZOOM --chromium-cdp http://127.0.0.1:9222
+
+Copy its hash-named `.bin` into the card's existing `pi-panel` directory and pass `--home-zoom-assets PRIVATE_HOME_ZOOM` alongside `--navigation-assets` to `prepare.py`. The current Study companion is about 3.2 MiB. The generator captures the actual CM5 transform and scrim curves over 180 ms at 720 × 1280. Only the title, live temperature and menu scale from 0.955 to 1 around the screen centre; the photograph, live player and navigation remain stationary. Temperature glyphs use bilinear sampling, while the player blends through the graphics accelerator. The settled page keeps its native rendering. The companion is verified locally at boot and works without Panel Server; missing or invalid companion artwork retains the existing fade. The original navigation package remains compatible with the previous firmware for rollback.
 
 ### Card-backed artwork in the candidate
 
