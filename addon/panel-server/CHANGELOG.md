@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.26.2
+
+- Show the native ESP32-P4 renderer, rendered frames per second and display refresh rate in device diagnostics.
+- Display small-panel memory capacity in MiB and round processor temperatures for readability.
+
 ## 0.26.1
 
 - Stream P4 doorbell video from Home Assistant Core using a ticket scoped to the configured camera when the add-on uses Supervisor authentication.
