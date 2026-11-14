@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.27.2
+
+- Restore P4 artwork builds on Home Assistant virtual machines whose CPU profile lacks x86-64-v2 instructions.
+- Verify the image's numerical renderer on an emulated legacy x86 CPU before publishing the add-on catalogue, and build arm64 images on native ARM runners.
+
 ## 0.27.1
 
 - Show the latest build log inside P4 Diagnostics, restricted to authenticated administrators and the selected device's builds, with pairing credentials removed.

@@ -29,15 +29,17 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: amd64
             platform: linux/amd64
+            runner: ubuntu-latest
           - arch: aarch64
             platform: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
@@ -60,12 +62,6 @@ jobs:
             echo "config.yaml says $have, publishing $want — bump one to match." >&2
             exit 1
           fi
-
-      - name: Enable arm64 emulation
-        if: matrix.arch == 'aarch64'
-        # binfmt handlers for cross-building; the image is pulled from Docker
-        # Hub rather than fetched as an action.
-        run: docker run --privileged --rm tonistiigi/binfmt --install arm64
 
       - name: Set up buildx
         run: docker buildx create --name panel --use --driver docker-container
@@ -96,6 +92,20 @@ jobs:
         # Home Assistant pulls by exact tag, so check that exact tag resolves
         # rather than trusting the push step's exit code.
         run: docker buildx imagetools inspect "$IMAGE:$VERSION" > /dev/null
+
+      - name: Verify legacy HA virtual CPU compatibility
+        if: matrix.arch == 'amd64'
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/pi-panel-server-amd64
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-user-static
+          docker run --rm \
+            -v /usr/bin/qemu-x86_64-static:/usr/local/bin/legacy-cpu:ro \
+            -v "$PWD:/src:ro" \
+            "$IMAGE:$VERSION" /usr/local/bin/legacy-cpu -cpu qemu64 \
+            /usr/local/bin/python /src/tests/test_p4_legacy_cpu.py
 
   # Only after every architecture has published. A release is two repositories,
   # and doing them by hand has gone wrong in both directions: the manifest

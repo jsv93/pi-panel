@@ -1,4 +1,6 @@
 esphome==2026.6.5
 playwright==1.65.1
-numpy==2.4.6
+# NumPy 2.4 wheels require x86-64-v2, absent from common HA KVM CPU profiles.
+# Keep portable wheels until the builder supplies a tested baseline build.
+numpy==2.3.5
 lz4==4.4.4
