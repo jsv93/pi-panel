@@ -27,7 +27,10 @@ class OverlayArtwork {
       if(!buffer)return false;
       packed_=buffer;capacity_=section[1];
     }
-    if(!file_.read(section[0],packed_,section[1]))return false;
+    if(!file_.read(section[0],packed_,section[1])){
+      ESP_LOGW("study","Overlay artwork read failed at %u",section[0]);
+      return false;
+    }
     // Repeated timeline and text patches stay in a bounded 32 KiB cache.
     if(section[1]<=4096){
       auto &packet=packets_[next_packet_++%std::size(packets_)];
@@ -37,7 +40,9 @@ class OverlayArtwork {
         packet={section[0],section[1],data};
       }
     }
-    return tinfl_decompress_mem_to_mem(out,count,packed_,section[1],1)==count;
+    const bool expanded=tinfl_decompress_mem_to_mem(out,count,packed_,section[1],1)==count;
+    if(!expanded)ESP_LOGW("study","Overlay artwork decode failed at %u",section[0]);
+    return expanded;
   }
   bool image(const OverlayImage *first,const OverlayImage *end,unsigned source,unsigned source_size,
              int palette,uint8_t *out,size_t count){

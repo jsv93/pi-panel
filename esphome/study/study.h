@@ -1748,8 +1748,9 @@ static void show(int dest,int shift=14) {
   }
   nav.select(current,dest,shift,request_at);
 #ifdef STUDY_PALETTE_PICKER
-  if(palette.selection()){nav.select(-1,-1,0,request_at);playback_direction=-1;}
+  if(palette.selection())playback_direction=-1;
 #endif
+  if(playback_direction<0)nav.prefetch();
   const bool transition=change && shift && blender && current!=idle && current!=doorbell && dest!=idle && dest!=doorbell;
   if(transition)std::swap(previous_pixels,page_pixels);
   palette_motion=false;

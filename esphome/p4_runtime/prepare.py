@@ -22,11 +22,14 @@ def main():
     p.add_argument("--hosted-wifi",action="store_true",help="Include the Waveshare C6 radio and external text artwork")
     p.add_argument("--card-assets",type=Path,help="Directory containing the generated card_assets.h and card_lights.h for this room")
     p.add_argument("--overlay-assets",type=Path,help="Directory containing the Architectural overlay palette bank installed on the microSD card")
+    p.add_argument("--navigation-assets",type=Path,help="Directory containing the six-palette SD navigation bank")
     args = p.parse_args()
     if args.architectural_only and (args.card_assets or not args.hosted_wifi):
         p.error("Architectural-only builds use the onboard artwork and hosted Wi-Fi")
     if args.overlay_assets and not args.architectural_only:
         p.error("The overlay palette bank belongs to the Architectural build")
+    if args.navigation_assets and not args.architectural_only:
+        p.error("The SD navigation bank belongs to the Architectural build")
     if not re.fullmatch(r"[a-z0-9-]{1,60}", args.id):
         p.error("invalid panel id")
     if not re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", args.mac):
@@ -220,8 +223,42 @@ def main():
         for name in ("overlay_artwork.h","card_art.h"):
             shutil.copyfile(study/name,dest/name)
         source=source.replace("build_flags: [","build_flags: [-DSTUDY_OVERLAY_PALETTES, ",1)
+    if args.navigation_assets:
+        import sys
+        sys.path.insert(0,str(Path(__file__).parent.parent/"study"))
+        from page_motion import routes
+        metadata=json.loads((args.navigation_assets/"navigation.json").read_bytes())
+        views=json.loads((args.build/"screens.json").read_bytes())["views"]
+        if metadata["pages"]!=[view["name"] for view in views] or metadata["routes"]!=[list(route) for route in routes(views)]:
+            p.error("SD navigation artwork uses different page routes")
+        if metadata["palettes"]!=["linen","midnight","ember","slate","heath","mono"]:
+            p.error("SD navigation artwork uses a different palette order")
+        digest=bytes.fromhex(metadata["sha256"])
+        asset=args.navigation_assets/(digest.hex()+".bin")
+        with asset.open("rb") as stream:
+            actual=hashlib.file_digest(stream,"sha256").digest()
+        if len(digest)!=32 or actual!=digest or asset.stat().st_size!=metadata["bytes"]:
+            p.error("SD navigation artwork does not match its identity")
+        header=(args.navigation_assets/"navigation_art_assets.h").read_text()
+        match=re.search(r"sd_navigation_sha\[\]=\{([0-9,]+)\}",header)
+        if not match or bytes(map(int,match[1].split(',')))!=digest:
+            p.error("SD navigation header belongs to a different artwork bank")
+        if f'"/sd/pi-panel/{digest.hex()}.bin"' not in header:
+            p.error("SD navigation header uses a different card path")
+        values={"size":metadata["bytes"],"index":metadata["index_offset"],
+                "hashes":metadata["hashes_offset"],"max_frame":metadata["max_frame"],
+                "routes":len(metadata["routes"]),"pages":len(metadata["pages"])}
+        for key,value in values.items():
+            match=re.search(r"\bsd_navigation_"+key+r"=(\d+)\b",header)
+            if not match or int(match[1])!=value:p.error("SD navigation header differs from its metadata")
+        shutil.copyfile(args.navigation_assets/"navigation_art_assets.h",dest/"navigation_art_assets.h")
+        study=Path(__file__).parent.parent/"study"
+        for name in ("navigation_art.h","card_art.h","scanout_dma.h"):
+            shutil.copyfile(study/name,dest/name)
+        source=source.replace("build_flags: [",'build_flags: [-DSTUDY_SD_NAVIGATION, -DSTUDY_DMA_RETIRE, "-Wl,--wrap=dw_gdma_channel_register_event_callbacks", ',1)
+    if args.overlay_assets or args.navigation_assets:
         source=source.replace("    advanced:\n","    advanced:\n      disable_fatfs: false\n      disable_vfs_support_dir: false\n",1)
-        source=source.replace("    sdkconfig_options:\n",'    sdkconfig_options:\n      CONFIG_FATFS_LFN_NONE: "n"\n      CONFIG_FATFS_LFN_HEAP: "y"\n',1)
+        source=source.replace("    sdkconfig_options:\n",'    sdkconfig_options:\n      CONFIG_FATFS_LFN_NONE: "n"\n      CONFIG_FATFS_LFN_HEAP: "y"\n      CONFIG_FATFS_USE_FASTSEEK: "y"\n',1)
     source+="\njson:\n"
     # Initialise network interfaces before allocating the optional renderer
     # workers and restoring the palette. Physical display setup still runs
@@ -273,6 +310,9 @@ inline bool study_station_ip(esp_netif_ip_info_t &info){
     source = source.replace("esp_driver_jpeg, esp_driver_ppa]", "esp_driver_jpeg, esp_driver_ppa, esp_http_client, json, nvs_flash, esp_driver_tsens]")
     if args.overlay_assets:
         source=source.replace("  on_boot:\n","  on_boot:\n    - priority: -200\n      then:\n        - lambda: 'study::overlay_artwork.warm();'\n",1)
+    if args.navigation_assets:
+        source=source.replace("  on_boot:\n","  on_boot:\n    - priority: -200\n      then:\n        - lambda: 'study::navigation_artwork.warm();'\n",1)
+    if args.overlay_assets or args.navigation_assets:
         source=source.replace("esp_driver_tsens]", "esp_driver_tsens, fatfs, sdmmc, esp_driver_sdmmc]")
     source = source.replace("    type: esp-idf\n", "    type: esp-idf\n    components: [espressif/esp_websocket_client==1.4.0]\n", 1)
     source = source.replace("    sdkconfig_options:\n", '''    sdkconfig_options:

@@ -32,6 +32,20 @@ Copy the generated hash-named `.bin` file into the existing microSD card's `pi-p
 
 Provision the generated application, `text-art.bin` and `palette-art.bin` together using the offsets and hashes in the new `live_runtime/motion_tail.h`. A changed text-bank size can move the palette bank. Preserve the previous application and its matching banks for rollback. Card packages have immutable hash-based filenames so both application versions can retain their own artwork.
 
+### Architectural navigation on microSD
+
+Generate the full-resolution navigation package from the same six-palette captures used for the page bank.
+
+    python esphome/study/sd_navigation.py PALETTE_DIRECTORY PRIVATE_NAVIGATION
+
+Copy the generated hash-named `.bin` file into the card's existing `pi-panel` directory, then pass `--navigation-assets PRIVATE_NAVIGATION` with `--architectural-only` to `prepare.py`. Provision the complete file before installing the matching application. `navigation.json` records its exact storage requirement and SHA-256. The Study package uses approximately 349 MB in addition to the overlay package. Keep the card inserted for local navigation artwork during a Panel Server outage.
+
+The firmware checks the complete package SHA-256 in a background task after boot. Its frame index and native RGB565 page hashes keep live controls, text and album artwork in the transitions. The reader combines adjacent sectors within FatFs's allocation map and shares the filesystem volume lock with other card operations. Existing fragmented files and allocation sizes are supported. Missing or invalid artwork uses the existing compositor while the loader retries.
+
+Transition frames decode at 720 × 1280, with changed live regions blended by the P4 graphics accelerator. The first frame is prefetched while preparing the destination page. The SD build wraps ESP-IDF 5.5's DSI DMA callback registration to retire framebuffers after their actual DMA completion; unrelated DMA clients retain their original callbacks. Revalidate this driver contract before changing the IDF minor version. If tracking is unavailable, the renderer retains its conservative two-refresh retirement rule.
+
+The current six-palette Study package occupies about 333 MiB. Full integrity verification after a cold boot can take one to two minutes on the test card; navigation remains usable through the existing compositor meanwhile. Animation artwork is JPEG-compressed, while settled pages retain their native RGB565 rendering. This optimisation does not establish exact CM5 motion parity: live album blending and non-Linen destination preparation can still increase frame time and initial response latency.
+
 ### Card-backed artwork in the candidate
 
 The Default and Ambient comparison uses 720 × 1280 RGB565 captures from Chromium on the CM5. For each theme and palette, `card_art.py` reads `screens.bin` and `screens.json`, plus the theme's `geometry.json` measured at the same viewport. `card_light_art.py` renders brightness tracks and percentages at every level from 0 through 100. Its `--chromium-cdp` option accepts a loopback SSH forward to an isolated Chromium instance on the CM5. Use the same browser and fonts for both captures.
@@ -81,7 +95,7 @@ To include the picker, render each Architectural palette into a subdirectory nam
     python esphome/study/palette_art.py PALETTE_DIRECTORY PRIVATE_BUILD/study-palettes.bin
     python esphome/study/palette_runtime.py PALETTE_DIRECTORY PRIVATE_BUILD/study-palettes.bin states.json PRIVATE_BUILD
 
-The second command checks all resting screens against the CM5 RGB565 captures and captures all six picker states. Provision `palette-art.bin` at `0x610000 + palette_offset` from the generated motion header. The app verifies its digest. Non-Linen movement uses the P4 compositor. Live media, overlaid text and transition colours still require visual comparisons on the device.
+The second command checks all resting screens against the CM5 RGB565 captures and captures all six picker states. Provision `palette-art.bin` at `0x610000 + palette_offset` from the generated motion header. The app verifies its digest. Non-Linen movement uses the P4 compositor unless the matching SD navigation bank is ready. Live media, overlaid text and transition colours still require visual comparisons on the device.
 
 ## Hardware test
 

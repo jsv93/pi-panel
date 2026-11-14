@@ -130,10 +130,30 @@ class PaletteRenderer {
     std::array<uint32_t,16> previous;
     previous.fill(UINT32_MAX);
     std::array<uint16_t,16> converted{};
+    std::array<uint64_t,4> previous_groups{},converted_groups{};
+    std::array<uint32_t,4> previous_ranks{};
+    std::array<bool,4> group_valid{};
     for(int row=y;row<y+h;row++){
       if((row&63)==0)esphome::App.feed_wdt();
       for(int column=x;column<x+w;column++){
         const unsigned position=row*width+column;
+        if(page_>=2 && column%4==0 && column+4<=x+w){
+          uint64_t group;
+          uint32_t ranks=0;
+          memcpy(&group,frame+position,sizeof(group));
+          if(exact && page_>=0)memcpy(&ranks,ranks_+position,sizeof(ranks));
+          const unsigned row_slot=row%4;
+          if(!group_valid[row_slot] || previous_groups[row_slot]!=group || previous_ranks[row_slot]!=ranks){
+            uint16_t mapped[4];
+            for(unsigned offset=0;offset<4;++offset)
+              mapped[offset]=tables_[row_slot*4+offset].map(uint16_t(group>>(16*offset)),uint8_t(ranks>>(8*offset)));
+            memcpy(&converted_groups[row_slot],mapped,sizeof(mapped));
+            previous_groups[row_slot]=group;previous_ranks[row_slot]=ranks;group_valid[row_slot]=true;
+          }
+          memcpy(frame+position,&converted_groups[row_slot],sizeof(group));
+          column+=3;
+          continue;
+        }
         auto &pixel=frame[position];
         const unsigned slot=(row%4)*4+column%4;
         const unsigned rank=exact && page_>=0?ranks_[position]:0;

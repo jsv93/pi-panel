@@ -3,6 +3,9 @@
 #include "motion_chunks.h"
 #include "esp_partition.h"
 #include "esp_rom_crc.h"
+#ifdef STUDY_SD_NAVIGATION
+#include "live_runtime/navigation_art.h"
+#endif
 #ifdef STUDY_LIVE
 #include "live_runtime/motion_tail.h"
 #include "mbedtls/sha256.h"
@@ -56,6 +59,8 @@ class Navigation {
   int owner_=-1,route_=-1,phase_=-1,prepare_route_=0,prepare_phase_=0,part_=0;
   int clip_{};
   bool from_variant_{},to_variant_{};
+  int mode_=0,reference_mode_=0;
+  bool sd_active_=false,sd_memory_=false;
   // Source geometry for each eight-line strip. Pixel blending still uses
   // the exact tile intersections for the phase's sub-tile translation.
   static constexpr int tile_columns=width/16;
@@ -65,6 +70,7 @@ class Navigation {
   uint32_t *reference_hashes_[doorbell+1]{};
   struct LivePatch {
     uint16_t *pixels{};
+    size_t capacity=0;
     uint64_t rows[height/8]{};
     int phase=-1;
   } patches_[2];
@@ -78,27 +84,41 @@ class Navigation {
   }
   // Record the immutable artwork once. Live text, covers and controls then
   // blend only tiles whose pixels actually differ from the baked animation.
-  void remember_tiles(){
+  void remember_tiles(int mode=0){
+    reference_mode_=-1;
     for(int page=home;page<doorbell;++page){
       size_t count=0;
       for(auto row:overlay_rows_[page])count+=__builtin_popcountll(row);
       if(!count)continue;
-      auto *hashes=static_cast<uint32_t*>(heap_caps_malloc(count*sizeof(uint32_t),MALLOC_CAP_SPIRAM));
-      if(!hashes)continue;
+      auto *hashes=reference_hashes_[page];
+      if(!hashes)hashes=static_cast<uint32_t*>(heap_caps_malloc(count*sizeof(uint32_t),MALLOC_CAP_SPIRAM));
+      if(!hashes)return;
+      reference_hashes_[page]=hashes;
+#ifdef STUDY_SD_NAVIGATION
+      if(navigation_artwork.ready()){
+        auto *tiles=reinterpret_cast<uint32_t*>(scratch);
+        if(!navigation_artwork.hashes(mode,page,tiles))return;
+        for(int y=0;y<height;y+=8)
+          for(auto bits=overlay_rows_[page][y/8];bits;bits&=bits-1)
+            *hashes++=tiles[(y/8)*tile_columns+__builtin_ctzll(bits)];
+        continue;
+      }
+#endif
       const uint8_t *reference=page==home?room_pixels:page==lights?lights_pixels:nullptr;
       if(!reference){
-        if(!unpack(pages[page],scratch)){heap_caps_free(hashes);continue;}
+        if(!unpack(pages[page],scratch))return;
         reference=scratch;
       }
-      reference_hashes_[page]=hashes;
       for(int y=0;y<height;y+=8)
         for(auto bits=overlay_rows_[page][y/8];bits;bits&=bits-1)
           *hashes++=tile_hash(reference,16*__builtin_ctzll(bits),y);
       esphome::App.feed_wdt();
     }
+    reference_mode_=mode;
   }
   void find_changes(int page,const uint8_t *live,uint64_t *rows)const{
     memcpy(rows,overlay_rows_[page],sizeof(changed_rows_[0]));
+    if(reference_mode_!=mode_)return;
     auto *hashes=reference_hashes_[page];
     if(!hashes)return;
     for(int y=0;y<height;y+=8){
@@ -114,6 +134,7 @@ class Navigation {
   uint8_t *next_input_{};
   int queued_=-1;
   bool job_ok_=false,job_done_=false;
+  const uint8_t *foreground_pixels()const{return palette_motion?scratch:page_pixels;}
   static bool variant(int p){
 #ifdef STUDY_LIVE
     if(p>=home && p<=members_page)return true;
@@ -164,19 +185,43 @@ class Navigation {
 #endif
     return {};
   }
-  bool blend_album(uint16_t *out,int shift,unsigned alpha,Rect &paint)const{
-    paint=album_area(shift);
-    if(!paint.w)return false;
+  bool blend_region(uint16_t *out,const Rect &paint,int shift,unsigned alpha)const{
     ppa_blend_oper_config_t op{};
     op.in_bg.buffer=previous_pixels;op.in_bg.pic_w=width;op.in_bg.pic_h=height;
     op.in_bg.block_offset_x=paint.x;op.in_bg.block_offset_y=paint.y;
     op.in_bg.block_w=paint.w;op.in_bg.block_h=paint.h;op.in_bg.blend_cm=PPA_BLEND_COLOR_MODE_RGB565;
-    op.in_fg=op.in_bg;op.in_fg.buffer=page_pixels;op.in_fg.block_offset_x=paint.x-shift;
+    op.in_fg=op.in_bg;op.in_fg.buffer=foreground_pixels();op.in_fg.block_offset_x=paint.x-shift;
     op.out.buffer=out;op.out.buffer_size=page_bytes;op.out.pic_w=width;op.out.pic_h=height;
     op.out.block_offset_x=paint.x;op.out.block_offset_y=paint.y;op.out.blend_cm=PPA_BLEND_COLOR_MODE_RGB565;
     op.bg_alpha_update_mode=PPA_ALPHA_FIX_VALUE;op.bg_alpha_fix_val=255;
     op.fg_alpha_update_mode=PPA_ALPHA_FIX_VALUE;op.fg_alpha_fix_val=(alpha*255+16)/32;
     return ppa_do_blend(blender,&op)==ESP_OK;
+  }
+  bool blend_album(uint16_t *out,int shift,unsigned alpha,Rect &paint)const{
+    paint=album_area(shift);
+    return paint.w && blend_region(out,paint,shift,alpha);
+  }
+  bool blend_live_regions(uint16_t *out,const Pose &pose)const{
+    for(int y=0;y<height;){
+      auto tiles=dirty_tiles(y,pose);
+      int bottom=y+8;
+      while(bottom<height && dirty_tiles(bottom,pose)==tiles)bottom+=8;
+      while(tiles){
+        int x;const int span=take_span(tiles,x);
+        const int motion_bottom=std::min(bottom,clip_);
+        if(y<motion_bottom){
+          const int left=std::clamp(pose.shift,x,x+span);
+          const int right=std::clamp(width+pose.shift,x,x+span);
+          if(left>x && !blend_region(out,{x,y,left-x,motion_bottom-y},0,0))return false;
+          if(right<x+span && !blend_region(out,{right,y,x+span-right,motion_bottom-y},0,0))return false;
+          if(right>left && !blend_region(out,{left,y,right-left,motion_bottom-y},pose.shift,pose.alpha))return false;
+        }
+        const int fixed_top=std::max(y,clip_);
+        if(bottom>fixed_top && !blend_region(out,{x,fixed_top,span,bottom-fixed_top},0,32))return false;
+      }
+      y=bottom;
+    }
+    return true;
   }
   static void IRAM_ATTR __attribute__((optimize("O3"))) blend_span(
       uint16_t *__restrict out,const uint16_t *__restrict old,
@@ -210,14 +255,14 @@ class Navigation {
     x=first*16;
     return count*16;
   }
-  void paint_tile(uint16_t *out,int stride,int x,int y,const Pose &pose)const{
-    auto *bg=reinterpret_cast<const uint16_t*>(previous_pixels),*fg=reinterpret_cast<const uint16_t*>(page_pixels);
-    const int left=std::clamp(pose.shift-x,0,16),right=std::clamp(width+pose.shift-x,0,16);
+  void paint_span(uint16_t *out,int stride,int x,int y,int span,const Pose &pose)const{
+    auto *bg=reinterpret_cast<const uint16_t*>(previous_pixels),*fg=reinterpret_cast<const uint16_t*>(foreground_pixels());
+    const int left=std::clamp(pose.shift-x,0,span),right=std::clamp(width+pose.shift-x,0,span);
     for(int row=y;row<y+8;++row,out+=stride){
       const int pos=row*width+x;
-      if(row>=clip_){memcpy(out,fg+pos,32);continue;}
+      if(row>=clip_){memcpy(out,fg+pos,2*span);continue;}
       if(left)memcpy(out,bg+pos,2*left);
-      if(right<16)memcpy(out+right,bg+pos+right,2*(16-right));
+      if(right<span)memcpy(out+right,bg+pos+right,2*(span-right));
       if(left<right)blend_span(out+left,bg+pos+left,fg+pos+left-pose.shift,right-left,pose.alpha);
     }
   }
@@ -232,14 +277,13 @@ class Navigation {
       patch.rows[y/8]=0;
       for(auto tiles=dirty_tiles(y,pose);tiles;tiles&=tiles-1){
         const int x=16*__builtin_ctzll(tiles);
-        if(inside_album(album,x,y))continue;
+        if(!sd_active_ && inside_album(album,x,y))continue;
         patch.rows[y/8]|=uint64_t(1)<<(x/16);
       }
       for(auto tiles=patch.rows[y/8];tiles;){
         int x;const int span=take_span(tiles,x);
-        if(used+8*span>patch_pixels)return;
-        for(int offset=0;offset<span;offset+=16)
-          paint_tile(patch.pixels+used+offset,span,x+offset,y,pose);
+        if(used+8*span>patch.capacity)return;
+        paint_span(patch.pixels+used,span,x,y,span,pose);
         used+=8*span;
       }
     }
@@ -250,8 +294,10 @@ class Navigation {
     const auto &p=nav_paths[route_];
     const auto pose=nav_pose[p.travel==14?0:p.travel==24?1:2][phase];
     const unsigned a=pose.alpha;
+    if(sd_active_ && blend_live_regions(out,pose))return;
     Rect album{};
-    const bool album_blended=blend_album(out,pose.shift,a,album);
+    const bool complete_patch=sd_active_ && play_patch_->phase==phase;
+    const bool album_blended=!complete_patch && blend_album(out,pose.shift,a,album);
     if(play_patch_->phase==phase && (!album.w || album_blended)){
       const uint16_t *pixels=play_patch_->pixels;
       for(int y=0;y<height;y+=8)for(auto tiles=play_patch_->rows[y/8];tiles;){
@@ -264,11 +310,12 @@ class Navigation {
     for(int y=0;y<height;y+=8){
       auto tiles=dirty_tiles(y,pose);
       while(tiles){
-        const int x=16*__builtin_ctzll(tiles);
-        tiles&=tiles-1;
-        if(album_blended && inside_album(album,x,y))continue;
+        int x;const int span=take_span(tiles,x);
         first_y=std::min(first_y,y);end_y=std::max(end_y,y+8);
-        paint_tile(out+y*width+x,width,x,y,pose);
+        if(album_blended){
+          for(int offset=0;offset<span;offset+=16)
+            if(!inside_album(album,x+offset,y))paint_span(out+y*width+x+offset,width,x+offset,y,16,pose);
+        }else paint_span(out+y*width+x,width,x,y,span,pose);
       }
     }
   }
@@ -338,6 +385,9 @@ class Navigation {
     return tinfl_decompress_mem_to_mem(out,sizeof(play_chunks_),run_data+b.offset,b.size,1)==sizeof(play_chunks_);
   }
   bool assemble(int phase,uint8_t *out){
+#ifdef STUDY_SD_NAVIGATION
+    if(sd_active_)return navigation_artwork.frame(mode_,route_,phase,out,input_size_);
+#endif
     const auto &b=nav_paths[route_].phases[phase];
     if(auto *prepared=cache_[route_].frames[phase]){
       memcpy(out,prepared,b.bytes);return true;
@@ -352,7 +402,7 @@ class Navigation {
     for(;;){
       ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
       self->job_ok_=self->assemble(self->queued_,self->next_input_);
-      if(self->job_ok_)self->prepare_patch(self->queued_,*self->next_patch_);
+      if(self->job_ok_ && !self->sd_active_)self->prepare_patch(self->queued_,*self->next_patch_);
       xSemaphoreGive(self->ready_);
     }
   }
@@ -403,6 +453,18 @@ class Navigation {
     if(queued_>=0 && !job_done_)xSemaphoreTake(ready_,portMAX_DELAY);
     queued_=-1;job_done_=false;
   }
+  void use_sd_memory(){
+    if(sd_memory_)return;
+    release_job();
+    free_chunks();
+    heap_caps_free(arena_);arena_=nullptr;arena_size_=used_=0;
+    for(auto &cached:cache_)cached=Cached{};
+    writing_=nullptr;owner_=-1;
+    for(auto &patch:patches_){
+      heap_caps_free(patch.pixels);patch.pixels=nullptr;patch.capacity=0;
+    }
+    sd_memory_=true;
+  }
   uint8_t *append(uint8_t *ptr,const uint32_t *ids,const uint16_t *group,int begin,int end)const{
     for(int j=begin;j<end;j+=8){
       unsigned code=group?group[j/8]:0;
@@ -426,7 +488,7 @@ class Navigation {
     release_job();route_=-1;part_=0;
     free_chunks();
   }
-  void restore_chunks(){if(!chunks_ && input_ && prepare_ids_){part_=0;allocate_chunks();}}
+  void restore_chunks(){if(!sd_memory_ && !chunks_ && input_ && prepare_ids_){part_=0;allocate_chunks();}}
 #endif
   void begin(){
     for(int page=home;page<=doorbell;++page)
@@ -457,7 +519,12 @@ class Navigation {
 #endif
     entropy_=header_+header_bytes;maps_=entropy_+entropy_bytes;
     jpeg_decode_memory_alloc_cfg_t cfg{};cfg.buffer_direction=JPEG_DEC_ALLOC_INPUT_BUFFER;
-    input_=static_cast<uint8_t*>(jpeg_alloc_decoder_mem(max_frame,&cfg,&input_size_));
+    size_t frame_capacity=max_frame;
+#ifdef STUDY_SD_NAVIGATION
+    static_assert(paths==sd_navigation_routes);
+    frame_capacity=std::max(frame_capacity,size_t(sd_navigation_max_frame));
+#endif
+    input_=static_cast<uint8_t*>(jpeg_alloc_decoder_mem(frame_capacity,&cfg,&input_size_));
 #ifdef STUDY_PLANAR_MAPS
     constexpr size_t map_buffer_bytes=blocks*7;
 #else
@@ -473,17 +540,23 @@ class Navigation {
       arena_=static_cast<uint8_t*>(heap_caps_malloc(size,MALLOC_CAP_SPIRAM));
       if(arena_){arena_size_=size;break;}
     }
-    next_input_=static_cast<uint8_t*>(jpeg_alloc_decoder_mem(max_frame,&cfg,&input_size_));
+    next_input_=static_cast<uint8_t*>(jpeg_alloc_decoder_mem(frame_capacity,&cfg,&input_size_));
     if(next_input_){
       ready_=xSemaphoreCreateBinary();
       if(ready_)xTaskCreatePinnedToCore(produce,"study_motion",24576,this,2,&producer_,xPortGetCoreID()^1);
     }
     remember_tiles();
-    if(producer_)for(auto &patch:patches_)
+    if(producer_)for(auto &patch:patches_){
       patch.pixels=static_cast<uint16_t*>(heap_caps_malloc(patch_pixels*2,MALLOC_CAP_SPIRAM));
+      if(patch.pixels)patch.capacity=patch_pixels;
+    }
     ESP_LOGI("study","Navigation decoder ready: %d routes, %u KiB runs, %u KiB cache, %u KiB free PSRAM",paths,chunks_?chunk_bytes/1024:0,unsigned(arena_size_/1024),unsigned(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)/1024));
   }
   void prepare(int page){
+#ifdef STUDY_SD_NAVIGATION
+    navigation_artwork.warm();
+    if(navigation_artwork.ready()){use_sd_memory();return;}
+#endif
     if(warm_chunk_>=0){warm_chunks();return;}
     release_job();
     if(!arena_ || !input_ || down || page==doorbell || page==idle)return;
@@ -511,6 +584,18 @@ class Navigation {
     release_job();
     route_=-1;phase_=-1;first_at_=0;tap_at_=tap;
     play_patch_->phase=next_patch_->phase=-1;
+    sd_active_=false;mode_=0;
+#ifdef STUDY_PALETTE_PICKER
+    mode_=palette.selection();
+#endif
+#ifdef STUDY_SD_NAVIGATION
+    if(navigation_artwork.ready()){
+      use_sd_memory();
+      sd_active_=true;
+      if(reference_mode_!=mode_)remember_tiles(mode_);
+    }
+#endif
+    if(mode_ && !sd_active_)return;
     if(!input_)return;
     for(int i=0;i<paths;i++){
       const auto &p=nav_paths[i];
@@ -522,12 +607,17 @@ class Navigation {
     }
   }
   bool active()const{return route_>=0;}
+  void prefetch(){
+    if(sd_active_ && active() && producer_ && queued_<0){
+      queued_=0;job_done_=false;xTaskNotifyGive(producer_);
+    }
+  }
   void cancel(){release_job();route_=-1;}
   void prepare_live_tiles(){
     if(!active())return;
     const auto &p=nav_paths[route_];
     if(from_variant_)find_changes(p.from,previous_pixels,changed_rows_[0]);
-    if(to_variant_)find_changes(p.to,page_pixels,changed_rows_[1]);
+    if(to_variant_)find_changes(p.to,foreground_pixels(),changed_rows_[1]);
   }
   bool can_prepare_endpoint()const{return active() && !from_variant_ && !to_variant_;}
   bool draw(int elapsed){
@@ -546,19 +636,23 @@ class Navigation {
     if(!slot)return false;
     const auto &p=nav_paths[route_];
     int first_y=height,end_y=0;
-    if(phase==10){release_job();await_page();scanout.copy_pixels(slot->pixels,page_pixels,page_bytes);first_y=0;end_y=height;}
+    if(phase==10){release_job();await_page();scanout.copy_pixels(slot->pixels,foreground_pixels(),page_bytes);first_y=0;end_y=height;}
     else{
       const auto &b=p.phases[phase];
+      size_t frame_bytes=b.bytes;
+#ifdef STUDY_SD_NAVIGATION
+      if(sd_active_)frame_bytes=navigation_artwork.frame_size(mode_,route_,phase);
+#endif
       if(queued_>=0){
         std::swap(input_,next_input_);std::swap(play_patch_,next_patch_);queued_=-1;job_done_=false;
       }else if(!assemble(phase,input_)){route_=-1;return false;}
-      if(producer_ && phase<9){
+      if(producer_ && phase<8){
         // A late producer may skip a phase to stay within the theme duration.
-        queued_=std::min(9,std::max(phase+1,elapsed/18+1));xTaskNotifyGive(producer_);
+        queued_=std::min(8,std::max(phase+1,elapsed/18+1));xTaskNotifyGive(producer_);
       }
       jpeg_decode_cfg_t cfg{};cfg.output_format=JPEG_DECODE_OUT_FORMAT_RGB565;cfg.rgb_order=panel_jpeg_order;
       uint32_t written=0;
-      if(jpeg_decoder_process(decoder(),&cfg,input_,b.bytes,slot->pixels,page_bytes,&written)!=ESP_OK || written!=page_bytes){
+      if(jpeg_decoder_process(decoder(),&cfg,input_,frame_bytes,slot->pixels,page_bytes,&written)!=ESP_OK || written!=page_bytes){
         ESP_LOGW("study","Navigation decode failed");release_job();route_=-1;return false;
       }
       overlay(reinterpret_cast<uint16_t*>(slot->pixels),phase,first_y,end_y);

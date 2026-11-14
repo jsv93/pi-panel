@@ -3,11 +3,20 @@
 #include <esp_timer.h>
 #include <esp_async_memcpy.h>
 #include <freertos/semphr.h>
+#ifdef STUDY_DMA_RETIRE
+#include "live_runtime/scanout_dma.h"
+#endif
 
 namespace study {
 class Scanout {
  public:
   using Panel=esphome::mipi_dsi::MipiDsi;
+  static uint32_t refresh_epoch(){
+#ifdef STUDY_DMA_RETIRE
+    if(scanout_dma_tracking)return scanout_dma_epoch;
+#endif
+    return Panel::refresh_epoch;
+  }
   struct Slot {
     uint8_t *pixels{};
     uint32_t safe_after{}, page{};
@@ -54,7 +63,7 @@ class Scanout {
   Slot *acquire(bool wait,bool prepare_early=false) {
     const auto end=esp_timer_get_time()+80000;
     do {
-      const uint32_t epoch=Panel::refresh_epoch;
+      const uint32_t epoch=refresh_epoch();
       if(prepare_early || !submitted_ || epoch!=last_epoch_) {
         for(auto &s:slots_)
           if(&s!=front_ && int32_t(epoch-s.safe_after)>=0){
@@ -70,15 +79,18 @@ class Scanout {
   }
   bool present(Slot *slot,int first_y,int end_y) {
     const auto deadline=esp_timer_get_time()+80000;
-    while(submitted_ && Panel::refresh_epoch==last_epoch_){
+    while(submitted_ && refresh_epoch()==last_epoch_){
       if(esp_timer_get_time()>=deadline)return false;
       vTaskDelay(1);
     }
     if(draw_overlay)draw_overlay(slot,first_y,end_y);
     if(esp_lcd_panel_draw_bitmap(panel_,0,first_y,720,end_y,slot->pixels)!=ESP_OK)return false;
-    last_epoch_=Panel::refresh_epoch;
+    last_epoch_=refresh_epoch();
     // Allow two refresh boundaries for an already-started DMA scan to retire.
     front_->safe_after=last_epoch_+2;
+#ifdef STUDY_DMA_RETIRE
+    if(scanout_dma_tracking)front_->safe_after=last_epoch_+1;
+#endif
     front_=slot;submitted_=true;
     if(count_frame)presented_at_[presented_count_++%128]=esp_timer_get_time();
     return true;
