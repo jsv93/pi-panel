@@ -39,7 +39,7 @@ class Deployment {
       file.digest[i/2]=(file.digest[i/2]<<4)|(c<='9'?c-'0':c-'a'+10);}
     return true;
   }
-  static bool verified(const std::string &path,const File &file){
+  bool verified(const std::string &path,const File &file){
     study::CardArt card;
     if(!card.mount())return false;
     const int input=::open(path.c_str(),O_RDONLY);if(input<0)return false;
@@ -51,6 +51,7 @@ class Deployment {
     mbedtls_sha256_context sha;mbedtls_sha256_init(&sha);
     ok=ok && buffer && mbedtls_sha256_starts(&sha,0)==0;
     for(size_t n=0;ok && n<file.bytes;){
+      if(!idle_){ok=false;break;}
       const size_t count=std::min(size_t(8192),file.bytes-n);
       ok=::read(input,buffer,count)==ssize_t(count) && mbedtls_sha256_update(&sha,buffer,count)==0;
       n+=count;vTaskDelay(1);
@@ -69,6 +70,7 @@ class Deployment {
   bool download(uint32_t generation,const File &file){
     const std::string root="/sd/pi-panel/",target=root+file.hash+".bin",partial=root+file.hash+".part";
     if(verified(target,file))return true;
+    if(!idle_)return false;
     study::CardArt card;uint64_t total=0,free=0;
     if(!card.mount() || !card.space(total,free))return false;
     mkdir(root.c_str(),0700);
@@ -77,6 +79,7 @@ class Deployment {
     // Resume after power loss between the final write and atomic promotion.
     if(offset==file.bytes){
       if(verified(partial,file))return rename(partial.c_str(),target.c_str())==0;
+      if(!idle_)return false;
       remove(partial.c_str());offset=0;
     }
     if(free<file.bytes-offset+2*1024*1024)return false;
@@ -117,7 +120,7 @@ class Deployment {
     heap_caps_free(buffer);esp_http_client_close(client);esp_http_client_cleanup(client);
     ok=ok && verified(partial,file);
     if(!ok)ESP_LOGW("p4_deploy","%s download paused or failed at %u/%u (errno %d)",file.role.c_str(),unsigned(offset),unsigned(file.bytes),errno);
-    if(!ok && offset==file.bytes)remove(partial.c_str()); // only this exact hash-named partial
+    if(!ok && idle_ && offset==file.bytes)remove(partial.c_str()); // only this exact hash-named partial
     return ok && rename(partial.c_str(),target.c_str())==0;
   }
   bool install(const File &file){

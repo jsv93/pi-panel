@@ -1,5 +1,11 @@
 # Study firmware candidate
 
+For the card-based Architectural firmware with automatic room updates, follow
+[Automatic P4 deployment](../../docs/P4-DEPLOYMENT.md). Panel Server 0.27.0
+includes the private renderer/compiler and manages subsequent firmware/artwork
+updates. The manual instructions below also document older shared-flash builds;
+never mix their provisioning offsets with a card-based OTA package.
+
 This target uses the architectural linen Study layout at 720 × 1280 on the Waveshare engineering-sample ESP32-P4 with 32 MB flash. The screen assets come from the repository's kiosk HTML. Use a private build directory outside the checkout. The generated assets describe the room, and the firmware and YAML contain per-device credentials.
 
 ## Build

@@ -2,6 +2,7 @@
 #include "esphome/components/mipi_dsi/mipi_dsi.h"
 #include <esp_timer.h>
 #include <esp_async_memcpy.h>
+#include <esp_cache.h>
 #include <freertos/semphr.h>
 #ifdef STUDY_DMA_RETIRE
 #include "live_runtime/scanout_dma.h"
@@ -53,12 +54,24 @@ class Scanout {
     return true;
   }
   void copy_pixels(void *destination,const void *source,size_t bytes){
-    if(!copier_){memcpy(destination,source,bytes);return;}
-    xSemaphoreTake(copy_lock_,portMAX_DELAY);
-    if(esp_async_memcpy(copier_,destination,const_cast<void*>(source),bytes,copy_done,copied_)==ESP_OK)
-      xSemaphoreTake(copied_,portMAX_DELAY);
-    else memcpy(destination,source,bytes);
-    xSemaphoreGive(copy_lock_);
+    if(copier_)xSemaphoreTake(copy_lock_,portMAX_DELAY);
+    auto *out=static_cast<uint8_t*>(destination);
+    auto *in=static_cast<const uint8_t*>(source);
+    // IDF allocates internal DMA descriptors per transfer. A full frame needs
+    // two long contiguous lists, competing with the SD and hosted-radio buffers.
+    // Bound their size so an endpoint does not unexpectedly fall back to a
+    // slow full-screen CPU copy when the small internal heap is fragmented.
+    while(bytes){
+      const size_t count=std::min(bytes,size_t(256*1024));
+      if(copier_ && esp_async_memcpy(copier_,out,const_cast<uint8_t*>(in),count,copy_done,copied_)==ESP_OK)
+        xSemaphoreTake(copied_,portMAX_DELAY);
+      else{
+        memcpy(out,in,count);
+        esp_cache_msync(out,count,ESP_CACHE_MSYNC_FLAG_DIR_C2M|ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+      }
+      bytes-=count;out+=count;in+=count;
+    }
+    if(copier_)xSemaphoreGive(copy_lock_);
   }
   Slot *acquire(bool wait,bool prepare_early=false) {
     const auto end=esp_timer_get_time()+80000;

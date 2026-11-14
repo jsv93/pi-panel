@@ -175,7 +175,7 @@ def generate(cfg, states, dest):
           document.querySelector('#doorbellTitle').textContent=title;
           document.querySelector('#doorbellLabel').textContent='DOORBELL TEST';
           document.querySelector('#doorbellDuration').textContent='Closes automatically after 60 seconds · Muted';
-          document.querySelector('#doorbellState').textContent='Live';}""",cfg["doorbell"]["title"])
+          document.querySelector('#doorbellState').textContent='Live';}""",cfg.get("doorbell",{}).get("title") or "Doorbell")
         capture("doorbell")
         video=page.locator("#doorbellVideo").bounding_box()
     presets=[[(-1 if light.get("include_presets") is False else
