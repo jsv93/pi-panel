@@ -2,6 +2,10 @@
 
 ## 0.27.5
 
+- Apply P4 multi-touch settings live without rebuilding artwork or firmware; keep them cached for offline boots.
+- Fix scene-participation saves blocked by a pending gesture configuration change.
+- Show CM5-style gesture notifications and wake Home when a light gesture starts on the clock or sleeping display.
+
 - Reduce P4 Home handoff work while the mini-player is active and cache Home animation frames locally.
 - Fade the idle clock to black over 400 ms when its screen-off timer expires.
 - Add momentum scrolling, touch-to-stop and retained pagination to the Architectural music library.

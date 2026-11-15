@@ -3350,6 +3350,7 @@ static void chord_tick(){
   last_activity=clock_ms();chord_next=(chord_level==1 || chord_level==100)?INT64_MAX:last_activity+200;
 }
 template<class Touches> static bool observe_touches(const Touches &touches){
+  if(!startup_ready)return false;
   int active=0;
   for(const auto &point:touches)if(point.state==1 || point.state==2)++active;
   observed_touches=std::max(observed_touches,active);
@@ -3363,6 +3364,13 @@ template<class Touches> static bool observe_touches(const Touches &touches){
     climate_drag=false;climate_preview=NAN;
     chord_armed=true;chord_dim=false;chord_start=last_activity=clock_ms();chord_next=chord_start+fleet.active().gesture.hold_ms;
     int n=0;for(const auto &p:touches)if(p.state==1 || p.state==2){chord_ids[n]=p.id;chord_x[n]=p.x;chord_y[n++]=p.y;}
+    // Multi-touch consumes the event before touch(), so it must also wake.
+    // Keep the chord armed for the light action, and let its release guard
+    // prevent a tap on the newly revealed Home controls.
+    if((current==idle || blanked || (screen_fade_stage && screen_fade_dest==idle)) &&
+       (!screen_fade_stage || screen_fade_dest!=home)){
+      wake_page=home;depth=0;screen_transition(home);
+    }
   }else if(!chord_dim){
     for(const auto &p:touches)if(p.state==1 || p.state==2){
       int i=0;while(i<fleet.active().gesture.points && chord_ids[i]!=p.id)++i;

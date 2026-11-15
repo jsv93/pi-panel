@@ -6,6 +6,27 @@ The 15 November follow-up compares the existing 720 × 1280 CM5 Chromium
 layout with the P4's native rendering. It keeps the accepted clock crossfade,
 black-screen wake and cache-safe display interrupts.
 
+### Live gestures and scene participation
+
+Changing the configured finger count used to alter the compiled layout contract.
+The panel then rejected the complete signed profile, including scene-membership
+edits which the server had already saved. Gesture enable/count/hold/remember
+settings now use validated live profile fields and are excluded from the build
+fingerprint. Entity/layout changes still require matching artwork and firmware.
+
+- Live three-to-four-finger updates applied without rebooting. Four fingers and
+  the saved membership survived a cold boot with Panel Server and the PC bridge
+  stopped; tap/hold gestures still controlled Mushroom Lamp directly through HA.
+- Participating-light edits were acknowledged, applied and restored successfully.
+  The user confirmed the physical scene editor and gesture notifications work well.
+- The centred toast uses the CM5 Architectural font, palette inks, rounded shape,
+  180 ms fade/scale and 1.4-second hold. PPA blends it on retired scanout buffers;
+  transient textures are freed when it closes. Long messages wrap like Chromium.
+- Home routes retained 22 ms maximum measured intervals between Home frames
+  online and offline. Clock sleep retained 20 brightness steps over 380 ms.
+- A recognised chord also wakes Home from the clock or sleeping display through
+  the existing wake transition; its release cannot activate Home controls.
+
 ### Latest library, artwork and RAM refinement
 
 The user confirmed that the whole-screen flash is gone and swiping is more
