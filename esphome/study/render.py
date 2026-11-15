@@ -9,6 +9,7 @@ import re
 import sys
 from pathlib import Path
 import zlib
+import copy
 
 from PIL import Image
 import numpy as np
@@ -90,6 +91,12 @@ def fixture_page(cfg, states, browse_children=None, *, chromium_cdp=None):
 
 def generate(cfg, states, dest):
     dest.mkdir(parents=True, exist_ok=True)
+    # Album covers are live data painted by the device. The compiled page must
+    # contain the kiosk's empty artwork state, never a failed fixture URL.
+    states=copy.deepcopy(states)
+    for state in states:
+        if state.get('entity_id','').startswith('media_player.'):
+            state.setdefault('attributes',{}).pop('entity_picture',None)
     with fixture_page(cfg, states) as page:
         views, data = [], bytearray()
         def store(name, rect=None, motion_source=False):

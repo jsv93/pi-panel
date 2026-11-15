@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.27.5
+
+- Apply P4 multi-touch settings live without rebuilding artwork or firmware; keep them cached for offline boots.
+- Fix scene-participation saves blocked by a pending gesture configuration change.
+- Show CM5-style gesture notifications and wake Home when a light gesture starts on the clock or sleeping display; clear transient overlays from wake and mini-player buffers.
+
+- Reduce P4 Home handoff work while the mini-player is active and cache Home animation frames locally.
+- Fade the idle clock to black over 400 ms when its screen-off timer expires.
+- Add momentum scrolling, touch-to-stop and retained pagination to the Architectural music library.
+- Copy just the moving library viewport with DMA, keeping the existing page-transition renderer.
+- Remove the superseded lamp-animation cache and put library strings in external RAM to protect networking memory.
+- Preserve Wi-Fi DNS during disconnected Ethernet retries; reuse bounded artwork connections and cancel thumbnail work when leaving the library.
+- Cache artwork, prioritize visible covers and update arriving thumbnails without repainting the whole library; use the normal empty-cover artwork during loading.
+- Match transition quantization to stationary RGB565 backgrounds and negotiate faster SD reads with a normal-speed initialization fallback.
+
 ## 0.27.4
 
 - Keep P4 display refresh running during flash writes, including saved scene participation and offline configuration updates.

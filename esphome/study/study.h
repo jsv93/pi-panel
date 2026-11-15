@@ -58,6 +58,9 @@
 #endif
 #endif
 #include "scanout.h"
+#ifdef STUDY_LIVE
+#include "gesture_toast.h"
+#endif
 #include "esphome/components/display/display.h"
 #include "driver/jpeg_decode.h"
 #include "driver/ppa.h"
@@ -93,7 +96,7 @@ static int64_t last_activity,dim_since;
 static int wake_page=home,shown_minute=-2,applied_brightness=-1;
 static bool blanked=false,wake_touch=false;
 static int fade_backlight=-1;
-static int screen_fade_stage=0,screen_fade_dest=0,screen_fade_from=0,screen_fade_target=0,screen_fade_up_ms=90;
+static int screen_fade_stage=0,screen_fade_dest=0,screen_fade_from=0,screen_fade_target=0,screen_fade_up_ms=90,screen_fade_down_ms=90;
 static int64_t screen_fade_at=0;
 static uint32_t screen_fade_epoch=0;
 static bool screen_fade_blank=false;
@@ -569,9 +572,32 @@ static bool volume_open=false;
 static bool queue_open=false;
 static bool library_open=false;
 static int library_mode=0,library_scroll=0,library_down_scroll=0;
-static constexpr int thumbnail_side=96,thumbnail_slots=12;
+static int library_painted_scroll=0;
+static float library_velocity=0,library_position=0;
+static int64_t library_touch_at=0,library_frame_at=0,library_settled_at=0;
+struct LibraryTouchSample {int64_t at;int position;};
+static LibraryTouchSample library_samples[12]{};
+static unsigned library_sample_count=0;
+static void library_sample(int64_t at,int position){
+  if(library_sample_count && library_samples[library_sample_count-1].position==position)return;
+  if(library_sample_count==12){std::move(library_samples+1,library_samples+12,library_samples);--library_sample_count;}
+  library_samples[library_sample_count++]={at,position};
+}
+static float library_release_speed(int64_t now){
+  if(library_sample_count<2)return 0;
+  const auto &last=library_samples[library_sample_count-1];
+  if(now-last.at>100)return 0;
+  unsigned first=0;
+  while(first+2<library_sample_count && last.at-library_samples[first].at>100)++first;
+  const auto elapsed=last.at-library_samples[first].at;
+  return elapsed>0?std::clamp(1000.f*(last.position-library_samples[first].position)/elapsed,-6000.f,6000.f):0;
+}
+static bool library_dragged=false,library_repaint=false;
+static bool library_scrolling(){return library_open && (down || std::abs(library_velocity)>12 || library_scroll!=library_painted_scroll);}
+static void animate_library();
+static constexpr int thumbnail_side=96,thumbnail_slots=24;
 struct Thumbnail {
-  std::string url;
+  p4_runtime::LibraryClient::String url;
   uint16_t *pixels=nullptr;
   uint8_t *alpha=nullptr;
   uint32_t used=0;
@@ -580,7 +606,7 @@ struct Thumbnail {
 };
 static Thumbnail thumbnails[thumbnail_slots];
 static uint16_t thumbnail_ground[2][16];
-static void draw_library_thumbnail(uint8_t *frame,const Thumbnail &thumb,const Rect &icon,
+static void __attribute__((optimize("O3"))) draw_library_thumbnail(uint8_t *frame,const Thumbnail &thumb,const Rect &icon,
                                    int top,int bottom,int left,int right,bool themed=false){
   const int radius=library_mode?11:13;
   for(int y=std::max(top,icon.y+1);y<std::min(bottom,icon.y+icon.h-1);++y){
@@ -605,7 +631,7 @@ static void draw_library_thumbnail(uint8_t *frame,const Thumbnail &thumb,const R
     }
   }
 }
-static int thumbnail_job=-1;static uint32_t thumbnail_stamp=0;
+static int thumbnail_job=-1,thumbnail_repaint=-1;static uint32_t thumbnail_stamp=0;
 static void load_library_thumbnail();
 static void label(const TextArea &field,const char *value);
 static void show(int dest,int shift);
@@ -625,7 +651,16 @@ static bool card_diagnostic_frame();
 #endif
 // A scroll moves the existing list pixels. Repaint only the newly exposed
 // band, using the kiosk's own four-row RGB565 dither as its ground.
-static uint16_t library_ground[2][4][library_list.w];
+alignas(64) static uint16_t library_ground[2][4][width];
+static inline __attribute__((always_inline)) void copy_library_ground(uint16_t *out,const uint16_t *in,int count){
+  // Both rows have the same pixel alignment. Avoid a byte-at-a-time memcpy
+  // for the odd x coordinate of the right gutter on 32-bit RISC-V.
+  if(reinterpret_cast<uintptr_t>(out)&2){*out++=*in++;--count;}
+  typedef uint32_t Pair __attribute__((may_alias));
+  auto *dst=reinterpret_cast<Pair*>(out);const auto *src=reinterpret_cast<const Pair*>(in);
+  for(int i=0;i<count/2;++i)dst[i]=src[i];
+  if(count&1)out[count-1]=in[count-1];
+}
 static int8_t library_ground_ok[2]={-1,-1};
 // A folder and a track use the same two backgrounds on every row. Keep
 // decoded copies while browsing so exposing a few scanlines doesn't inflate
@@ -657,7 +692,10 @@ static const uint8_t *library_tile(int mode,int variant,size_t bytes){
   if(text_image(out,bytes,art[0],art[1]))return out;
   heap_caps_free(cached);cached=nullptr;return nullptr;
 }
-static void paint_library(int movement=0){
+static bool library_rect_copied=false;
+static void __attribute__((optimize("O3"))) paint_library(int movement=0,const uint8_t *scroll_source=nullptr){
+  library_rect_copied=false;
+  library_painted_scroll=library_scroll;
 #ifdef STUDY_OVERLAY_PALETTES
   TextPaletteScope colours(palette.selection());
   if(library_cache_palette!=text_palette){
@@ -674,12 +712,17 @@ static void paint_library(int movement=0){
   const size_t row_bytes=size_t(v.w)*sizeof(*pixels);
   if(movement && std::abs(movement)<v.h && library_ground_ok[mode]==1 && !library.dirty && !*library.message){
     const int delta=std::abs(movement);
-    for(int n=0;n<v.h-delta;n++){
-      const int y=movement>0?top+n:end-1-n;
-      memcpy(pixels+y*width+v.x,pixels+(y+movement)*width+v.x,row_bytes);
-    }
+    if(scroll_source){
+      const int dest_y=movement>0?top:top+delta;
+      library_rect_copied=scanout.copy_rect(page_pixels,scroll_source,v.x,dest_y,dest_y+movement,v.w,v.h-delta);
+      if(!library_rect_copied)
+        scanout.copy_pixels(pixels+dest_y*width,scroll_source+2*(dest_y+movement)*width,2*width*(v.h-delta));
+    }else for(int n=0;n<v.h-delta;n++){
+        const int y=movement>0?top+n:end-1-n;
+        memcpy(pixels+y*width+v.x,pixels+(y+movement)*width+v.x,row_bytes);
+      }
     if(movement>0)top=end-delta;else end=top+delta;
-    for(int y=top;y<end;y++)memcpy(pixels+y*width+v.x,library_ground[mode][(y-v.y)%4],row_bytes);
+    for(int y=top;y<end;y++)memcpy(pixels+y*width+v.x,library_ground[mode][(y-v.y)%4]+v.x,row_bytes);
     // The gutters stay fixed to the glass, while the dither inside a card
     // moves with that card. Recover the original phase in the exposed gaps.
     if(movement%4){
@@ -690,7 +733,7 @@ static void paint_library(int movement=0){
         const int position=y-v.y+library_scroll;
         const size_t first=size_t(position/step)*cols;
         int last_x=0;
-        const auto *ground=library_ground[mode][(y-v.y)%4];
+        const auto *ground=library_ground[mode][(y-v.y)%4]+v.x;
         auto *dst=pixels+y*width+v.x;
         if(position%step<tile.h)for(int col=0;col<cols;col++){
           const size_t index=first+col;
@@ -705,9 +748,9 @@ static void paint_library(int movement=0){
   }else{
     text_background(page_pixels,width,scratch,{0,0,width,height},library_bases[mode][0],library_bases[mode][1]);
     if(library_ground_ok[mode]<0){
-      for(int y=0;y<4;y++)memcpy(library_ground[mode][y],pixels+(v.y+y)*width+v.x,row_bytes);
+      for(int y=0;y<4;y++)memcpy(library_ground[mode][y],pixels+(v.y+y)*width,2*width);
       library_ground_ok[mode]=1;
-      for(int y=4;y<v.h;y++)if(memcmp(library_ground[mode][y%4],pixels+(v.y+y)*width+v.x,row_bytes)){
+      for(int y=4;y<v.h;y++)if(memcmp(library_ground[mode][y%4],pixels+(v.y+y)*width,2*width)){
         library_ground_ok[mode]=0;break;
       }
     }
@@ -748,12 +791,90 @@ static void paint_library(int movement=0){
       draw_library_thumbnail(page_pixels,thumb,icon,top,end,0,width);
       thumb.used=++thumbnail_stamp;break;
     }
-    auto field=[&](TextArea area,const std::string &value){
+    auto field=[&](TextArea area,const auto &value){
       area.rect.x+=x-ref.x;area.rect.y+=y-ref.y;
       text_field(page_pixels,width,scratch,area,value.c_str(),top,end,false);
     };
     field(library_name[variant],item.title);field(library_type[variant],item.category);
   }
+}
+// Input only updates a target. Paint once per display refresh, then coast with
+// time-based friction; a new touch stops the coast without activating a row.
+static void __attribute__((optimize("O3"))) animate_library(){
+  if(current!=media || !library_open){library_velocity=0;library_frame_at=0;return;}
+  if(moving || blanked)return;
+  const auto now=clock_ms();
+  const int dt=library_frame_at?std::clamp(int(now-library_frame_at),0,100):0;
+  if(dt<16 && library_frame_at)return;
+  auto *slot=scanout.acquire(false,true);if(!slot)return;
+  library_frame_at=now;
+  const int cols=library_steps[library_mode][0],step=library_steps[library_mode][1];
+  if(!down && std::abs(library_velocity)>12){
+    const float damping=std::exp(-dt/325.f);
+    library_position+=library_velocity*.325f*(1-damping);
+    library_velocity*=damping;
+    const int limit=std::max(0,int((library.total+cols-1)/cols)*step-library_list.h);
+    library_scroll=std::clamp(int(std::lround(library_position)),0,limit);
+    if(library_position<0 || library_position>limit)library_velocity=0;
+  }
+  library.ensure(size_t(library_scroll/step)*cols,size_t(library_list.h/step+2)*cols);
+  const int movement=library_scroll-library_painted_scroll;
+  if(movement || library_repaint){
+    const auto &v=library_list;
+    // Scroll straight into a retired scanout buffer. A second full viewport
+    // copy consumed most of the frame budget on the P4's external RAM.
+    if(movement && !library_repaint && library_ground_ok[library_mode]==1 && scanout.visible_pixels() && !scanout.visible_has_toast()){
+      if(slot->page!=revision){
+        scanout.copy_pixels(slot->pixels,page_pixels,2*width*v.y);
+        const size_t end=2*width*(v.y+v.h);
+        scanout.copy_pixels(slot->pixels+end,page_pixels+end,page_bytes-end);
+      }
+      auto *saved=page_pixels;page_pixels=slot->pixels;
+      paint_library(movement,scanout.visible_pixels());page_pixels=saved;
+      // Keep stationary margins at their original dither phase.
+      const int exposed_first=movement>0?std::max(v.y,v.y+v.h-movement):v.y;
+      const int exposed_end=movement>0?v.y+v.h:std::min(v.y+v.h,v.y-movement);
+      for(int y=v.y;y<v.y+v.h;++y){
+        if(library_rect_copied && slot->page==revision)continue;
+        if(slot->page==revision && !(movement%4) && (y<exposed_first || y>=exposed_end))continue;
+        const auto *ground=library_ground[library_mode][(y-v.y)%4];
+        auto *row=reinterpret_cast<uint16_t*>(slot->pixels)+y*width;
+        copy_library_ground(row,ground,v.x);
+        copy_library_ground(row+v.x+v.w,ground+v.x+v.w,width-v.x-v.w);
+      }
+      if(scanout.present(slot,v.y,v.y+v.h)){slot->page=revision;slot->lamp_background=false;}
+    }else{
+      paint_library();++revision;blit(0,0,width,height,page_pixels);
+    }
+    library_repaint=false;
+    thumbnail_repaint=-1;
+    library_settled_at=now;
+  }
+  if(thumbnail_repaint>=0 && !down && std::abs(library_velocity)<=12){
+    auto &thumb=thumbnails[thumbnail_repaint];const auto &v=library_list;
+    bool copied=false;int top=height,bottom=0;
+    for(size_t i=0;i<library.items.size();++i){
+      const auto &item=library.items[i];if(!thumb.ready || item.thumbnail!=thumb.url)continue;
+      const auto &ref=library_tiles[2*library_mode+(item.expand?0:1)];
+      const int y=v.y+int((library.first+i)/cols)*step-library_scroll;
+      if(y>=v.y+v.h || y+ref.h<=v.y)continue;
+      if(!copied){
+        if(scanout.visible_has_toast() || !scanout.copy_rect(slot->pixels,scanout.visible_pixels(),0,0,0,width,height))
+          scanout.copy_visible_clean(slot);
+        copied=true;
+      }
+      auto icon=library_note_rects[library_mode];
+      icon.x+=v.x+(i%cols)*library_steps[library_mode][2]-ref.x;icon.y+=y-ref.y;
+      draw_library_thumbnail(slot->pixels,thumb,icon,v.y,v.y+v.h,0,width);
+      top=std::min(top,std::max(v.y,icon.y));bottom=std::max(bottom,std::min(v.y+v.h,icon.y+icon.h));
+    }
+    if(copied && top<bottom){scanout.present(slot,top,bottom);slot->page=revision;slot->lamp_background=false;}
+    thumbnail_repaint=-1;
+  }
+#ifndef STUDY_BENCH_TEST
+  if(!down && std::abs(library_velocity)<=12 && now-library_settled_at>=140)
+    load_library_thumbnail();
+#endif
 }
 #ifndef STUDY_ARCHITECTURAL_ONLY
 static void diagnostic_scroll_frame(){
@@ -920,13 +1041,22 @@ static bool ha_connected(){
   const auto *api=esphome::api::global_api_server;
   return api && api->is_connected_with_state_subscription() && ha_lights.receiving();
 }
+static GestureToast gesture_toast;
+static uint32_t gesture_epoch=0;
 static void copy_badge_background(Scanout::Slot *slot,bool save){
   constexpr size_t bytes=2*width*32;
   if(save)memcpy(slot->overlay_background,slot->pixels,bytes);
-  else memcpy(slot->pixels,slot->overlay_background,bytes);
+  else if(slot->has_overlay){
+    memcpy(slot->pixels,slot->overlay_background,bytes);
+    slot->overlay_dirty_first=0;slot->overlay_dirty_end=std::max(slot->overlay_dirty_end,32);
+  }
   slot->has_overlay=save;
 }
 static void draw_diagnostic_badges(Scanout::Slot *slot,int &first_y,int &end_y){
+  if(!blanked && clock_ms()>=identify_until){
+    gesture_toast.draw(slot,first_y,end_y,clock_ms(),palette.selection(),blender);
+    gesture_epoch=Scanout::refresh_epoch();
+  }
 #if defined(STUDY_CARD_FIELDS) && !defined(STUDY_CARD_DIAGNOSTICS)
   if(card_page_visible)return;
 #endif
@@ -1258,8 +1388,16 @@ static void animate_progress(){
     --labels_remaining;
   previous=now;
 }
+static std::string home_shown_title,home_shown_artist;
+static bool home_shown_playing=false,home_shown_cover=false;
+static bool home_player_changed(){
+  return home_shown_playing!=player().playing || home_shown_cover!=(cover_ready && mini_art_enabled) ||
+    home_shown_title!=player().title || home_shown_artist!=player().artist;
+}
 static void home_player(){
   const bool cover=cover_ready && mini_art_enabled;
+  home_shown_title=player().title;home_shown_artist=player().artist;
+  home_shown_playing=player().playing;home_shown_cover=cover;
   const auto &art=home_strip_art[player().playing?(cover?2:1):0];
   text_background(page_pixels,width,scratch,home_strip,art[0],art[1]);
   if(player().playing){
@@ -1272,10 +1410,10 @@ static void home_player(){
 static bool mini_active(){return current==home && player().playing && !blanked && !down && !moving;}
 static void animate_mini(){
   if(!mini_active() || !scanout.visible_pixels())return;
-  auto *slot=scanout.acquire(false);if(!slot)return;
+  auto *slot=scanout.acquire(false,true);if(!slot)return;
   const auto &bars=mini_bars[cover_ready && mini_art_enabled];
   const Rect area{bars[0].x,bars[0].y,bars[3].x+bars[3].w-bars[0].x,bars[0].h};
-  if(slot->page!=revision)scanout.copy_pixels(slot->pixels,scanout.visible_pixels(),page_bytes);
+  if(slot->page!=revision)scanout.copy_visible_clean(slot);
   auto *pixels=reinterpret_cast<uint16_t*>(slot->pixels);
   const auto *visible=reinterpret_cast<const uint16_t*>(scanout.visible_pixels());
   for(int y=area.y;y<area.y+area.h;++y)
@@ -1320,7 +1458,7 @@ static std::string home_diagnostic_message(){
       " want "+std::to_string(profile.soft[i])+"/"+std::to_string(profile.bright[i])+(profile.members[i]?"":" EXCLUDED");
   }
   return "touch: reports 5 points, seen "+std::to_string(observed_touches)+" · gesture "+
-    (gesture_points?std::to_string(gesture_points)+"-finger":std::string("off"))+"\n"+
+    (fleet.active().gesture.points?std::to_string(fleet.active().gesture.points)+"-finger":std::string("off"))+"\n"+
     notes+"\nconfig v"+std::to_string(profile.version)+details;
 }
 static std::string last_home_diagnostic;
@@ -1547,7 +1685,7 @@ static void refresh_edit(){
     if(current==members_page && scanout.active && scanout.visible_pixels() && overlay_artwork.ready()){
       auto *slot=scanout.acquire(true);
       if(slot){
-        scanout.copy_pixels(slot->pixels,scanout.visible_pixels(),page_bytes);
+        scanout.copy_visible_clean(slot);
         bool okay=true;
         for(int i=0;i<light_count;++i){
           const int mode=int(fleet.active().members[i]!=(edit_waiting && edit_slot==i+2))+
@@ -1676,7 +1814,10 @@ static bool start_scene_feedback(Scanout::Slot *target){
   if(!scene_from)scene_from=static_cast<uint16_t*>(heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
   if(!scene_to)scene_to=static_cast<uint16_t*>(heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
   if(!scene_from || !scene_to){heap_caps_free(scene_from);heap_caps_free(scene_to);scene_from=scene_to=nullptr;return false;}
-  memcpy(scene_from,scanout.visible_pixels()+2*width*scene_feedback_top,bytes);
+  if(scanout.visible_has_toast()){
+    scanout.copy_visible_clean(previous_pixels);
+    memcpy(scene_from,previous_pixels+2*width*scene_feedback_top,bytes);
+  }else memcpy(scene_from,scanout.visible_pixels()+2*width*scene_feedback_top,bytes);
   memcpy(scene_to,target->pixels+2*width*scene_feedback_top,bytes);
   target->page=0;scene_feedback_at=clock_ms();return true;
 }
@@ -1684,7 +1825,7 @@ static void animate_scene_feedback(){
   if(!scene_feedback_at)return;
   if(current!=scenes || moving){scene_feedback_at=0;}
   else if(auto *slot=scanout.acquire(false)){
-    if(slot->page!=revision)scanout.copy_pixels(slot->pixels,scanout.visible_pixels(),page_bytes);
+    if(slot->page!=revision)scanout.copy_visible_clean(slot);
     const int alpha=std::clamp(int((clock_ms()-scene_feedback_at)*256/180),0,256);
     auto *out=reinterpret_cast<uint16_t*>(slot->pixels)+width*scene_feedback_top;
     for(int i=0;i<width*scene_feedback_height;++i)out[i]=interpolate_pixel(scene_from[i],scene_to[i],alpha);
@@ -1754,16 +1895,24 @@ static void animate() {
     slot->page=0;slot->lamp_background=false;identify_phase=phase;return;
   }
 #endif
-  if(moving || progress_active() || scene_feedback_at
+  if(moving || progress_active() || scene_feedback_at || (!blanked && gesture_toast.active(clock_ms()))
 #ifdef STUDY_ARCHITECTURAL_ONLY
      || mini_active()
 #endif
+     || library_scrolling()
   )motion_loop.start();else motion_loop.stop();
+  animate_library();
   animate_progress();
   animate_scene_feedback();
 #ifdef STUDY_ARCHITECTURAL_ONLY
   animate_mini();
 #endif
+  if(!moving && !blanked && clock_ms()>=identify_until && gesture_toast.animating(clock_ms()) && gesture_epoch!=Scanout::refresh_epoch()){
+    if(auto *slot=scanout.acquire(false)){
+      scanout.copy_visible_clean(slot);slot->page=0;slot->fixed_page=0;slot->lamp_background=false;
+      scanout.present(slot,0,height);
+    }
+  }
 #else
   if(moving)motion_loop.start();else motion_loop.stop();
 #endif
@@ -1885,7 +2034,7 @@ static void show(int dest,int shift=14) {
   diagnostic_pass=-1;
   light_sheet=LightSheet::closed;sheet_drag=-1;
   volume_open=false;queue_open=false;speakers_open=false;volume_drag=-1;seek_drag=-1;
-  if(library_open){library.close();library_open=false;release_library_backgrounds();}
+  if(library_open){library.close();library_open=false;thumbnail_client.cancel();thumbnail_job=-1;release_library_backgrounds();}
   if(change && current==doorbell)bell_client.close();
 #endif
   playback_direction=-1;last_phase=-1;
@@ -1904,7 +2053,7 @@ static void show(int dest,int shift=14) {
   palette_motion=false;
 #ifdef STUDY_PALETTE_PICKER
   if(transition && scanout.active && palette.selection() && scratch && scanout.visible_pixels()){
-    if(!nav.theme_fade())scanout.copy_pixels(previous_pixels,scanout.visible_pixels(),page_bytes);
+    if(!nav.theme_fade())scanout.copy_visible_clean(previous_pixels);
     palette_motion=true;
   }
 #endif
@@ -1994,10 +2143,11 @@ static void screen_transition(int dest,bool blank=false){
   screen_fade_from=std::max(0,applied_brightness);
   screen_fade_target=dest==idle?std::max(lux_entity[0]?1:10,int(std::lround(screen_level()*.25))):screen_level();
   screen_fade_up_ms=screen_fade_from?90:180;
+  screen_fade_down_ms=blank?400:90;
   screen_fade_at=clock_ms();screen_fade_stage=1;fade_backlight=screen_fade_from;moving=true;
   last_activity=clock_ms();
   if(dest==idle && !blank && screen_fade_from && blender && scanout.active && scanout.visible_pixels()){
-    scanout.copy_pixels(previous_pixels,scanout.visible_pixels(),page_bytes);
+    scanout.copy_visible_clean(previous_pixels);
     screen_fade_capture=true;show(idle,0);screen_fade_capture=false;
     moving=true;screen_fade_stage=4;screen_fade_at=clock_ms();
   }
@@ -2027,7 +2177,7 @@ static void animate_screen_fade(){
     return;
   }
   if(screen_fade_stage==1){
-    fade_backlight=std::max(0,screen_fade_from-int((now-screen_fade_at)*screen_fade_from/90));
+    fade_backlight=std::max(0,screen_fade_from-int((now-screen_fade_at)*screen_fade_from/screen_fade_down_ms));
     apply_brightness();
     if(fade_backlight)return;
     if(applied_brightness!=0)return;
@@ -2722,7 +2872,7 @@ static bool paint_card_library(bool benchmark=false){
   const int end=std::min(height,v.y+v.h);
   std::string crumb="Library";
   for(const auto &f:library.folders)crumb+="  ›  "+f.title;
-  auto write=[&](auto f,const std::string &s,int dx,int dy,int top,int bottom){
+  auto write=[&](auto f,const auto &s,int dx,int dy,int top,int bottom){
     f.x+=dx;f.y+=dy;return card_library_text.write(f,s.c_str(),page_pixels,scratch,page_bytes,top,bottom);
   };
   if(benchmark)crumb=diagnostic_pass==6?"Close and reopen to browse again":
@@ -2965,7 +3115,7 @@ static void begin(Display *display) {
   apply_screen_profile(fleet.active().screen,false);
 #endif
   scanout.draw_overlay=draw_diagnostic_badges;
-  scanout.restore_overlay=[](Scanout::Slot *slot){copy_badge_background(slot,false);};
+  scanout.restore_overlay=[](Scanout::Slot *slot){copy_badge_background(slot,false);gesture_toast.restore(slot);};
   if(lux_entity[0])esphome::api::global_api_server->subscribe_home_assistant_state(
       lux_entity,nullptr,[](esphome::StringRef s){
         auto lux=esphome::parse_number<float>(s.str());
@@ -2993,7 +3143,20 @@ static void begin(Display *display) {
     lights_pixels=page_buffer();lamp_pixels=page_buffer();
     if(!unpack(pages[lights],lights_pixels)){heap_caps_free(lights_pixels);lights_pixels=nullptr;}
     if(!unpack(pages[light0],lamp_pixels)){heap_caps_free(lamp_pixels);lamp_pixels=nullptr;}
-    if(scanout.active && lamp_pixels && lights_pixels && previous_pixels && blender){
+    // The SD fade bank replaces the old translated-lamp animation. Keeping
+    // its unused RGB565 timeline cost almost 5 MiB on the Study layout.
+    bool cache_lamp_motion=true;
+#if defined(STUDY_SD_ONLY) && defined(STUDY_SD_NAVIGATION)
+    if(sd_navigation_theme_fade){
+      bool enter=false,leave=false;
+      for(const auto &path:nav_paths){
+        enter|=path.from==lights && path.to==light0 && path.travel==14;
+        leave|=path.from==light0 && path.to==lights && path.travel==14;
+      }
+      cache_lamp_motion=!(enter && leave);
+    }
+#endif
+    if(cache_lamp_motion && scanout.active && lamp_pixels && lights_pixels && previous_pixels && blender){
       timeline=static_cast<uint16_t*>(heap_caps_malloc(2*lamp_steps*lamp_stride*sizeof(uint16_t),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
       ESP_LOGI("study","Lamp frame cache %s",timeline?"allocated":"unavailable");
     }
@@ -3131,7 +3294,7 @@ static std::array<int,light_count> chord_weights{},chord_last{},chord_memory{};
 static std::array<int,5> chord_ids{},chord_x{},chord_y{};
 static bool chord_loaded=false;
 static void remember_chord(const std::array<int,light_count> &values){
-  if(!gesture_remember || std::none_of(values.begin(),values.end(),[](int v){return v>0;}) || chord_memory==values)return;
+  if(!fleet.active().gesture.remember || std::none_of(values.begin(),values.end(),[](int v){return v>0;}) || chord_memory==values)return;
   chord_memory=values;
   nvs_handle_t h;
   if(nvs_open(display_namespace,NVS_READWRITE,&h)==ESP_OK){
@@ -3142,7 +3305,7 @@ static void remember_chord(const std::array<int,light_count> &values){
 static void load_chord(){
   if(chord_loaded)return;
   chord_loaded=true;nvs_handle_t h;
-  if(gesture_remember && nvs_open(display_namespace,NVS_READONLY,&h)==ESP_OK){
+  if(fleet.active().gesture.remember && nvs_open(display_namespace,NVS_READONLY,&h)==ESP_OK){
     size_t n=sizeof(chord_memory);
     if(nvs_get_blob(h,"light_chord",chord_memory.data(),&n)!=ESP_OK || n!=sizeof(chord_memory))chord_memory.fill(0);
     nvs_close(h);
@@ -3156,14 +3319,15 @@ static void finish_chord(bool tap){
     for(int i=0;i<light_count;i++)if(p.members[i])previous[i]=std::max(0,ha_lights.confirmed(i));
     const bool any=std::any_of(previous.begin(),previous.end(),[](int value){return value>0;});
     if(any)remember_chord(previous);
+    gesture_toast.show(any?"Lights off":"Lights on",clock_ms());
     for(int i=0;i<light_count;i++)if(p.members[i] && ha_lights.confirmed(i)>=0)
-      ha_lights.request(i,any?0:gesture_remember && chord_memory[i]>0?chord_memory[i]:p.bright[i]);
+      ha_lights.request(i,any?0:fleet.active().gesture.remember && chord_memory[i]>0?chord_memory[i]:p.bright[i]);
   }
   chord_armed=false;chord_dim=false;chord_blocked=true;
 }
 static void chord_tick(){
   if(!chord_armed || clock_ms()<chord_next)return;
-  if(!ha_connected()){finish_chord(false);return;}
+  if(!ha_connected()){gesture_toast.show("Dimming interrupted — check connection",clock_ms());finish_chord(false);return;}
   if(!chord_dim){
     chord_dim=true;chord_peak=0;chord_last.fill(0);chord_weights.fill(0);
     const auto &p=fleet.active();
@@ -3173,40 +3337,50 @@ static void chord_tick(){
     chord_level=chord_peak;
     if(!chord_peak){
       for(int i=0;i<light_count;i++)if(p.members[i] && ha_lights.detail(i).dimmable && ha_lights.confirmed(i)>=0){
-        chord_weights[i]=gesture_remember && chord_memory[i]>0?chord_memory[i]:p.bright[i]>0?p.bright[i]:100;
+        chord_weights[i]=fleet.active().gesture.remember && chord_memory[i]>0?chord_memory[i]:p.bright[i]>0?p.bright[i]:100;
         chord_peak=std::max(chord_peak,chord_weights[i]);
       }
       chord_level=1;
     }
     if(chord_level<=1)chord_direction=1;else if(chord_level>=100)chord_direction=-1;
   }
-  if(!chord_peak){chord_next=INT64_MAX;return;}
+  if(!chord_peak){gesture_toast.show("No dimmable scene lights",clock_ms());chord_next=INT64_MAX;return;}
   chord_level=std::clamp(chord_level+chord_direction*4,1,100);
   for(int i=0;i<light_count;i++)if(chord_weights[i]){
     const int level=std::max(1,int(std::lround(double(chord_weights[i])*chord_level/chord_peak)));
     if(level!=chord_last[i] && ha_lights.confirmed(i)>=0)ha_lights.request(i,level);
     chord_last[i]=level;
   }
+  char toast[48];snprintf(toast,sizeof(toast),"%s · %d%%",chord_direction>0?"Brightening":"Dimming",chord_level);
+  gesture_toast.show(toast,clock_ms());
   last_activity=clock_ms();chord_next=(chord_level==1 || chord_level==100)?INT64_MAX:last_activity+200;
 }
 template<class Touches> static bool observe_touches(const Touches &touches){
+  if(!startup_ready)return false;
   int active=0;
   for(const auto &point:touches)if(point.state==1 || point.state==2)++active;
   observed_touches=std::max(observed_touches,active);
-  if(!gesture_points)return false;
-  if(active>gesture_points){finish_chord(false);return true;}
+  if(!fleet.active().gesture.points)return false;
+  if(active>fleet.active().gesture.points){finish_chord(false);return true;}
   if(chord_blocked)return true;
-  if(chord_armed && active<gesture_points){finish_chord(clock_ms()-chord_start>=50);return true;}
-  if(active!=gesture_points)return false;
+  if(chord_armed && active<fleet.active().gesture.points){finish_chord(clock_ms()-chord_start>=50);return true;}
+  if(active!=fleet.active().gesture.points)return false;
   if(!chord_armed){
     load_chord();down=false;pressed=-2;dragging=false;preview_brightness=sheet_drag=volume_drag=seek_drag=-1;
     climate_drag=false;climate_preview=NAN;
-    chord_armed=true;chord_dim=false;chord_start=last_activity=clock_ms();chord_next=chord_start+gesture_hold_ms;
+    chord_armed=true;chord_dim=false;chord_start=last_activity=clock_ms();chord_next=chord_start+fleet.active().gesture.hold_ms;
     int n=0;for(const auto &p:touches)if(p.state==1 || p.state==2){chord_ids[n]=p.id;chord_x[n]=p.x;chord_y[n++]=p.y;}
+    // Multi-touch consumes the event before touch(), so it must also wake.
+    // Keep the chord armed for the light action, and let its release guard
+    // prevent a tap on the newly revealed Home controls.
+    if((current==idle || blanked || (screen_fade_stage && screen_fade_dest==idle)) &&
+       (!screen_fade_stage || screen_fade_dest!=home)){
+      wake_page=home;depth=0;screen_transition(home);
+    }
   }else if(!chord_dim){
     for(const auto &p:touches)if(p.state==1 || p.state==2){
-      int i=0;while(i<gesture_points && chord_ids[i]!=p.id)++i;
-      if(i==gesture_points || std::hypot(double(p.x)-chord_x[i],double(p.y)-chord_y[i])>36){finish_chord(false);break;}
+      int i=0;while(i<fleet.active().gesture.points && chord_ids[i]!=p.id)++i;
+      if(i==fleet.active().gesture.points || std::hypot(double(p.x)-chord_x[i],double(p.y)-chord_y[i])>36){finish_chord(false);break;}
     }
   }
   return true;
@@ -3214,7 +3388,10 @@ template<class Touches> static bool observe_touches(const Touches &touches){
 #endif
 static void touch(int x,int y) {
 #ifdef STUDY_LIVE
-  if(screen_fade_stage)return;
+  if(screen_fade_stage){
+    if(screen_fade_blank){screen_fade_stage=0;moving=false;wake_touch=true;screen_transition(home);}
+    return;
+  }
 #endif
   if(!startup_ready)return;
   bench_demo=false;
@@ -3348,17 +3525,25 @@ static void touch(int x,int y) {
   }
   if(!moving && current==media && !volume_open && !queue_open && !speakers_open &&
       (pressed==-157 || (!down && (browse_button.contains(x,y) || (library_open && y<speaker_end))))){
-    if(!down){down=true;pressed=-157;x0=x;y0=y;library_down_scroll=library_scroll;}
+    if(!down){
+      library_dragged=std::abs(library_velocity)>12;
+      library_velocity=0;library_position=library_scroll;library_touch_at=clock_ms();
+      library_sample_count=0;library_sample(library_touch_at,library_scroll);
+      down=true;pressed=-157;x0=x;y0=y;library_down_scroll=library_scroll;
+    }
     dx=x-x0;dy=y-y0;
-    if(library_open && y0>=library_list.y && std::abs(dy)>8 && !library.waiting){
+    if(library_open && y0>=library_list.y && std::abs(dy)>8 && !library.items.empty()){
       const int cols=library_steps[library_mode][0],step=library_steps[library_mode][1];
       const int max_scroll=std::max(0,int((library.total+cols-1)/cols)*step-library_list.h);
       const int previous=library_scroll;
       library_scroll=std::clamp(library_down_scroll-dy,0,max_scroll);
-      if(previous==library_scroll)return;
-      const size_t first=(library_scroll/step)*cols,offset=first/library.batch*library.batch;
-      if(library.total && (first<library.first || first>=library.first+library.batch))library.get(offset);
-      paint_library(library_scroll-previous);++revision;blit(0,0,width,height,page_pixels);
+      const auto now=clock_ms();const int dt=now-library_touch_at;
+      if(dt>0 && previous!=library_scroll){
+        const float speed=std::clamp(1000.f*(library_scroll-previous)/dt,-4000.f,4000.f);
+        library_velocity=library_dragged?library_velocity*.35f+speed*.65f:speed;
+      }
+      library_touch_at=now;library_position=library_scroll;library_dragged=true;
+      library_sample(now,library_scroll);
     }
     return;
   }
@@ -3814,7 +3999,10 @@ static void release() {
   }
   if(pressed==-157){
     down=false;pressed=-2;
-    if(std::abs(dx)>24 || std::abs(dy)>24)return;
+    if(library_dragged || std::abs(dx)>24 || std::abs(dy)>24){
+      library_velocity=library_release_speed(clock_ms());
+      library_frame_at=clock_ms();return;
+    }
     const int x=x0+dx,y=y0+dy;
     if(!library_open){
       if(!browse_button.contains(x,y))return;
@@ -3832,7 +4020,7 @@ static void release() {
       save_preference("libview",library_mode!=0);
 #endif
       library_scroll=0;if(library.first)library.get(0);
-    }else if(library_list.contains(x,y) && !library.waiting){
+    }else if(library_list.contains(x,y) && !library.items.empty()){
       const int cols=library_steps[library_mode][0],step=library_steps[library_mode][1];
       const int row=(y-library_list.y+library_scroll)/step;
       const int col=cols==1?0:(x-library_list.x)/int(library_steps[library_mode][2]);
@@ -4013,6 +4201,9 @@ static bool start_navigation_demo(){
   navigation_demo=bench_demo=true;demo_step=0;demo_at=clock_ms();return true;
 }
 static void tick() {
+#ifdef STUDY_HOME_ZOOM
+  if(!moving && !down)home_zoom_artwork.preload(palette.selection());
+#endif
 #ifdef STUDY_SD_ONLY
   static int64_t next_art_retry=30000;
   if(clock_ms()>=next_art_retry){
@@ -4095,7 +4286,7 @@ static void tick() {
   }
   if(current==idle && !blanked && !screen_fade_stage){
     if(backlight_off_s>0 && now-dim_since>=backlight_off_s*1000){
-      blanked=true;wake_page=home;depth=0;
+      wake_page=home;depth=0;screen_transition(idle,true);
       ESP_LOGI("study","Timed screen off");
     }else if(minutes_now && page_pixels){
       const int minutes=minutes_now();
@@ -4117,17 +4308,17 @@ static void tick() {
     speakers_dirty=true;
   }
   if(speakers_dirty){if(speakers_open)player().dirty=true;speakers_dirty=false;}
-  if(library_open){library.tick();if(library.dirty){player().dirty=true;library.dirty=false;}}
+  if(library_open){library.tick();if(library.dirty){library_repaint=true;library.dirty=false;}}
 #ifndef STUDY_BENCH_TEST
   album_client.select(speaker_ids[selected_speaker],player().picture);
 #endif
   if(!moving && !down && current!=doorbell && !bench_demo)update_cover();
 #ifndef STUDY_BENCH_TEST
-  if(library_open && !library.waiting && !moving && !down)load_library_thumbnail();
+  // Library artwork is serviced between frames, after scrolling settles.
 #endif
   if(player().dirty && !moving && !down){
     player().dirty=false;
-    if(current==media && page_pixels){
+    if(current==media && page_pixels && !library_open){
 #ifdef STUDY_CARD_OVERLAYS
       if(card_page_visible && (volume_open || queue_open))paint_card_popup(volume_open,page_pixels);
       else
@@ -4154,7 +4345,7 @@ static void tick() {
 #ifdef STUDY_CARD_FIELDS
        && !card_page_visible
 #endif
-    ){home_player();++revision;blit(0,0,width,height,page_pixels);}
+    && home_player_changed()){home_player();++revision;blit(0,0,width,height,page_pixels);}
   }
   static int64_t next_progress=0;
 #ifdef STUDY_CARD_MOTION_GEOMETRY
@@ -4214,7 +4405,15 @@ static void tick() {
 #endif
     ){climate_field();++revision;blit(0,0,width,height,page_pixels);}
   }
+  const auto previous_gesture=fleet.active().gesture;
   const bool updated=fleet.tick(ha_lights.receiving());
+  if(updated){
+    const auto next=fleet.active().gesture;
+    if(next.points!=previous_gesture.points || next.hold_ms!=previous_gesture.hold_ms || next.remember!=previous_gesture.remember){
+      if(chord_armed)finish_chord(false);
+      chord_loaded=false;
+    }
+  }
   using PanelAction=p4_runtime::FleetSocket::Action;
   const auto action=moving?PanelAction::none:fleet.take_action();
   if(action==PanelAction::restart)esphome::App.safe_reboot();
@@ -4226,7 +4425,7 @@ static void tick() {
   if(action==PanelAction::identify){
     show(current,0);
 #ifdef STUDY_IDENTIFY
-    scanout.copy_pixels(previous_pixels,scanout.visible_pixels(),page_bytes);
+    scanout.copy_visible_clean(previous_pixels);
     const auto &frame=identify_frames[palette.selection()];
     if(tinfl_decompress_mem_to_mem(scratch,page_bytes,identify_pixels+frame[0],frame[1],1)==page_bytes){
       identify_until=now+10000;identify_phase=-1;apply_brightness();return;
@@ -4381,7 +4580,7 @@ static inline __attribute__((always_inline)) uint16_t jpeg_pixel(int v,int u,int
   const int threshold=(2*bayer[y%4][x%4]+1)*255/32;
   return (((red*31+threshold)/255)<<11) | (((green*63+threshold)/255)<<5) | ((blue*31+threshold)/255);
 }
-static bool decode_artwork(const p4_runtime::AlbumClient::Frame &frame,
+static bool __attribute__((optimize("O3"))) decode_artwork(const p4_runtime::AlbumClient::Frame &frame,
                            uint16_t *&pixels,int output_width,int output_height){
   if(!frame.data || !previous_pixels || !scratch || frame.size>page_bytes)return false;
   memcpy(scratch,frame.data,frame.size);
@@ -4441,10 +4640,11 @@ static void load_library_thumbnail(){
   if(thumbnail_job>=0){
     p4_runtime::AlbumClient::Frame f;
     if(!thumbnail_client.take(f))return;
+    if(f.version!=thumbnail_client.generation()){heap_caps_free(f.data);return;}
     auto &thumb=thumbnails[thumbnail_job];
     thumb.ready=f.version==thumbnail_client.generation() && decode_library_thumbnail(f,thumb);
     thumb.retry_after=clock_ms()+10000;
-    if(thumb.ready){player().dirty=true;ESP_LOGD("study","Music library thumbnail decoded");}
+    if(thumb.ready){thumbnail_repaint=thumbnail_job;ESP_LOGD("study","Music library thumbnail decoded");}
     heap_caps_free(f.data);thumbnail_job=-1;
   }
   int cols=library_steps[library_mode][0],step=library_steps[library_mode][1],viewport=library_list.h;
@@ -4453,16 +4653,21 @@ static void load_library_thumbnail(){
     const auto &l=library_layout();cols=l.cols;step=l.step;viewport=l.viewport.h;
   }
 #endif
-  for(size_t i=0;i<library.items.size();i++){
+  // Visible covers first, then forward/backward lookahead within the cache's
+  // actual capacity. Never evict/reload an endless ring of off-screen covers.
+  unsigned candidates=0;
+  for(int pass=0;pass<3;++pass)for(size_t i=0;i<library.items.size();i++){
     const auto &url=library.items[i].thumbnail;
     const int y=int((library.first+i)/cols)*step-library_scroll;
-    if(url.empty() || url.size()>=1536 || y>=viewport || y+step<=0)continue;
+    const bool visible=y<viewport && y+step>0;
+    if(url.empty() || url.size()>=1536 || (pass==0?!visible:pass==1?y<viewport || y>=2*viewport:y+step>0 || y+step<=-viewport))continue;
+    if(++candidates>thumbnail_slots)return;
     auto *slot=std::find_if(thumbnails,thumbnails+thumbnail_slots,[&](const Thumbnail &t){return t.url==url;});
     if(slot!=thumbnails+thumbnail_slots && (slot->ready || clock_ms()<slot->retry_after))continue;
     if(slot==thumbnails+thumbnail_slots)
       slot=std::min_element(thumbnails,thumbnails+thumbnail_slots,[](const Thumbnail &a,const Thumbnail &b){return a.used<b.used;});
     slot->url=url;slot->ready=false;slot->used=++thumbnail_stamp;thumbnail_job=slot-thumbnails;
-    thumbnail_client.select("",url,true);return;
+    thumbnail_client.select("",url.c_str(),true);return;
   }
 }
 static void update_cover(){

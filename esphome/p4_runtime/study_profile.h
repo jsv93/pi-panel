@@ -13,6 +13,21 @@
 #define STUDY_SCREEN_OPTIONS
 #endif
 namespace study {
+struct GestureChoices {int points=0,hold_ms=600;bool remember=true;};
+static bool read_gesture_choices(cJSON *display,GestureChoices &out){
+  if(!cJSON_IsObject(display))return false;
+  auto *mode=cJSON_GetObjectItemCaseSensitive(display,"touch_gesture");
+  auto *points=cJSON_GetObjectItemCaseSensitive(display,"touch_points");
+  auto *hold=cJSON_GetObjectItemCaseSensitive(display,"touch_hold_ms");
+  auto *remember=cJSON_GetObjectItemCaseSensitive(display,"remember_last_state");
+  auto integer=[](const cJSON *v,int lo,int hi){return !v ||
+    (cJSON_IsNumber(v) && v->valuedouble==v->valueint && v->valueint>=lo && v->valueint<=hi);};
+  if((mode && (!cJSON_IsString(mode) || (strcmp(mode->valuestring,"off") && strcmp(mode->valuestring,"lights")))) ||
+     !integer(points,2,5) || !integer(hold,600,1500) || (remember && !cJSON_IsBool(remember)))return false;
+  out.points=mode && !strcmp(mode->valuestring,"lights")?(points?points->valueint:3):0;
+  out.hold_ms=hold?hold->valueint:600;out.remember=!remember || cJSON_IsTrue(remember);
+  return true;
+}
 #ifdef STUDY_SCREEN_OPTIONS
 constexpr const char *theme_keys[]={"default","ambient","architectural"};
 constexpr const char *palette_keys[]={"linen","midnight","ember","slate","heath","mono"};
@@ -47,6 +62,7 @@ static bool read_screen_choices(cJSON *display,ScreenChoices &screen){
 #endif
 struct RoomProfile {
   int version=0;
+  GestureChoices gesture;
   int soft[light_count]{},bright[light_count]{};
   bool members[light_count]{};
 #ifdef STUDY_SCREEN_OPTIONS
@@ -64,8 +80,9 @@ static p4_runtime::AlbumClient album_client,thumbnail_client;
 static p4_runtime::LibraryClient library;
 static RoomProfile factory_profile(){
   RoomProfile p;
-#ifdef STUDY_SCREEN_OPTIONS
   p4_runtime::Json factory(cJSON_Parse(layout_contract),cJSON_Delete);
+  if(factory)read_gesture_choices(cJSON_GetObjectItemCaseSensitive(factory.get(),"display"),p.gesture);
+#ifdef STUDY_SCREEN_OPTIONS
   if(factory)read_screen_choices(cJSON_GetObjectItemCaseSensitive(factory.get(),"display"),p.screen);
 #endif
   for(int i=0;i<light_count;i++){
@@ -81,9 +98,14 @@ static bool decode_room(const cJSON *doc,RoomProfile &out){
   const auto *version=cJSON_GetObjectItemCaseSensitive(doc,"_version");
   if(!cJSON_IsNumber(version)||version->valuedouble<1||version->valuedouble!=version->valueint)return false;
   out.version=version->valueint;
-#ifdef STUDY_SCREEN_OPTIONS
   auto *actual_display=cJSON_GetObjectItemCaseSensitive(shape.get(),"display");
   auto *expected_display=cJSON_GetObjectItemCaseSensitive(expected.get(),"display");
+  if(!read_gesture_choices(actual_display,out.gesture))return false;
+  for(const char *key:{"touch_gesture","touch_points","touch_hold_ms","remember_last_state"}){
+    cJSON_DeleteItemFromObjectCaseSensitive(actual_display,key);
+    cJSON_DeleteItemFromObjectCaseSensitive(expected_display,key);
+  }
+#ifdef STUDY_SCREEN_OPTIONS
   if(!read_screen_choices(actual_display,out.screen))return false;
   for(const char *key:{"theme","palette","diagnostics","browse_view","mini_art"}){
     cJSON_DeleteItemFromObjectCaseSensitive(actual_display,key);

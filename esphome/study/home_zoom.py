@@ -8,7 +8,7 @@ from PIL import Image
 from lz4.block import compress, decompress
 from render import fixture_page, W, H
 from palette_art import PALETTES
-from jpeg_motion import panel_jpeg
+from jpeg_motion import display_jpeg
 
 
 def capture(root, states, destination, cdp=None):
@@ -38,8 +38,8 @@ def capture(root, states, destination, cdp=None):
                 }""",phase*18)
                 png=page.screenshot()
                 (destination/f'{palette}-{phase}.png').write_bytes(png)
-                frame=panel_jpeg(Image.open(io.BytesIO(png)).crop((0,0,W,1152)),quality=94,subsampling=2)
-                packed=compress(frame,store_size=False)
+                frame=display_jpeg(Image.open(io.BytesIO(png)).crop((0,0,W,1152)))
+                packed=compress(frame,store_size=False,mode='high_compression',compression=12)
                 if decompress(packed,uncompressed_size=len(frame))!=frame:raise ValueError('Home frame compression failed verification')
                 frames.append([len(output),len(packed),len(frame)]);output.extend(packed);current.append(pose)
             if poses and current!=poses:raise ValueError('Home motion differs between palettes')

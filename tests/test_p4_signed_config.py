@@ -32,6 +32,18 @@ def main():
             assert signed.content==json.dumps(legacy,ensure_ascii=True,sort_keys=True,separators=(",",":")).encode()
             assert signed.headers["cache-control"]=="no-store"
             assert not hmac.compare_digest(signature,hmac.new(token.encode(),signed.content,hashlib.sha256).hexdigest())
+            config=db.merged_config('p4')
+            config['lights']=[dict(entity_id='light.test',name='Test',soft=30,bright=100,include_presets=True)]
+            config['display'].update(touch_gesture='lights',touch_points=4,touch_hold_ms=600)
+            db.save_config('p4',config)
+            edit=client.post('/api/panel/p4/light',headers=headers,
+                             json={'entity_id':'light.test','include_presets':False})
+            assert edit.is_success,edit.text
+            updated=client.get('/api/config/p4',headers={**headers,**accept})
+            assert updated.json()['_version']==edit.json()['version']
+            assert updated.json()['display']['touch_points']==4
+            assert updated.json()['lights'][0]['include_presets'] is False
+            assert updated.headers['X-Panel-Signature']==hmac.new(key.encode(),updated.content,hashlib.sha256).hexdigest()
             print("PASS authenticated canonical bytes, signature, device identity, UTF-8 room and legacy CM5 response")
 
 if __name__=="__main__":main()

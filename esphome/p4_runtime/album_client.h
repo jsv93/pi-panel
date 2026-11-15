@@ -4,6 +4,7 @@
 #include <lwip/inet.h>
 #include <esp_heap_caps.h>
 #include <array>
+#include <algorithm>
 #include <mbedtls/sha256.h>
 
 extern "C" size_t tinfl_decompress_mem_to_mem(void *,size_t,const void *,size_t,int);
@@ -23,7 +24,11 @@ class AlbumClient {
     jobs_=xQueueCreate(1,sizeof(Job));result_=xQueueCreate(1,sizeof(Frame));
   }
   void select(const char *entity,const std::string &value,bool force=false){
-    if(!jobs_ || !result_ || (!force && entity==last_entity_ && value==last_))return;
+    if(!jobs_ || !result_)return;
+    const auto retry=retry_at_.load();
+    if(!force && entity==last_entity_ && value==last_ &&
+       (!retry || int32_t(uint32_t(esp_timer_get_time()/1000)-retry)<0))return;
+    retry_at_=0;
     last_entity_=entity;
     const uint32_t version=++generation_;
     Job job{};job.version=version;job.entity=entity;
@@ -36,15 +41,60 @@ class AlbumClient {
                            "study_art",thumbnails_?24576:8192,this,1,&worker_);
   }
   bool take(Frame &f){return result_ && xQueueReceive(result_,&f,0)==pdTRUE;}
+  void cancel(){
+    if(!jobs_ || !result_)return;
+    last_.clear();last_entity_="";retry_at_=0;
+    Job job{};job.version=++generation_;job.entity="";xQueueOverwrite(jobs_,&job);
+    Frame old;while(xQueueReceive(result_,&old,0)==pdTRUE)heap_caps_free(old.data);
+  }
  private:
   struct Job {uint32_t version;const char *entity;char url[1536];};
   std::atomic<uint32_t> generation_{0};
+  std::atomic<uint32_t> retry_at_{0};
   bool thumbnails_=false;
   const FleetSettings *fleet_=nullptr;
   const char *last_entity_="",*origin_="";
   std::string last_;
   QueueHandle_t jobs_{},result_{};
   TaskHandle_t worker_{};
+  struct Cached {std::string key;uint8_t *data=nullptr;size_t size=0;uint32_t used=0;};
+  std::array<Cached,12> cache_{};
+  size_t cached_bytes_=0;
+  uint32_t cache_stamp_=0;
+  struct Connection {std::string origin;esp_http_client_handle_t client=nullptr;int64_t used=0;};
+  std::array<Connection,2> connections_{};
+  static void close_connection(Connection &connection){
+    if(connection.client)esp_http_client_cleanup(connection.client);
+    connection=Connection{};
+  }
+  Frame cached_fetch(const Job &job){
+    const std::string key=std::string(job.entity)+"\n"+job.url;
+    for(auto &entry:cache_)if(entry.data && entry.key==key){
+      auto *copy=static_cast<uint8_t*>(heap_caps_malloc(entry.size,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+      if(copy){memcpy(copy,entry.data,entry.size);entry.used=++cache_stamp_;return {copy,entry.size,job.version};}
+      break;
+    }
+    auto frame=fetch(job);
+    // A bounded worker-owned cache makes revisiting albums immediate without
+    // retaining unbounded originals or using flash during touch interaction.
+    if(frame.data && frame.size<=64*1024){
+      auto *copy=static_cast<uint8_t*>(heap_caps_malloc(frame.size,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+      if(copy){
+        memcpy(copy,frame.data,frame.size);
+        auto end=cache_.begin()+(thumbnails_?12:2);
+        auto oldest=[&](){return std::min_element(cache_.begin(),end,[](const Cached &a,const Cached &b){return a.used<b.used;});};
+        auto *slot=&*oldest();
+        auto evict=[&](Cached &entry){cached_bytes_-=entry.size;heap_caps_free(entry.data);entry=Cached{};};
+        evict(*slot);
+        while(cached_bytes_+frame.size>192*1024){
+          auto found=std::min_element(cache_.begin(),end,[](const Cached &a,const Cached &b){return (a.data?a.used:UINT32_MAX)<(b.data?b.used:UINT32_MAX);});
+          evict(*found);
+        }
+        *slot={key,copy,frame.size,++cache_stamp_};cached_bytes_+=frame.size;
+      }
+    }
+    return frame;
+  }
   static std::string brand_path(const std::string &picture){
     const std::string prefix="/api/brands/integration/";
     if(picture.compare(0,prefix.size(),prefix))return {};
@@ -169,9 +219,26 @@ class AlbumClient {
     if(url.empty())return f;
     esp_http_client_config_t cfg{};cfg.url=url.c_str();cfg.timeout_ms=5000;
     cfg.disable_auto_redirect=true;cfg.crt_bundle_attach=esp_crt_bundle_attach;
-    auto h=esp_http_client_init(&cfg);if(!h)return f;
+    // Reuse verified, unauthenticated CDN connections within a browsing burst.
+    // A fresh TLS handshake for every cover dominated loading on the P4.
+    // Fleet-authenticated requests never enter this pool.
+    Connection *connection=nullptr;bool reused=false;
+    if(thumbnails_ && !paired && url.rfind("https://",0)==0){
+      const auto origin=url.substr(0,url.find('/',8));
+      for(auto &entry:connections_)if(entry.origin==origin){connection=&entry;break;}
+      if(!connection)connection=&*std::min_element(connections_.begin(),connections_.end(),
+          [](const Connection &a,const Connection &b){return a.used<b.used;});
+      const auto now=esp_timer_get_time();
+      if(connection->origin!=origin || now-connection->used>30000000)close_connection(*connection);
+      connection->origin=origin;connection->used=now;reused=connection->client!=nullptr;
+      if(reused && esp_http_client_set_url(connection->client,url.c_str())!=ESP_OK){close_connection(*connection);connection=nullptr;reused=false;}
+    }
+    auto h=connection && connection->client?connection->client:esp_http_client_init(&cfg);if(!h)return f;
+    if(connection)connection->client=h;
     if(paired)esp_http_client_set_header(h,"X-Panel-Token",fleet_->token);
-    if(esp_http_client_open(h,0)==ESP_OK){
+    auto opened=esp_http_client_open(h,0);
+    if(opened!=ESP_OK && reused){esp_http_client_close(h);opened=esp_http_client_open(h,0);}
+    if(opened==ESP_OK){
       const auto bytes=esp_http_client_fetch_headers(h);
       if(esp_http_client_get_status_code(h)==200 && bytes>=0 && size_t(bytes)<=(paired?16384:limit)){
         const size_t capacity=bytes?size_t(bytes):(paired?16384:limit);
@@ -188,14 +255,24 @@ class AlbumClient {
         else if(paired)cache_brand(job,f);
       }
     }
-    esp_http_client_cleanup(h);return f;
+    if(connection){
+      if(!f.data || !esp_http_client_is_complete_data_received(h) || !esp_http_client_is_persistent_connection(h))close_connection(*connection);
+    }else esp_http_client_cleanup(h);
+    return f;
   }
   void run(){
     Job job{};
     for(;;){
-      xQueueReceive(jobs_,&job,portMAX_DELAY);
-      auto frame=fetch(job);
+      if(xQueueReceive(jobs_,&job,pdMS_TO_TICKS(5000))!=pdTRUE){
+        for(auto &connection:connections_)close_connection(connection);
+        continue;
+      }
+      const auto started=esp_timer_get_time();
+      if(!*job.url)for(auto &connection:connections_)close_connection(connection);
+      auto frame=cached_fetch(job);
+      if(thumbnails_)ESP_LOGD("study_art","Thumbnail fetched %u bytes in %u ms",unsigned(frame.size),unsigned((esp_timer_get_time()-started)/1000));
       if(frame.version!=generation_){heap_caps_free(frame.data);continue;}
+      if(!frame.data && *job.url)retry_at_=uint32_t(esp_timer_get_time()/1000)+5000;
       Frame old;
       if(xQueueReceive(result_,&old,0)==pdTRUE)heap_caps_free(old.data);
       xQueueSend(result_,&frame,0);

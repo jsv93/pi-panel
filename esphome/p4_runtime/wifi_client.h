@@ -130,12 +130,33 @@ class WifiClient {
     explicit_bzero(&old,sizeof(old));explicit_bzero(&next,sizeof(next));
     return linked;
   }
+ public:
+  static void restore_active_dns(){
+#if CONFIG_ESP_NETIF_SET_DNS_PER_DEFAULT_NETIF
+    // DHCP can populate a netif's DNS after that same interface was already
+    // selected as default. Reconcile its saved lease with lwIP's global DNS;
+    // never invent a resolver or replace the active interface's configuration.
+    auto *active=esp_netif_get_default_netif();
+    if(!active || !esp_netif_is_netif_up(active))return;
+    for(int n=0;n<2;++n){
+      auto type=static_cast<esp_netif_dns_type_t>(n);
+      esp_netif_dns_info_t saved{},current{};
+      if(esp_netif_get_dns_info(active,type,&saved)!=ESP_OK ||
+         esp_netif_get_dns_info(nullptr,type,&current)!=ESP_OK)continue;
+      if(saved.ip.type==ESP_IPADDR_TYPE_V4 && saved.ip.u_addr.ip4.addr &&
+         (current.ip.type!=ESP_IPADDR_TYPE_V4 || current.ip.u_addr.ip4.addr!=saved.ip.u_addr.ip4.addr))
+        esp_netif_set_dns_info(active,type,&saved);
+    }
+#endif
+  }
+ private:
   void run(){
     bool reconnect=false;
     int retry_seconds=2;
     for(;;){
       Job job{};
       const bool queued=xQueueReceive(queue_,&job,reconnect?pdMS_TO_TICKS(retry_seconds*1000):portMAX_DELAY)==pdTRUE;
+      restore_active_dns();
       if(!queued){
         wifi_ap_record_t ap{};esp_netif_ip_info_t ip{};
         if(esp_wifi_sta_get_ap_info(&ap)==ESP_OK){
@@ -185,4 +206,15 @@ class WifiClient {
   }
 };
 }
+#ifdef STUDY_DHCP_DNS_RESTORE
+extern "C" esp_err_t __real_esp_netif_dhcpc_start(esp_netif_t *);
+extern "C" esp_err_t __wrap_esp_netif_dhcpc_start(esp_netif_t *netif){
+  // IDF 5.5 clears GLOBAL DNS when starting DHCP on any interface, including
+  // unplugged Ethernet. Restore the other active interface before returning.
+  const auto result=__real_esp_netif_dhcpc_start(netif);
+  auto *active=esp_netif_get_default_netif();
+  if(active && active!=netif)p4_runtime::WifiClient::restore_active_dns();
+  return result;
+}
+#endif
 #endif

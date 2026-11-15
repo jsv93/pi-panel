@@ -193,12 +193,13 @@ with (D/"study_assets.h").open("w",encoding="ascii") as h:
     h.write("constexpr ColorSample frame_colors[]={"+",".join(refs)+"};}\n")
 shutil.copyfile(ROOT/"study.h",D/"study.h")
 shutil.copyfile(ROOT/"scanout.h",D/"scanout.h")
+shutil.copyfile(ROOT/"framebuffer_copy.h",D/"framebuffer_copy.h")
 shutil.copyfile(ROOT/"navigation.h",D/"navigation.h")
 shutil.copytree(ROOT/"study_lz4",D/"study_lz4",dirs_exist_ok=True)
 secret=D/"bench.key"
 if not secret.exists():
     secret.write_text(base64.b64encode(os.urandom(32)).decode(),encoding="ascii")
-base=section("esphome").replace("name: panel-poc","name: p4-study-bench").replace("friendly_name: Wall Panel PoC","friendly_name: Study P4 Bench\n  includes: [study_lz4, scanout.h, navigation_assets.h, motion_chunks.h, study_assets.h, study.h, navigation.h]")
+base=section("esphome").replace("name: panel-poc","name: p4-study-bench").replace("friendly_name: Wall Panel PoC","friendly_name: Study P4 Bench\n  includes: [study_lz4, framebuffer_copy.h, scanout.h, navigation_assets.h, motion_chunks.h, study_assets.h, study.h, navigation.h]")
 base=base.replace("id(backlight_ctrl).write_byte(0x95, 0x11);","""if (!id(backlight_ctrl).write_byte(0x95, 0x11)) {
             id(panel_display).mark_failed();
             id(panel_touch).mark_failed();
