@@ -10,7 +10,7 @@ class GestureToast {
   static constexpr int left=180,top=532,w=360,h=216;
   void show(const char *message,int64_t now){
     if(!mask_)mask_=static_cast<uint8_t*>(heap_caps_calloc(w,h,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
-    if(!background_)background_=static_cast<uint8_t*>(heap_caps_calloc(w,h,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+    if(!background_){background_w_=background_h_=0;background_=static_cast<uint8_t*>(heap_caps_calloc(w,h,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));}
     if(!mask_ || !background_)return;
     if(!until_ || now>=until_+180)start_=now;
     until_=now+1400;dirty_=true;texture_dirty_=true;
@@ -30,12 +30,15 @@ class GestureToast {
     line=std::min(line,3);int widest=0;for(int i=0;i<=line;i++)widest=std::max(widest,advances[i]);
     box_w_=line?360:std::min(360,(widest+63)/64+88);box_h_=52+41*(line+1);
     const int x0=(w-box_w_)/2,y0=(h-box_h_)/2;
+    if(background_w_!=box_w_ || background_h_!=box_h_){
+    background_w_=box_w_;background_h_=box_h_;
     for(int y=0;y<h;y++)for(int x=0;x<w;x++){
       const int dx=std::max(x0+26-x,x-(x0+box_w_-27)),dy=std::max(y0+26-y,y-(y0+box_h_-27));
       int coverage=255;
       if(dx>0 && dy>0)coverage=std::clamp(int((26.5f-std::sqrt(float(dx*dx+dy*dy)))*255),0,255);
       else if(x<x0 || x>=x0+box_w_ || y<y0 || y>=y0+box_h_)coverage=0;
       background_[y*w+x]=coverage;
+    }
     }
     uint8_t scratch[2048];
     for(int row=0;row<=line;row++){
@@ -69,14 +72,17 @@ class GestureToast {
     const float opacity=now<until_?ease(std::min(1.f,(now-start_)/180.f)):1.f-ease(std::min(1.f,(now-until_)/180.f));
     const int a=std::lround(opacity*256),scale=std::lround((.9f+.1f*opacity)*65536);
     if(!rgba_)rgba_=static_cast<uint32_t*>(heap_caps_aligned_alloc(64,4*w*h,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
-    if(!scaled_)scaled_=static_cast<uint32_t*>(heap_caps_aligned_alloc(64,4*w*h,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+    if(!scaled_){scaled_=static_cast<uint32_t*>(heap_caps_aligned_alloc(64,4*w*h,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));if(scaled_)memset(scaled_,0,4*w*h);}
     if(!rgba_ || !scaled_)return;
     const uint16_t ink=gesture_inks[std::clamp(palette,0,5)];
     if(texture_dirty_ || ink!=ink_){
-      ink_=ink;texture_dirty_=false;
+      ink_=ink;texture_dirty_=false;memset(scaled_,0,4*w*h);
       const int red=(ink>>11)*255/31,green=((ink>>5)&63)*255/63,blue=(ink&31)*255/31;
       for(int i=0;i<w*h;i++){
-        const int g=mask_[i],bg=background_[i]*235*(255-g)/65025,alpha=g+bg;
+        const int g=mask_[i];
+        if(!g){rgba_[i]=(uint32_t(background_[i]*235/255)<<24)|0x000c0c10;continue;}
+        if(g==255){rgba_[i]=0xff000000|(red<<16)|(green<<8)|blue;continue;}
+        const int bg=background_[i]*235*(255-g)/65025,alpha=g+bg;
         const int r=alpha?(red*g+12*bg+alpha/2)/alpha:12;
         const int gr=alpha?(green*g+12*bg+alpha/2)/alpha:12;
         const int b=alpha?(blue*g+16*bg+alpha/2)/alpha:16;
@@ -86,15 +92,14 @@ class GestureToast {
     const uint32_t *foreground=rgba_;
     if(scale!=65536){
       int xs[w];for(int x=0;x<w;x++)xs[x]=((x-w/2)*65536LL*256/scale)+w*128;
-      for(int y=0;y<h;y++){
+      for(int y=std::max(0,(h-box_h_)/2-1);y<std::min(h,(h+box_h_)/2+2);y++){
         const int sy=((y-h/2)*65536LL*256/scale)+h*128,iy=sy>>8,fy=sy&255;
-        for(int x=0;x<w;x++){
+        for(int x=std::max(0,(w-box_w_)/2-1);x<std::min(w,(w+box_w_)/2+2);x++){
           const int sx=xs[x],ix=sx>>8,fx=sx&255;
           uint32_t pixel=0x000c0c10;
           if(ix>=0 && iy>=0 && ix<w-1 && iy<h-1){
-            const auto upper=mix(rgba_[iy*w+ix],rgba_[iy*w+ix+1],fx);
-            const auto lower=mix(rgba_[(iy+1)*w+ix],rgba_[(iy+1)*w+ix+1],fx);
-            pixel=mix(upper,lower,fy);
+            const auto p=rgba_[iy*w+ix],q=rgba_[iy*w+ix+1],r=rgba_[(iy+1)*w+ix],s=rgba_[(iy+1)*w+ix+1];
+            pixel=(p==q && p==r && p==s)?p:mix(mix(p,q,fx),mix(r,s,fx),fy);
           }
           scaled_[y*w+x]=pixel;
         }
@@ -116,7 +121,7 @@ class GestureToast {
 
  private:
   uint8_t *mask_=nullptr,*background_=nullptr;
-  uint32_t *rgba_=nullptr,*scaled_=nullptr;bool texture_dirty_=true;uint16_t ink_=0;int box_w_=0,box_h_=0;int64_t start_=0,until_=0;bool dirty_=false;
+  uint32_t *rgba_=nullptr,*scaled_=nullptr;bool texture_dirty_=true;uint16_t ink_=0;int box_w_=0,box_h_=0,background_w_=0,background_h_=0;int64_t start_=0,until_=0;bool dirty_=false;
   static const GestureGlyph &glyph(unsigned code){
     for(const auto &g:gesture_glyphs)if(g.code==code)return g;
     for(const auto &g:gesture_glyphs)if(g.code=='?')return g;
