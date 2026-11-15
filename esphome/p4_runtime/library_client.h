@@ -15,7 +15,8 @@ template<class T> struct LibraryAllocator:esphome::ExternalRAMAllocator<T> {
 };
 class LibraryClient {
  public:
-  struct Item {std::string id,type,title,category,thumbnail; bool expand,play;};
+  using String=std::basic_string<char,std::char_traits<char>,LibraryAllocator<char>>;
+  struct Item {String id,type,title,category,thumbnail; bool expand,play;};
   using Items=std::vector<Item,LibraryAllocator<Item>>;
   Items items,folders;
   bool dirty=false,waiting=false;

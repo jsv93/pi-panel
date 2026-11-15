@@ -4,6 +4,7 @@
 #include <esp_async_memcpy.h>
 #include <esp_cache.h>
 #include <freertos/semphr.h>
+#include "framebuffer_copy.h"
 #ifdef STUDY_DMA_RETIRE
 #include "live_runtime/scanout_dma.h"
 #endif
@@ -74,6 +75,25 @@ class Scanout {
     }
     if(copier_)xSemaphoreGive(copy_lock_);
   }
+  // Main-renderer only: source is an already-flushed visible frame, destination
+  // is a retired slot. Copying the viewport avoids moving stationary margins.
+  bool copy_rect(uint8_t *destination,const uint8_t *source,int x,int to_y,int from_y,int w,int h){
+    if(!rect_done_)rect_done_=xSemaphoreCreateBinary();
+    if(!rect_copier_){esp_async_fbcpy_config_t config{};esp_async_fbcpy_install(&config,&rect_copier_);}
+    if(!rect_done_ || !rect_copier_)return false;
+    // Preserve dirty neighbouring pixels before invalidating complete cache
+    // lines. The CPU does not touch this region again until DMA has finished.
+    if(esp_cache_msync(destination+to_y*1440,h*1440,ESP_CACHE_MSYNC_FLAG_DIR_C2M|
+        ESP_CACHE_MSYNC_FLAG_INVALIDATE|ESP_CACHE_MSYNC_FLAG_UNALIGNED)!=ESP_OK)return false;
+    esp_async_fbcpy_trans_desc_t copy{};copy.src_buffer=source;copy.dst_buffer=destination;
+    copy.src_buffer_size_x=copy.dst_buffer_size_x=720;
+    copy.src_buffer_size_y=copy.dst_buffer_size_y=1280;
+    copy.src_offset_x=copy.dst_offset_x=x;copy.src_offset_y=from_y;copy.dst_offset_y=to_y;
+    copy.copy_size_x=w;copy.copy_size_y=h;
+    copy.pixel_format_unique_id.color_type_id=COLOR_TYPE_ID(COLOR_SPACE_RGB,COLOR_PIXEL_RGB565);
+    if(esp_async_fbcpy(rect_copier_,&copy,rect_done,rect_done_)!=ESP_OK)return false;
+    xSemaphoreTake(rect_done_,portMAX_DELAY);return true;
+  }
   Slot *acquire(bool wait,bool prepare_early=false) {
     const auto end=esp_timer_get_time()+80000;
     do {
@@ -121,6 +141,12 @@ class Scanout {
   int64_t presented_at_[128]{};
   async_memcpy_handle_t copier_{};
   SemaphoreHandle_t copied_{},copy_lock_{};
+  esp_async_fbcpy_handle_t rect_copier_{};
+  SemaphoreHandle_t rect_done_{};
+  static bool rect_done(esp_async_fbcpy_handle_t,esp_async_fbcpy_event_data_t*,void *context){
+    BaseType_t woken=pdFALSE;xSemaphoreGiveFromISR(static_cast<SemaphoreHandle_t>(context),&woken);
+    return woken==pdTRUE;
+  }
   static bool copy_done(async_memcpy_handle_t,async_memcpy_event_t *,void *context){
     BaseType_t woken=pdFALSE;
     xSemaphoreGiveFromISR(static_cast<SemaphoreHandle_t>(context),&woken);

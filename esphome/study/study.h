@@ -594,7 +594,7 @@ static bool library_scrolling(){return library_open && (down || std::abs(library
 static void animate_library();
 static constexpr int thumbnail_side=96,thumbnail_slots=24;
 struct Thumbnail {
-  std::string url;
+  p4_runtime::LibraryClient::String url;
   uint16_t *pixels=nullptr;
   uint8_t *alpha=nullptr;
   uint32_t used=0;
@@ -689,7 +689,9 @@ static const uint8_t *library_tile(int mode,int variant,size_t bytes){
   if(text_image(out,bytes,art[0],art[1]))return out;
   heap_caps_free(cached);cached=nullptr;return nullptr;
 }
+static bool library_rect_copied=false;
 static void __attribute__((optimize("O3"))) paint_library(int movement=0,const uint8_t *scroll_source=nullptr){
+  library_rect_copied=false;
   library_painted_scroll=library_scroll;
 #ifdef STUDY_OVERLAY_PALETTES
   TextPaletteScope colours(palette.selection());
@@ -709,7 +711,9 @@ static void __attribute__((optimize("O3"))) paint_library(int movement=0,const u
     const int delta=std::abs(movement);
     if(scroll_source){
       const int dest_y=movement>0?top:top+delta;
-      scanout.copy_pixels(pixels+dest_y*width,scroll_source+2*(dest_y+movement)*width,2*width*(v.h-delta));
+      library_rect_copied=scanout.copy_rect(page_pixels,scroll_source,v.x,dest_y,dest_y+movement,v.w,v.h-delta);
+      if(!library_rect_copied)
+        scanout.copy_pixels(pixels+dest_y*width,scroll_source+2*(dest_y+movement)*width,2*width*(v.h-delta));
     }else for(int n=0;n<v.h-delta;n++){
         const int y=movement>0?top+n:end-1-n;
         memcpy(pixels+y*width+v.x,pixels+(y+movement)*width+v.x,row_bytes);
@@ -784,7 +788,7 @@ static void __attribute__((optimize("O3"))) paint_library(int movement=0,const u
       draw_library_thumbnail(page_pixels,thumb,icon,top,end,0,width);
       thumb.used=++thumbnail_stamp;break;
     }
-    auto field=[&](TextArea area,const std::string &value){
+    auto field=[&](TextArea area,const auto &value){
       area.rect.x+=x-ref.x;area.rect.y+=y-ref.y;
       text_field(page_pixels,width,scratch,area,value.c_str(),top,end,false);
     };
@@ -828,7 +832,8 @@ static void __attribute__((optimize("O3"))) animate_library(){
       const int exposed_first=movement>0?std::max(v.y,v.y+v.h-movement):v.y;
       const int exposed_end=movement>0?v.y+v.h:std::min(v.y+v.h,v.y-movement);
       for(int y=v.y;y<v.y+v.h;++y){
-        if(!(movement%4) && (y<exposed_first || y>=exposed_end))continue;
+        if(library_rect_copied && slot->page==revision)continue;
+        if(slot->page==revision && !(movement%4) && (y<exposed_first || y>=exposed_end))continue;
         const auto *ground=library_ground[library_mode][(y-v.y)%4];
         auto *row=reinterpret_cast<uint16_t*>(slot->pixels)+y*width;
         copy_library_ground(row,ground,v.x);
@@ -850,7 +855,11 @@ static void __attribute__((optimize("O3"))) animate_library(){
       const auto &ref=library_tiles[2*library_mode+(item.expand?0:1)];
       const int y=v.y+int((library.first+i)/cols)*step-library_scroll;
       if(y>=v.y+v.h || y+ref.h<=v.y)continue;
-      if(!copied){scanout.copy_pixels(slot->pixels,scanout.visible_pixels(),page_bytes);copied=true;}
+      if(!copied){
+        if(!scanout.copy_rect(slot->pixels,scanout.visible_pixels(),0,0,0,width,height))
+          scanout.copy_pixels(slot->pixels,scanout.visible_pixels(),page_bytes);
+        copied=true;
+      }
       auto icon=library_note_rects[library_mode];
       icon.x+=v.x+(i%cols)*library_steps[library_mode][2]-ref.x;icon.y+=y-ref.y;
       draw_library_thumbnail(slot->pixels,thumb,icon,v.y,v.y+v.h,0,width);
@@ -2004,7 +2013,7 @@ static void show(int dest,int shift=14) {
   diagnostic_pass=-1;
   light_sheet=LightSheet::closed;sheet_drag=-1;
   volume_open=false;queue_open=false;speakers_open=false;volume_drag=-1;seek_drag=-1;
-  if(library_open){library.close();library_open=false;release_library_backgrounds();}
+  if(library_open){library.close();library_open=false;thumbnail_client.cancel();thumbnail_job=-1;release_library_backgrounds();}
   if(change && current==doorbell)bell_client.close();
 #endif
   playback_direction=-1;last_phase=-1;
@@ -2842,7 +2851,7 @@ static bool paint_card_library(bool benchmark=false){
   const int end=std::min(height,v.y+v.h);
   std::string crumb="Library";
   for(const auto &f:library.folders)crumb+="  ›  "+f.title;
-  auto write=[&](auto f,const std::string &s,int dx,int dy,int top,int bottom){
+  auto write=[&](auto f,const auto &s,int dx,int dy,int top,int bottom){
     f.x+=dx;f.y+=dy;return card_library_text.write(f,s.c_str(),page_pixels,scratch,page_bytes,top,bottom);
   };
   if(benchmark)crumb=diagnostic_pass==6?"Close and reopen to browse again":
@@ -3113,7 +3122,20 @@ static void begin(Display *display) {
     lights_pixels=page_buffer();lamp_pixels=page_buffer();
     if(!unpack(pages[lights],lights_pixels)){heap_caps_free(lights_pixels);lights_pixels=nullptr;}
     if(!unpack(pages[light0],lamp_pixels)){heap_caps_free(lamp_pixels);lamp_pixels=nullptr;}
-    if(scanout.active && lamp_pixels && lights_pixels && previous_pixels && blender){
+    // The SD fade bank replaces the old translated-lamp animation. Keeping
+    // its unused RGB565 timeline cost almost 5 MiB on the Study layout.
+    bool cache_lamp_motion=true;
+#if defined(STUDY_SD_ONLY) && defined(STUDY_SD_NAVIGATION)
+    if(sd_navigation_theme_fade){
+      bool enter=false,leave=false;
+      for(const auto &path:nav_paths){
+        enter|=path.from==lights && path.to==light0 && path.travel==14;
+        leave|=path.from==light0 && path.to==lights && path.travel==14;
+      }
+      cache_lamp_motion=!(enter && leave);
+    }
+#endif
+    if(cache_lamp_motion && scanout.active && lamp_pixels && lights_pixels && previous_pixels && blender){
       timeline=static_cast<uint16_t*>(heap_caps_malloc(2*lamp_steps*lamp_stride*sizeof(uint16_t),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
       ESP_LOGI("study","Lamp frame cache %s",timeline?"allocated":"unavailable");
     }
@@ -4578,6 +4600,7 @@ static void load_library_thumbnail(){
   if(thumbnail_job>=0){
     p4_runtime::AlbumClient::Frame f;
     if(!thumbnail_client.take(f))return;
+    if(f.version!=thumbnail_client.generation()){heap_caps_free(f.data);return;}
     auto &thumb=thumbnails[thumbnail_job];
     thumb.ready=f.version==thumbnail_client.generation() && decode_library_thumbnail(f,thumb);
     thumb.retry_after=clock_ms()+10000;
@@ -4604,7 +4627,7 @@ static void load_library_thumbnail(){
     if(slot==thumbnails+thumbnail_slots)
       slot=std::min_element(thumbnails,thumbnails+thumbnail_slots,[](const Thumbnail &a,const Thumbnail &b){return a.used<b.used;});
     slot->url=url;slot->ready=false;slot->used=++thumbnail_stamp;thumbnail_job=slot-thumbnails;
-    thumbnail_client.select("",url,true);return;
+    thumbnail_client.select("",url.c_str(),true);return;
   }
 }
 static void update_cover(){

@@ -6,6 +6,42 @@ The 15 November follow-up compares the existing 720 × 1280 CM5 Chromium
 layout with the P4's native rendering. It keeps the accepted clock crossfade,
 black-screen wake and cache-safe display interrupts.
 
+### Latest library, artwork and RAM refinement
+
+The user confirmed that the whole-screen flash is gone and swiping is more
+responsive. The next candidate uses rectangle DMA copies for library scrolling
+and thumbnail updates; the page-transition renderer is unchanged.
+
+- List/tile coasts present roughly 55 changing frames/s. Real album drags
+  measured 39–48, versus roughly 33–40 before the rectangle copy. Two full-size
+  scroll captures matched complete redraws exactly, with zero differing pixels.
+- Warmed idle RAM measured 78.77% used, with 6.87 MiB free. The superseded lamp
+  timeline occupied 4,951,232 bytes; it is now omitted only when both replacement
+  SD fade routes exist. Library strings and thumbnail URLs use external RAM,
+  protecting the smaller internal radio/DMA heap. HTTPS buffers also use PSRAM.
+- Inactive Ethernet DHCP retries cleared global Wi-Fi DNS. Per-interface DNS
+  retention and immediate active-lease restoration correct this without changing
+  the user's resolver. Two bounded, unauthenticated HTTPS artwork connections
+  retain certificate checks, close after five idle seconds, and are cancelled
+  when leaving the library. The latest cold trace decoded 15 cached thumbnails
+  by 12.4 seconds, without DNS or allocation errors. This is a cache count,
+  not proof that every visible cover is instant; large external originals still
+  take time on their first download.
+- Home motion retained 22–23 ms maximum intervals between Home frames, and
+  lamp transitions presented ten frames per pass. A source-page repaint before
+  navigation can add a 65 ms preparation gap before the first Home frame; that
+  gap is outside the fade and must not be counted as its motion cadence.
+
+These figures describe the installed validation candidate. Public release
+still requires the fresh production build; private probes are not shipped.
+The final candidate also cold-booted with Panel Server and the PC bridge off.
+Its transition/palette, real-album pagination, clock sleep/wake and exact-pixel
+checks passed. Offline Home frame gaps were 22 ms; list/tile coasts reached
+54–55 fps. Warmed offline idle was 77.98% RAM used, with valid Wi-Fi DNS and
+zero underruns. Panel Server was restored and automated gestures stopped.
+
+### Earlier candidate measurements
+
 - Home handoff with the mini-player active: the corrected candidate's longest
   measured presentation gap was 22 ms from Lights and 23 ms from Music. The
   mini-player continued presenting 55 changing frames per second.
@@ -36,9 +72,9 @@ black-screen wake and cache-safe display interrupts.
 These checks also passed after booting with Panel Server and the temporary
 PC artwork/update services stopped, while HA remained connected. Panel Server
 was restored afterward. Full-room Linux CI builds passed for both the original
-candidate and the allocation/header correction. Production rollout is held:
-the user still reports a whole-display flash while scrolling and choppiness at
-high speed, although coasting itself feels smooth.
+candidate and the allocation/header correction. Rollout was held at this stage
+for a whole-display flash and high-speed choppiness. The flash was subsequently
+confirmed fixed, as recorded above.
 
 Two fast-scroll captures in opposite directions matched complete redraws at
 the same offsets exactly, with zero differing pixels. Sampled stationary

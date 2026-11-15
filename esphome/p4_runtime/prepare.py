@@ -215,9 +215,12 @@ def main():
     if not (args.build / "text_art.h").exists():
         p.error("generate text_art.h using esphome/study/text_art.py first")
     shutil.copyfile(Path(__file__).parent.parent/"study/text_renderer.h",args.build/"text_renderer.h")
+    shutil.copyfile(Path(__file__).parent.parent/"study/framebuffer_copy.h",args.build/"framebuffer_copy.h")
     shutil.copyfile(Path(__file__).parent.parent/"study/network_screen.h",dest/"network_screen.h")
     source = source.replace("study_assets.h, study.h", "study_assets.h, control_art.h, media_art.h, text_art.h, text_renderer.h, study.h")
     source = source.replace("includes: [", "includes: [live_runtime, ",1)
+    if "framebuffer_copy.h" not in source:
+        source=source.replace("includes: [", "includes: [framebuffer_copy.h, ",1)
     if palette_file.is_file():
         source=source.replace(", study.h",", palette_assets.h, study.h",1)
     source=source.replace("  includes:", "  platformio_options:\n    build_flags: [-DUSE_API_HOMEASSISTANT_ACTION_RESPONSES, -DUSE_API_HOMEASSISTANT_ACTION_RESPONSES_ERRORS, -DUSE_API_HOMEASSISTANT_ACTION_RESPONSES_JSON]\n  includes:",1)
@@ -240,6 +243,17 @@ def main():
             '      CONFIG_LCD_DSI_ISR_CACHE_SAFE: "y"\n'
             '      CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS: "y"\n'
             '      CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS_MAX_LEN: "0x4000"\n',1)
+        # Unplugged Ethernet retries must not clear the active Wi-Fi lease's
+        # DNS servers. Keep DHCP DNS ownership with the default interface.
+        source=source.replace('    sdkconfig_options:\n',
+            '    sdkconfig_options:\n      CONFIG_ESP_NETIF_SET_DNS_PER_DEFAULT_NETIF: "y"\n',1)
+        # Artwork HTTPS handshakes must not exhaust the smaller internal heap
+        # used by radio/DMA descriptors. Certificate verification is unchanged.
+        source=source.replace('    sdkconfig_options:\n',
+            '    sdkconfig_options:\n      CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: "y"\n',1)
+        if args.hosted_wifi:
+            source=source.replace('build_flags: [',
+                'build_flags: [-DSTUDY_DHCP_DNS_RESTORE, "-Wl,--wrap=esp_netif_dhcpc_start",',1)
         # The hosted C6 pool has a 1600-byte stride. Every TX block must
         # meet the SDMMC driver's external-memory cache-line alignment.
         source=source.replace('CONFIG_CACHE_L2_CACHE_LINE_128B: "y"', 'CONFIG_CACHE_L2_CACHE_LINE_64B: "y"')
