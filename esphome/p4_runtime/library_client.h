@@ -1,15 +1,23 @@
 #pragma once
 #include "esphome/components/api/homeassistant_service.h"
+#include "esphome/core/helpers.h"
 #include <esp_timer.h>
 #include <string>
 #include <vector>
 #include <algorithm>
 
 namespace p4_runtime {
+template<class T> struct LibraryAllocator:esphome::ExternalRAMAllocator<T> {
+  using is_always_equal=std::true_type;
+  LibraryAllocator()=default;
+  template<class U> LibraryAllocator(const LibraryAllocator<U>&){}
+  template<class U> bool operator==(const LibraryAllocator<U>&)const{return true;}
+};
 class LibraryClient {
  public:
   struct Item {std::string id,type,title,category,thumbnail; bool expand,play;};
-  std::vector<Item> items,folders;
+  using Items=std::vector<Item,LibraryAllocator<Item>>;
+  Items items,folders;
   bool dirty=false,waiting=false;
   const char *message="";
   size_t first=0,total=0;
@@ -60,7 +68,9 @@ class LibraryClient {
       if(!result.is_success())return;
       auto data=result.get_json()["response"];
       if(!data["rows"].is<JsonArrayConst>())return;
-      std::vector<Item> incoming;
+      // The old window stays visible during prefetch. Keep both windows in
+      // external RAM rather than fragmenting the radio/display's internal heap.
+      Items incoming;incoming.reserve(batch+lookahead);
       for(auto row:data["rows"].as<JsonArrayConst>()){
         if(incoming.size()==batch+lookahead || row.size()!=7)break;
         incoming.push_back({row[0]|"",row[1]|"",row[2]|"",row[3]|"",row[4]|"",row[5]|false,row[6]|false});
@@ -69,8 +79,9 @@ class LibraryClient {
       // A fling can reverse before prefetch completes. Do not replace the
       // visible window with a response for a location the finger has left.
       if(!items.empty() && (offset>visible_ || offset+incoming.size()<std::min(available,visible_+visible_count_))){retry_at_=0;return;}
+      const bool repaint=items.empty() || visible_<first || visible_+visible_count_>first+items.size();
       items=std::move(incoming);first=offset;total=available;
-      dirty=true;retry_at_=0;
+      dirty=dirty || repaint;retry_at_=0;
       message=items.empty()?"Nothing here":"";
       ESP_LOGI("study","Music library received %u of %u items",unsigned(items.size()),unsigned(total));
     });

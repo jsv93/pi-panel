@@ -36,10 +36,6 @@ class HomeZoomArtwork {
     if(!packed_)return false;
 #endif
     const auto &r=number_rects[0];
-    // Bilinear glyph sampling touches this small mask four times per pixel.
-    // Prefer internal RAM while retaining headroom and the PSRAM fallback.
-    if(!mask_ && heap_caps_get_free_size(MALLOC_CAP_INTERNAL)>size_t(r.w*r.h)+96*1024)
-      mask_=static_cast<uint8_t*>(heap_caps_malloc(r.w*r.h,MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
     if(!mask_)mask_=static_cast<uint8_t*>(heap_caps_malloc(r.w*r.h,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
     if(!glyph_)glyph_=static_cast<uint8_t*>(heap_caps_malloc(glyph_capacity,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
     if(!shade_)shade_=static_cast<uint16_t*>(heap_caps_malloc(2*home_strip.w*home_strip.h,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));

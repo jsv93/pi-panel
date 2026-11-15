@@ -819,7 +819,7 @@ static void __attribute__((optimize("O3"))) animate_library(){
       }
       if(scanout.present(slot,v.y,v.y+v.h)){slot->page=revision;slot->lamp_background=false;}
     }else{
-      paint_library();blit(v.x,v.y,v.w,v.h,page_pixels+2*(v.y*width+v.x),width);
+      paint_library();++revision;blit(0,0,width,height,page_pixels);
     }
     library_repaint=false;
     thumbnail_repaint=-1;
