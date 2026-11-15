@@ -1,6 +1,6 @@
 # P4 interaction follow-up
 
-Scope: Architectural Study interaction fixes for 0.27.3. Library scrolling,
+Scope: Architectural Study interaction fixes for 0.27.4 (including 0.27.3). Library scrolling,
 artwork caching and the reported colour wave remain separate work.
 
 The focused instrumented P4 check on 15 November 2026 covered:
@@ -36,3 +36,16 @@ original source pixel still matches, so changing live text is not overwritten.
 These checks cover the candidate runtime. They do not claim that library
 scrolling, all animation colour handling or the complete panel is identical to
 Chromium. Private diagnostic actions are excluded from production firmware.
+
+Physical follow-up confirmed smooth mini-player bars and black-screen wake.
+Clock entry now crossfades for 180 ms without dropping the backlight to zero;
+the user confirmed the crossfade looks good.
+
+The user still saw a full-screen blue flash on membership saves even though
+framebuffer captures were unchanged outside the checkbox. The display DMA
+restart interrupt was not cache-safe during the offline configuration's NOR
+flash writes. The follow-up enables IDF's cache-safe DSI path and places the
+remaining display callback in internal executable memory. On the candidate,
+six saved membership changes had a maximum DMA refresh interval of 18,194 us
+and no reported underruns. The existing transition artwork and timing are
+unchanged.

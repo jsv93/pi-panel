@@ -34,6 +34,8 @@ def amend(file,old_text,new_text):
     if source.count(old_text)!=1:raise ValueError(f"Unsupported ESPHome driver layout: {file.name}")
     file.write_text(source.replace(old_text,new_text),encoding="utf8")
 amend(driver/"mipi_dsi.cpp",".num_fbs = 1",".num_fbs = 3")
+amend(driver/"mipi_dsi.cpp","static bool notify_refresh_ready(",
+      "static bool IRAM_ATTR notify_refresh_ready(")
 amend(driver/"mipi_dsi.cpp",".on_color_trans_done = notify_refresh_ready,",
       ".on_color_trans_done = notify_refresh_ready,\n      .on_refresh_done = count_refresh,")
 amend(driver/"mipi_dsi.h","class MipiDsi : public display::Display {\n public:",

@@ -97,6 +97,7 @@ static int screen_fade_stage=0,screen_fade_dest=0,screen_fade_from=0,screen_fade
 static int64_t screen_fade_at=0;
 static uint32_t screen_fade_epoch=0;
 static bool screen_fade_blank=false;
+static bool screen_fade_capture=false;
 static void animate_screen_fade();
 static double brightness_target=backlight_default,brightness_now=backlight_default;
 static int manual_brightness=backlight_default,shown_brightness=-1,preview_brightness=-1;
@@ -319,6 +320,11 @@ static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
     auto &button=palette_buttons[0];
     if(current==display_page && (full || seed || (y<button.y+button.h && y+h>button.y)))
       palette.label(reinterpret_cast<uint16_t*>(slot->pixels),scratch);
+  }
+#endif
+#ifdef STUDY_LIVE
+  if(full && screen_fade_capture){
+    scanout.copy_pixels(scratch,slot->pixels,page_bytes);slot->page=0;return true;
   }
 #endif
   if(full && scene_feedback_requested){
@@ -1990,9 +1996,36 @@ static void screen_transition(int dest,bool blank=false){
   screen_fade_up_ms=screen_fade_from?90:180;
   screen_fade_at=clock_ms();screen_fade_stage=1;fade_backlight=screen_fade_from;moving=true;
   last_activity=clock_ms();
+  if(dest==idle && !blank && screen_fade_from && blender && scanout.active && scanout.visible_pixels()){
+    scanout.copy_pixels(previous_pixels,scanout.visible_pixels(),page_bytes);
+    screen_fade_capture=true;show(idle,0);screen_fade_capture=false;
+    moving=true;screen_fade_stage=4;screen_fade_at=clock_ms();
+  }
 }
 static void animate_screen_fade(){
   const auto now=clock_ms();
+  if(screen_fade_stage==4){
+    auto *slot=scanout.acquire(false,true);if(!slot)return;
+    const float progress=std::min(1.f,float(now-screen_fade_at)/180);
+    const float ease=ease_out(progress);
+    if(progress==1)scanout.copy_pixels(slot->pixels,scratch,page_bytes);
+    else{
+      ppa_blend_oper_config_t op{};
+      op.in_bg.buffer=previous_pixels;op.in_bg.pic_w=width;op.in_bg.pic_h=height;
+      op.in_bg.block_w=width;op.in_bg.block_h=height;op.in_bg.blend_cm=PPA_BLEND_COLOR_MODE_RGB565;
+      op.in_fg=op.in_bg;op.in_fg.buffer=scratch;
+      op.out.buffer=slot->pixels;op.out.buffer_size=page_bytes;op.out.pic_w=width;op.out.pic_h=height;
+      op.out.blend_cm=PPA_BLEND_COLOR_MODE_RGB565;
+      op.bg_alpha_update_mode=PPA_ALPHA_FIX_VALUE;op.bg_alpha_fix_val=255;
+      op.fg_alpha_update_mode=PPA_ALPHA_FIX_VALUE;op.fg_alpha_fix_val=std::lround(255*ease);
+      if(ppa_do_blend(blender,&op)!=ESP_OK)return;
+    }
+    if(!scanout.present(slot,0,height))return;
+    slot->page=progress==1?revision:0;slot->lamp_background=false;
+    fade_backlight=std::lround(screen_fade_from+(screen_fade_target-screen_fade_from)*ease);apply_brightness();
+    if(progress==1){screen_fade_stage=0;fade_backlight=-1;moving=false;apply_brightness();}
+    return;
+  }
   if(screen_fade_stage==1){
     fade_backlight=std::max(0,screen_fade_from-int((now-screen_fade_at)*screen_fade_from/90));
     apply_brightness();

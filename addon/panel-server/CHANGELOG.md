@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.27.4
+
+- Keep P4 display refresh running during flash writes, including saved scene participation and offline configuration updates.
+- Crossfade directly into the idle clock without a black interlude; retain the smooth black-screen wake directly to Home.
+
 ## 0.27.3
 
 - Animate the Architectural P4 mini-player at display refresh speed with CM5 bar geometry and periods.

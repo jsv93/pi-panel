@@ -228,6 +228,12 @@ def main():
         # an NVS erase, both cores must stop reading NOR, including the page
         # decoder on the second core. IDF's PSRAM XiP profile skips that guard.
         source=source.replace('CONFIG_SPIRAM_XIP_FROM_PSRAM: "y"', 'CONFIG_SPIRAM_XIP_FROM_PSRAM: "n"')
+        # Signed configuration and artwork-cache saves write NOR at runtime.
+        # Keep the DSI DMA restart interrupt and its state in internal memory
+        # while flash cache is suspended; otherwise the panel can flash blue
+        # even though its PSRAM framebuffer has not changed.
+        source=source.replace('    sdkconfig_options:\n',
+            '    sdkconfig_options:\n      CONFIG_LCD_DSI_ISR_CACHE_SAFE: "y"\n',1)
         # The hosted C6 pool has a 1600-byte stride. Every TX block must
         # meet the SDMMC driver's external-memory cache-line alignment.
         source=source.replace('CONFIG_CACHE_L2_CACHE_LINE_128B: "y"', 'CONFIG_CACHE_L2_CACHE_LINE_64B: "y"')
