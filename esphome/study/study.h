@@ -572,6 +572,23 @@ static int library_mode=0,library_scroll=0,library_down_scroll=0;
 static int library_painted_scroll=0;
 static float library_velocity=0,library_position=0;
 static int64_t library_touch_at=0,library_frame_at=0,library_settled_at=0;
+struct LibraryTouchSample {int64_t at;int position;};
+static LibraryTouchSample library_samples[12]{};
+static unsigned library_sample_count=0;
+static void library_sample(int64_t at,int position){
+  if(library_sample_count && library_samples[library_sample_count-1].position==position)return;
+  if(library_sample_count==12){std::move(library_samples+1,library_samples+12,library_samples);--library_sample_count;}
+  library_samples[library_sample_count++]={at,position};
+}
+static float library_release_speed(int64_t now){
+  if(library_sample_count<2)return 0;
+  const auto &last=library_samples[library_sample_count-1];
+  if(now-last.at>100)return 0;
+  unsigned first=0;
+  while(first+2<library_sample_count && last.at-library_samples[first].at>100)++first;
+  const auto elapsed=last.at-library_samples[first].at;
+  return elapsed>0?std::clamp(1000.f*(last.position-library_samples[first].position)/elapsed,-6000.f,6000.f):0;
+}
 static bool library_dragged=false,library_repaint=false;
 static bool library_scrolling(){return library_open && (down || std::abs(library_velocity)>12 || library_scroll!=library_painted_scroll);}
 static void animate_library();
@@ -780,7 +797,7 @@ static void __attribute__((optimize("O3"))) animate_library(){
   if(current!=media || !library_open){library_velocity=0;library_frame_at=0;return;}
   if(moving || blanked)return;
   const auto now=clock_ms();
-  const int dt=library_frame_at?std::clamp(int(now-library_frame_at),0,40):0;
+  const int dt=library_frame_at?std::clamp(int(now-library_frame_at),0,100):0;
   if(dt<16 && library_frame_at)return;
   auto *slot=scanout.acquire(false,true);if(!slot)return;
   library_frame_at=now;
@@ -3457,6 +3474,7 @@ static void touch(int x,int y) {
     if(!down){
       library_dragged=std::abs(library_velocity)>12;
       library_velocity=0;library_position=library_scroll;library_touch_at=clock_ms();
+      library_sample_count=0;library_sample(library_touch_at,library_scroll);
       down=true;pressed=-157;x0=x;y0=y;library_down_scroll=library_scroll;
     }
     dx=x-x0;dy=y-y0;
@@ -3471,6 +3489,7 @@ static void touch(int x,int y) {
         library_velocity=library_dragged?library_velocity*.35f+speed*.65f:speed;
       }
       library_touch_at=now;library_position=library_scroll;library_dragged=true;
+      library_sample(now,library_scroll);
     }
     return;
   }
@@ -3927,7 +3946,7 @@ static void release() {
   if(pressed==-157){
     down=false;pressed=-2;
     if(library_dragged || std::abs(dx)>24 || std::abs(dy)>24){
-      if(clock_ms()-library_touch_at>100)library_velocity=0;
+      library_velocity=library_release_speed(clock_ms());
       library_frame_at=clock_ms();return;
     }
     const int x=x0+dx,y=y0+dy;

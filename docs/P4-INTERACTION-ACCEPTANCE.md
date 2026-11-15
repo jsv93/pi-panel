@@ -1,5 +1,58 @@
 # P4 interaction follow-up
 
+## Motion and library candidate for 0.27.5
+
+The 15 November follow-up compares the existing 720 × 1280 CM5 Chromium
+layout with the P4's native rendering. It keeps the accepted clock crossfade,
+black-screen wake and cache-safe display interrupts.
+
+- Home handoff with the mini-player active: the corrected candidate's longest
+  measured presentation gap was 22 ms from Lights and 23 ms from Music. The
+  mini-player continued presenting 55 changing frames per second.
+- Clock timeout: 20 decreasing backlight values over 380 ms within the 400 ms
+  fade, followed by a black display; waking returned directly to Home.
+- Music library: time-based momentum and touch-to-stop; real HA browsing of
+  496 albums, forward pagination and reverse drags. The retained window and
+  incoming window use external RAM. The fixed-heading sample stayed unchanged
+  throughout the repeated drag, with at least 66,548 bytes of internal RAM free.
+- Library rendering: copy the moving viewport and paint its newly exposed
+  rows, keep headers coherent across all three buffers, and update arriving
+  covers without repainting the entire library. Successful lookahead does
+  not repaint already-visible rows. Isolated list/tile coasts measured about
+  46–50 rendered frames/s; fast scripted drags with real artwork measured
+  about 37–41. These are rendered frames, not the display's 55 Hz refresh.
+- Artwork: bounded encoded and decoded caches, visible-cover priority and
+  bounded lookahead; generated player pages use the normal empty-cover state.
+  New artwork still depends on HA or its provider. Existing provider-logo
+  caching continues to work without Panel Server.
+- Transition colour: encode the stationary RGB565 dither at the hardware
+  decoder's quantization levels. The sampled blurred room background had
+  mean RGB error [0.92, 0.49, 0.02]/255 and 95th-percentile absolute error 2/255
+  against the source image. Navigation retained 9–10 presentations in roughly
+  180 ms across the tested light and dark palettes. Home frames are warmed
+  into a bounded RAM cache; SD initialization negotiates high speed and retries
+  at the normal clock if necessary.
+
+These checks also passed after booting with Panel Server and the temporary
+PC artwork/update services stopped, while HA remained connected. Panel Server
+was restored afterward. Full-room Linux CI builds passed for both the original
+candidate and the allocation/header correction. Production rollout is held:
+the user still reports a whole-display flash while scrolling and choppiness at
+high speed, although coasting itself feels smooth.
+
+Two fast-scroll captures in opposite directions matched complete redraws at
+the same offsets exactly, with zero differing pixels. Sampled stationary
+edge colours and headings stayed unchanged. A revised 100 ms touch-history
+estimate produced 833 px/s for the slower test swipe and 2113 px/s for the
+faster one, with endpoints of 529 and 905 px from an initial 300 px drag.
+Holding before release stopped at 300 px without a fling. The whole-display
+flash is being traced at the refresh/backlight level before release.
+
+This evidence does not establish identical Chromium scrolling performance or
+prove that every physical fade is free of visible colour variation.
+
+## Earlier 0.27.4 acceptance
+
 Scope: Architectural Study interaction fixes for 0.27.4 (including 0.27.3). Library scrolling,
 artwork caching and the reported colour wave remain separate work.
 
