@@ -48,6 +48,16 @@ faster one, with endpoints of 529 and 905 px from an initial 300 px drag.
 Holding before release stopped at 300 px without a fling. The whole-display
 flash is being traced at the refresh/backlight level before release.
 
+The display trace found DMA refresh intervals up to 35,767 us while scrolling.
+IDF's framebuffer cache writeback held interrupts disabled across a full
+viewport. Enabling its 16 KiB chunked writeback reduced the maximum observed
+interval to 18,238 us in the same stress sequence (nominal 18,182 us). The
+installed underrun hook was verified active and recorded zero underruns.
+Display bus priorities remain at their original values. Real album pagination
+and reverse drags still passed, with stable headings and no reset; fast drags
+measured 36–40 rendered frames/s, and isolated list/tile coasts 45/48. Physical
+confirmation that the remaining flash is gone is still pending.
+
 This evidence does not establish identical Chromium scrolling performance or
 prove that every physical fade is free of visible colour variation.
 

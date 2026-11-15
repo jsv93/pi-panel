@@ -232,8 +232,14 @@ def main():
         # Keep the DSI DMA restart interrupt and its state in internal memory
         # while flash cache is suspended; otherwise the panel can flash blue
         # even though its PSRAM framebuffer has not changed.
+        # Framebuffer writeback otherwise disables interrupts for the whole
+        # viewport. Give the DSI DMA restart a chance to run between 16 KiB
+        # chunks, while the CPU is still preparing a retired frame buffer.
         source=source.replace('    sdkconfig_options:\n',
-            '    sdkconfig_options:\n      CONFIG_LCD_DSI_ISR_CACHE_SAFE: "y"\n',1)
+            '    sdkconfig_options:\n'
+            '      CONFIG_LCD_DSI_ISR_CACHE_SAFE: "y"\n'
+            '      CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS: "y"\n'
+            '      CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS_MAX_LEN: "0x4000"\n',1)
         # The hosted C6 pool has a 1600-byte stride. Every TX block must
         # meet the SDMMC driver's external-memory cache-line alignment.
         source=source.replace('CONFIG_CACHE_L2_CACHE_LINE_128B: "y"', 'CONFIG_CACHE_L2_CACHE_LINE_64B: "y"')
