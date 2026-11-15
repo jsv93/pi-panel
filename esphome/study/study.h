@@ -823,7 +823,7 @@ static void __attribute__((optimize("O3"))) animate_library(){
     const auto &v=library_list;
     // Scroll straight into a retired scanout buffer. A second full viewport
     // copy consumed most of the frame budget on the P4's external RAM.
-    if(movement && !library_repaint && library_ground_ok[library_mode]==1 && scanout.visible_pixels()){
+    if(movement && !library_repaint && library_ground_ok[library_mode]==1 && scanout.visible_pixels() && !scanout.visible_has_toast()){
       if(slot->page!=revision){
         scanout.copy_pixels(slot->pixels,page_pixels,2*width*v.y);
         const size_t end=2*width*(v.y+v.h);
@@ -859,8 +859,8 @@ static void __attribute__((optimize("O3"))) animate_library(){
       const int y=v.y+int((library.first+i)/cols)*step-library_scroll;
       if(y>=v.y+v.h || y+ref.h<=v.y)continue;
       if(!copied){
-        if(!scanout.copy_rect(slot->pixels,scanout.visible_pixels(),0,0,0,width,height))
-          scanout.copy_pixels(slot->pixels,scanout.visible_pixels(),page_bytes);
+        if(scanout.visible_has_toast() || !scanout.copy_rect(slot->pixels,scanout.visible_pixels(),0,0,0,width,height))
+          scanout.copy_visible_clean(slot);
         copied=true;
       }
       auto icon=library_note_rects[library_mode];
@@ -1046,7 +1046,10 @@ static uint32_t gesture_epoch=0;
 static void copy_badge_background(Scanout::Slot *slot,bool save){
   constexpr size_t bytes=2*width*32;
   if(save)memcpy(slot->overlay_background,slot->pixels,bytes);
-  else if(slot->has_overlay)memcpy(slot->pixels,slot->overlay_background,bytes);
+  else if(slot->has_overlay){
+    memcpy(slot->pixels,slot->overlay_background,bytes);
+    slot->overlay_dirty_first=0;slot->overlay_dirty_end=std::max(slot->overlay_dirty_end,32);
+  }
   slot->has_overlay=save;
 }
 static void draw_diagnostic_badges(Scanout::Slot *slot,int &first_y,int &end_y){
@@ -1410,7 +1413,7 @@ static void animate_mini(){
   auto *slot=scanout.acquire(false,true);if(!slot)return;
   const auto &bars=mini_bars[cover_ready && mini_art_enabled];
   const Rect area{bars[0].x,bars[0].y,bars[3].x+bars[3].w-bars[0].x,bars[0].h};
-  if(slot->page!=revision)scanout.copy_pixels(slot->pixels,scanout.visible_pixels(),page_bytes);
+  if(slot->page!=revision)scanout.copy_visible_clean(slot);
   auto *pixels=reinterpret_cast<uint16_t*>(slot->pixels);
   const auto *visible=reinterpret_cast<const uint16_t*>(scanout.visible_pixels());
   for(int y=area.y;y<area.y+area.h;++y)
@@ -1682,7 +1685,7 @@ static void refresh_edit(){
     if(current==members_page && scanout.active && scanout.visible_pixels() && overlay_artwork.ready()){
       auto *slot=scanout.acquire(true);
       if(slot){
-        scanout.copy_pixels(slot->pixels,scanout.visible_pixels(),page_bytes);
+        scanout.copy_visible_clean(slot);
         bool okay=true;
         for(int i=0;i<light_count;++i){
           const int mode=int(fleet.active().members[i]!=(edit_waiting && edit_slot==i+2))+
@@ -1811,7 +1814,10 @@ static bool start_scene_feedback(Scanout::Slot *target){
   if(!scene_from)scene_from=static_cast<uint16_t*>(heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
   if(!scene_to)scene_to=static_cast<uint16_t*>(heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
   if(!scene_from || !scene_to){heap_caps_free(scene_from);heap_caps_free(scene_to);scene_from=scene_to=nullptr;return false;}
-  memcpy(scene_from,scanout.visible_pixels()+2*width*scene_feedback_top,bytes);
+  if(scanout.visible_has_toast()){
+    scanout.copy_visible_clean(previous_pixels);
+    memcpy(scene_from,previous_pixels+2*width*scene_feedback_top,bytes);
+  }else memcpy(scene_from,scanout.visible_pixels()+2*width*scene_feedback_top,bytes);
   memcpy(scene_to,target->pixels+2*width*scene_feedback_top,bytes);
   target->page=0;scene_feedback_at=clock_ms();return true;
 }
@@ -1819,7 +1825,7 @@ static void animate_scene_feedback(){
   if(!scene_feedback_at)return;
   if(current!=scenes || moving){scene_feedback_at=0;}
   else if(auto *slot=scanout.acquire(false)){
-    if(slot->page!=revision)scanout.copy_pixels(slot->pixels,scanout.visible_pixels(),page_bytes);
+    if(slot->page!=revision)scanout.copy_visible_clean(slot);
     const int alpha=std::clamp(int((clock_ms()-scene_feedback_at)*256/180),0,256);
     auto *out=reinterpret_cast<uint16_t*>(slot->pixels)+width*scene_feedback_top;
     for(int i=0;i<width*scene_feedback_height;++i)out[i]=interpolate_pixel(scene_from[i],scene_to[i],alpha);
@@ -2047,7 +2053,7 @@ static void show(int dest,int shift=14) {
   palette_motion=false;
 #ifdef STUDY_PALETTE_PICKER
   if(transition && scanout.active && palette.selection() && scratch && scanout.visible_pixels()){
-    if(!nav.theme_fade())scanout.copy_pixels(previous_pixels,scanout.visible_pixels(),page_bytes);
+    if(!nav.theme_fade())scanout.copy_visible_clean(previous_pixels);
     palette_motion=true;
   }
 #endif
@@ -2141,7 +2147,7 @@ static void screen_transition(int dest,bool blank=false){
   screen_fade_at=clock_ms();screen_fade_stage=1;fade_backlight=screen_fade_from;moving=true;
   last_activity=clock_ms();
   if(dest==idle && !blank && screen_fade_from && blender && scanout.active && scanout.visible_pixels()){
-    scanout.copy_pixels(previous_pixels,scanout.visible_pixels(),page_bytes);
+    scanout.copy_visible_clean(previous_pixels);
     screen_fade_capture=true;show(idle,0);screen_fade_capture=false;
     moving=true;screen_fade_stage=4;screen_fade_at=clock_ms();
   }
@@ -4419,7 +4425,7 @@ static void tick() {
   if(action==PanelAction::identify){
     show(current,0);
 #ifdef STUDY_IDENTIFY
-    scanout.copy_pixels(previous_pixels,scanout.visible_pixels(),page_bytes);
+    scanout.copy_visible_clean(previous_pixels);
     const auto &frame=identify_frames[palette.selection()];
     if(tinfl_decompress_mem_to_mem(scratch,page_bytes,identify_pixels+frame[0],frame[1],1)==page_bytes){
       identify_until=now+10000;identify_phase=-1;apply_brightness();return;

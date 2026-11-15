@@ -27,14 +27,22 @@ class Scanout {
     bool has_overlay=false;
     uint8_t *toast_background{};
     bool has_toast=false;
+    int overlay_dirty_first=1280,overlay_dirty_end=0;
   };
   void (*restore_overlay)(Slot *)=nullptr;
   void (*draw_overlay)(Slot *,int &,int &)=nullptr;
   const uint8_t *visible_pixels()const{return submitted_?front_->pixels:nullptr;}
-  void copy_visible_clean(Slot *slot){
-    copy_pixels(slot->pixels,front_->pixels,720*1280*2);
-    auto clean=*front_;clean.pixels=slot->pixels;
+  bool visible_has_toast()const{return submitted_ && front_->has_toast;}
+  Slot copy_visible_clean(uint8_t *pixels){
+    copy_pixels(pixels,front_->pixels,720*1280*2);
+    auto clean=*front_;clean.pixels=pixels;
     if(restore_overlay)restore_overlay(&clean);
+    return clean;
+  }
+  void copy_visible_clean(Slot *slot){
+    const auto clean=copy_visible_clean(slot->pixels);
+    slot->overlay_dirty_first=std::min(slot->overlay_dirty_first,clean.overlay_dirty_first);
+    slot->overlay_dirty_end=std::max(slot->overlay_dirty_end,clean.overlay_dirty_end);
   }
   uint32_t presentation_count()const{return presented_count_;}
   bool count_frame=true;
@@ -125,7 +133,12 @@ class Scanout {
       vTaskDelay(1);
     }
     if(draw_overlay)draw_overlay(slot,first_y,end_y);
+    // Restoring an expired overlay is a CPU write too. A later mini-player
+    // or thumbnail patch may be elsewhere; flush both regions to the display.
+    first_y=std::min(first_y,slot->overlay_dirty_first);
+    end_y=std::max(end_y,slot->overlay_dirty_end);
     if(esp_lcd_panel_draw_bitmap(panel_,0,first_y,720,end_y,slot->pixels)!=ESP_OK)return false;
+    slot->overlay_dirty_first=1280;slot->overlay_dirty_end=0;
     last_epoch_=refresh_epoch();
     // Allow two refresh boundaries for an already-started DMA scan to retire.
     front_->safe_after=last_epoch_+2;

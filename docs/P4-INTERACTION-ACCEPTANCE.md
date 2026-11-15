@@ -26,6 +26,11 @@ fingerprint. Entity/layout changes still require matching artwork and firmware.
   online and offline. Clock sleep retained 20 brightness steps over 380 ms.
 - A recognised chord also wakes Home from the clock or sleeping display through
   the existing wake transition; its release cannot activate Home controls.
+- Wake/miniplayer copies exclude transient overlays. Expired overlay restoration
+  expands the display's cache-writeback region even if the next patch is only
+  the media bars. Ninety DMA readbacks matched the clean Home region after awake,
+  clock and black-screen notifications, with the mini-player both on and off;
+  this checks scanout RAM rather than merely the CPU's cached screenshot.
 
 ### Latest library, artwork and RAM refinement
 

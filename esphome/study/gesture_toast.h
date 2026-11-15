@@ -55,6 +55,8 @@ class GestureToast {
   void restore(Scanout::Slot *slot){
     if(!slot->has_toast)return;
     for(int y=0;y<h;y++)memcpy(slot->pixels+2*((top+y)*720+left),slot->toast_background+2*y*w,2*w);
+    slot->overlay_dirty_first=std::min(slot->overlay_dirty_first,top);
+    slot->overlay_dirty_end=std::max(slot->overlay_dirty_end,top+h);
     slot->has_toast=false;
   }
   void __attribute__((optimize("O3"))) draw(Scanout::Slot *slot,int &first,int &end,int64_t now,int palette,ppa_client_handle_t blender){
