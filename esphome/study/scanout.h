@@ -25,10 +25,17 @@ class Scanout {
     bool lamp_background=false;
     uint8_t *overlay_background{};
     bool has_overlay=false;
+    uint8_t *toast_background{};
+    bool has_toast=false;
   };
   void (*restore_overlay)(Slot *)=nullptr;
   void (*draw_overlay)(Slot *,int &,int &)=nullptr;
   const uint8_t *visible_pixels()const{return submitted_?front_->pixels:nullptr;}
+  void copy_visible_clean(Slot *slot){
+    copy_pixels(slot->pixels,front_->pixels,720*1280*2);
+    auto clean=*front_;clean.pixels=slot->pixels;
+    if(restore_overlay)restore_overlay(&clean);
+  }
   uint32_t presentation_count()const{return presented_count_;}
   bool count_frame=true;
 #ifdef STUDY_LIVE_CAPTURE
@@ -101,7 +108,7 @@ class Scanout {
       if(prepare_early || !submitted_ || epoch!=last_epoch_) {
         for(auto &s:slots_)
           if(&s!=front_ && int32_t(epoch-s.safe_after)>=0){
-            if(s.has_overlay && restore_overlay)restore_overlay(&s);
+            if((s.has_overlay || s.has_toast) && restore_overlay)restore_overlay(&s);
             return &s;
           }
       }

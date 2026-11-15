@@ -51,7 +51,8 @@ def shape(config):
     for light in value.get('lights', []):
         for key in ('soft', 'bright', 'include_presets'): light.pop(key, None)
     # These choices already use the small, signed live-config protocol.
-    for key in ('palette', 'diagnostics', 'browse_view', 'mini_art'):
+    for key in ('palette', 'diagnostics', 'browse_view', 'mini_art',
+                'touch_gesture', 'touch_points', 'touch_hold_ms', 'remember_last_state'):
         value.get('display', {}).pop(key, None)
     return hashlib.sha256(canonical(value)).hexdigest()
 

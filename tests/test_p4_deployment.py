@@ -31,6 +31,8 @@ async def check(server, db, deploy):
         deploy.queue(pid);assert len(deploy.status(pid)['jobs'])==1
         dynamic=json.loads(json.dumps(cfg));dynamic['display']['palette']='ember'
         assert deploy.shape(dynamic)==deploy.shape(cfg)
+        dynamic['display'].update(touch_gesture='lights',touch_points=4,touch_hold_ms=1000,remember_last_state=False)
+        assert deploy.shape(dynamic)==deploy.shape(cfg)
         dynamic['room_label']='Another room';assert deploy.shape(dynamic)!=deploy.shape(cfg)
         directory=deploy.ROOT/str(generation);(directory/'artifacts').mkdir(parents=True)
         secret=base64.b64encode(bytes(32)).decode()

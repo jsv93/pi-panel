@@ -216,8 +216,10 @@ def main():
         p.error("generate text_art.h using esphome/study/text_art.py first")
     shutil.copyfile(Path(__file__).parent.parent/"study/text_renderer.h",args.build/"text_renderer.h")
     shutil.copyfile(Path(__file__).parent.parent/"study/framebuffer_copy.h",args.build/"framebuffer_copy.h")
+    for name in ('gesture_toast.h','gesture_assets.h'):
+        shutil.copyfile(Path(__file__).parent.parent/'study'/name,args.build/name)
     shutil.copyfile(Path(__file__).parent.parent/"study/network_screen.h",dest/"network_screen.h")
-    source = source.replace("study_assets.h, study.h", "study_assets.h, control_art.h, media_art.h, text_art.h, text_renderer.h, study.h")
+    source = source.replace("study_assets.h, study.h", "study_assets.h, control_art.h, media_art.h, text_art.h, text_renderer.h, gesture_assets.h, gesture_toast.h, study.h")
     source = source.replace("includes: [", "includes: [live_runtime, ",1)
     if "framebuffer_copy.h" not in source:
         source=source.replace("includes: [", "includes: [framebuffer_copy.h, ",1)
