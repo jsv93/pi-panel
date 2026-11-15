@@ -18,6 +18,13 @@ class HomeZoomArtwork {
   uint16_t *shade_=nullptr;
 #ifdef STUDY_HOME_LZ4
   uint8_t *packed_=nullptr;
+  uint8_t *cached_=nullptr;
+  uint32_t cached_offsets_[10]{};
+  std::atomic<int> cached_mode_{-1};
+  std::atomic<bool> cache_busy_{false};
+  std::atomic<uint32_t> cache_retry_{0};
+  int cache_requested_=0;
+  std::mutex file_mutex_;
 #endif
   int shade_mode_=-1;
   bool player_visible_=false;
@@ -29,6 +36,10 @@ class HomeZoomArtwork {
     if(!packed_)return false;
 #endif
     const auto &r=number_rects[0];
+    // Bilinear glyph sampling touches this small mask four times per pixel.
+    // Prefer internal RAM while retaining headroom and the PSRAM fallback.
+    if(!mask_ && heap_caps_get_free_size(MALLOC_CAP_INTERNAL)>size_t(r.w*r.h)+96*1024)
+      mask_=static_cast<uint8_t*>(heap_caps_malloc(r.w*r.h,MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
     if(!mask_)mask_=static_cast<uint8_t*>(heap_caps_malloc(r.w*r.h,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
     if(!glyph_)glyph_=static_cast<uint8_t*>(heap_caps_malloc(glyph_capacity,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
     if(!shade_)shade_=static_cast<uint16_t*>(heap_caps_malloc(2*home_strip.w*home_strip.h,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
@@ -46,6 +57,42 @@ class HomeZoomArtwork {
   }
  public:
   bool ready()const{return state_.load()==2;}
+  bool cached(unsigned mode)const{
+#ifdef STUDY_HOME_LZ4
+    return cached_mode_.load()==int(mode);
+#else
+    return false;
+#endif
+  }
+  void preload(unsigned mode){
+#ifdef STUDY_HOME_LZ4
+    const uint32_t now=esp_timer_get_time()/1000,retry=cache_retry_.load();
+    if(!ready() || mode>=6 || cached(mode) || (retry && int32_t(now-retry)<0) || cache_busy_.exchange(true))return;
+    cache_requested_=mode;
+    if(xTaskCreate([](void *context){
+        auto &self=*static_cast<HomeZoomArtwork*>(context);const int mode=self.cache_requested_;
+        const auto *frames=home_zoom_frames+mode*10;
+        uint32_t offsets[10]{};size_t bytes=0;
+        for(int i=0;i<10;++i){offsets[i]=bytes;bytes+=(frames[i][2]+63)&~size_t(63);}
+        {const std::lock_guard<std::mutex> lock(self.file_mutex_);
+         self.cached_mode_=-1;heap_caps_free(self.cached_);self.cached_=nullptr;}
+        auto *pixels=heap_caps_get_free_size(MALLOC_CAP_SPIRAM)>bytes+512*1024?
+          static_cast<uint8_t*>(heap_caps_aligned_alloc(64,bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)):nullptr;
+        bool ok=pixels!=nullptr;
+        for(int i=0;ok && i<10;++i){
+          {const std::lock_guard<std::mutex> lock(self.file_mutex_);
+           ok=self.file_.read(frames[i][0],self.packed_,frames[i][1]) &&
+             LZ4_decompress_safe(reinterpret_cast<const char*>(self.packed_),
+               reinterpret_cast<char*>(pixels+offsets[i]),frames[i][1],frames[i][2])==int(frames[i][2]);}
+          vTaskDelay(1);
+        }
+        if(ok){const std::lock_guard<std::mutex> lock(self.file_mutex_);
+          heap_caps_free(self.cached_);self.cached_=pixels;memcpy(self.cached_offsets_,offsets,sizeof(offsets));self.cached_mode_=mode;
+        }else{heap_caps_free(pixels);self.cache_retry_=uint32_t(esp_timer_get_time()/1000)+5000;}
+        self.cache_busy_=false;vTaskDelete(nullptr);
+      },"study_home_cache",4096,this,1,nullptr)!=pdPASS){cache_retry_=now+5000;cache_busy_=false;}
+#endif
+  }
   void warm(){
     if(ready())return;
     const uint32_t now=esp_timer_get_time()/1000,retry=retry_at_.load();
@@ -74,6 +121,8 @@ class HomeZoomArtwork {
 #ifdef STUDY_HOME_LZ4
     if(!bytes || bytes>capacity)return false;
     const auto &frame=home_zoom_frames[palette*10+phase];
+    const std::lock_guard<std::mutex> lock(file_mutex_);
+    if(cached(palette)){memcpy(destination,cached_+cached_offsets_[phase],bytes);return true;}
     return frame[1]<=home_zoom_max_stored && file_.read(frame[0],packed_,frame[1]) &&
       LZ4_decompress_safe(reinterpret_cast<const char*>(packed_),reinterpret_cast<char*>(destination),frame[1],bytes)==int(bytes);
 #else
@@ -102,7 +151,7 @@ class HomeZoomArtwork {
       pen+=g.advance;
     }
   }
-  void draw(uint16_t *out,const uint8_t *foreground,int mode,int phase,int &first_y,int &end_y)const{
+  void __attribute__((optimize("O3"))) draw(uint16_t *out,const uint8_t *foreground,int mode,int phase,int &first_y,int &end_y)const{
     const unsigned clear=255-home_zoom_opacities[phase];
     if(player_visible_){
       const auto &r=home_strip;

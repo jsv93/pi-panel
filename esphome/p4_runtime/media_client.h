@@ -49,12 +49,15 @@ class MediaClient {
       if(picture!=v){picture=std::move(v);dirty=true;}
     });
     api->subscribe_home_assistant_state(speaker_,"media_duration",[this](esphome::StringRef s){
-      auto n=esphome::parse_number<float>(s.str());duration=n && std::isfinite(*n) && *n>0 && *n<864000?std::lround(*n):0;dirty=true;
+      auto n=esphome::parse_number<float>(s.str());const int value=n && std::isfinite(*n) && *n>0 && *n<864000?std::lround(*n):0;
+      if(duration!=value){duration=value;dirty=true;}
     });
     api->subscribe_home_assistant_state(speaker_,"media_position",[this](esphome::StringRef s){
       auto n=esphome::parse_number<float>(s.str());
       if(n && std::isfinite(*n)){reported_position_=std::max(0.f,*n);position_at_=esp_timer_get_time();}
-      dirty=true;
+      // The frame-paced progress painter reads position directly. Rebuilding
+      // Home or an open library for each position report interrupts motion.
+      if(!playing)dirty=true;
     });
     api->subscribe_home_assistant_state(speaker_,"media_position_updated_at",[this](esphome::StringRef s){
       updated_at_=0;auto timestamp=s.str();
@@ -72,7 +75,7 @@ class MediaClient {
           updated_at_+=(timestamp[i]-'0')*scale;scale*=.1;
         }
       }
-      dirty=true;
+      if(!playing)dirty=true;
     });
     api->subscribe_home_assistant_state(speaker_,"supported_features",[this](esphome::StringRef s){
       can_seek=(esphome::parse_number<unsigned>(s.str()).value_or(0)&16)!=0;dirty=true;

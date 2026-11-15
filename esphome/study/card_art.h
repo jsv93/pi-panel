@@ -131,7 +131,10 @@ class CardArt {
       const auto powered=sd_pwr_ctrl_new_on_chip_ldo(&ldo,&power_);
       if(powered!=ESP_OK){ESP_LOGW("study_card","SD power setup failed: %s",esp_err_to_name(powered));return false;}
       sdmmc_host_t host=SDMMC_HOST_DEFAULT();
-      host.slot=SDMMC_HOST_SLOT_0;host.max_freq_khz=SDMMC_FREQ_DEFAULT;
+      host.slot=SDMMC_HOST_SLOT_0;
+      // Negotiate the card's supported high-speed mode. Retry at the normal
+      // clock if this board/card cannot initialize reliably at that rate.
+      host.max_freq_khz=attempt?SDMMC_FREQ_DEFAULT:SDMMC_FREQ_HIGHSPEED;
       host.pwr_ctrl_handle=power_;
       sdmmc_slot_config_t slot=SDMMC_SLOT_CONFIG_DEFAULT();
       slot.width=4;slot.clk=GPIO_NUM_43;slot.cmd=GPIO_NUM_44;

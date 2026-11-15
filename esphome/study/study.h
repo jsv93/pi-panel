@@ -93,7 +93,7 @@ static int64_t last_activity,dim_since;
 static int wake_page=home,shown_minute=-2,applied_brightness=-1;
 static bool blanked=false,wake_touch=false;
 static int fade_backlight=-1;
-static int screen_fade_stage=0,screen_fade_dest=0,screen_fade_from=0,screen_fade_target=0,screen_fade_up_ms=90;
+static int screen_fade_stage=0,screen_fade_dest=0,screen_fade_from=0,screen_fade_target=0,screen_fade_up_ms=90,screen_fade_down_ms=90;
 static int64_t screen_fade_at=0;
 static uint32_t screen_fade_epoch=0;
 static bool screen_fade_blank=false;
@@ -569,7 +569,13 @@ static bool volume_open=false;
 static bool queue_open=false;
 static bool library_open=false;
 static int library_mode=0,library_scroll=0,library_down_scroll=0;
-static constexpr int thumbnail_side=96,thumbnail_slots=12;
+static int library_painted_scroll=0;
+static float library_velocity=0,library_position=0;
+static int64_t library_touch_at=0,library_frame_at=0,library_settled_at=0;
+static bool library_dragged=false,library_repaint=false;
+static bool library_scrolling(){return library_open && (down || std::abs(library_velocity)>12 || library_scroll!=library_painted_scroll);}
+static void animate_library();
+static constexpr int thumbnail_side=96,thumbnail_slots=24;
 struct Thumbnail {
   std::string url;
   uint16_t *pixels=nullptr;
@@ -580,7 +586,7 @@ struct Thumbnail {
 };
 static Thumbnail thumbnails[thumbnail_slots];
 static uint16_t thumbnail_ground[2][16];
-static void draw_library_thumbnail(uint8_t *frame,const Thumbnail &thumb,const Rect &icon,
+static void __attribute__((optimize("O3"))) draw_library_thumbnail(uint8_t *frame,const Thumbnail &thumb,const Rect &icon,
                                    int top,int bottom,int left,int right,bool themed=false){
   const int radius=library_mode?11:13;
   for(int y=std::max(top,icon.y+1);y<std::min(bottom,icon.y+icon.h-1);++y){
@@ -605,7 +611,7 @@ static void draw_library_thumbnail(uint8_t *frame,const Thumbnail &thumb,const R
     }
   }
 }
-static int thumbnail_job=-1;static uint32_t thumbnail_stamp=0;
+static int thumbnail_job=-1,thumbnail_repaint=-1;static uint32_t thumbnail_stamp=0;
 static void load_library_thumbnail();
 static void label(const TextArea &field,const char *value);
 static void show(int dest,int shift);
@@ -625,7 +631,16 @@ static bool card_diagnostic_frame();
 #endif
 // A scroll moves the existing list pixels. Repaint only the newly exposed
 // band, using the kiosk's own four-row RGB565 dither as its ground.
-static uint16_t library_ground[2][4][library_list.w];
+alignas(64) static uint16_t library_ground[2][4][width];
+static inline __attribute__((always_inline)) void copy_library_ground(uint16_t *out,const uint16_t *in,int count){
+  // Both rows have the same pixel alignment. Avoid a byte-at-a-time memcpy
+  // for the odd x coordinate of the right gutter on 32-bit RISC-V.
+  if(reinterpret_cast<uintptr_t>(out)&2){*out++=*in++;--count;}
+  typedef uint32_t Pair __attribute__((may_alias));
+  auto *dst=reinterpret_cast<Pair*>(out);const auto *src=reinterpret_cast<const Pair*>(in);
+  for(int i=0;i<count/2;++i)dst[i]=src[i];
+  if(count&1)out[count-1]=in[count-1];
+}
 static int8_t library_ground_ok[2]={-1,-1};
 // A folder and a track use the same two backgrounds on every row. Keep
 // decoded copies while browsing so exposing a few scanlines doesn't inflate
@@ -657,7 +672,8 @@ static const uint8_t *library_tile(int mode,int variant,size_t bytes){
   if(text_image(out,bytes,art[0],art[1]))return out;
   heap_caps_free(cached);cached=nullptr;return nullptr;
 }
-static void paint_library(int movement=0){
+static void __attribute__((optimize("O3"))) paint_library(int movement=0,const uint8_t *scroll_source=nullptr){
+  library_painted_scroll=library_scroll;
 #ifdef STUDY_OVERLAY_PALETTES
   TextPaletteScope colours(palette.selection());
   if(library_cache_palette!=text_palette){
@@ -674,12 +690,15 @@ static void paint_library(int movement=0){
   const size_t row_bytes=size_t(v.w)*sizeof(*pixels);
   if(movement && std::abs(movement)<v.h && library_ground_ok[mode]==1 && !library.dirty && !*library.message){
     const int delta=std::abs(movement);
-    for(int n=0;n<v.h-delta;n++){
-      const int y=movement>0?top+n:end-1-n;
-      memcpy(pixels+y*width+v.x,pixels+(y+movement)*width+v.x,row_bytes);
-    }
+    if(scroll_source){
+      const int dest_y=movement>0?top:top+delta;
+      scanout.copy_pixels(pixels+dest_y*width,scroll_source+2*(dest_y+movement)*width,2*width*(v.h-delta));
+    }else for(int n=0;n<v.h-delta;n++){
+        const int y=movement>0?top+n:end-1-n;
+        memcpy(pixels+y*width+v.x,pixels+(y+movement)*width+v.x,row_bytes);
+      }
     if(movement>0)top=end-delta;else end=top+delta;
-    for(int y=top;y<end;y++)memcpy(pixels+y*width+v.x,library_ground[mode][(y-v.y)%4],row_bytes);
+    for(int y=top;y<end;y++)memcpy(pixels+y*width+v.x,library_ground[mode][(y-v.y)%4]+v.x,row_bytes);
     // The gutters stay fixed to the glass, while the dither inside a card
     // moves with that card. Recover the original phase in the exposed gaps.
     if(movement%4){
@@ -690,7 +709,7 @@ static void paint_library(int movement=0){
         const int position=y-v.y+library_scroll;
         const size_t first=size_t(position/step)*cols;
         int last_x=0;
-        const auto *ground=library_ground[mode][(y-v.y)%4];
+        const auto *ground=library_ground[mode][(y-v.y)%4]+v.x;
         auto *dst=pixels+y*width+v.x;
         if(position%step<tile.h)for(int col=0;col<cols;col++){
           const size_t index=first+col;
@@ -705,9 +724,9 @@ static void paint_library(int movement=0){
   }else{
     text_background(page_pixels,width,scratch,{0,0,width,height},library_bases[mode][0],library_bases[mode][1]);
     if(library_ground_ok[mode]<0){
-      for(int y=0;y<4;y++)memcpy(library_ground[mode][y],pixels+(v.y+y)*width+v.x,row_bytes);
+      for(int y=0;y<4;y++)memcpy(library_ground[mode][y],pixels+(v.y+y)*width,2*width);
       library_ground_ok[mode]=1;
-      for(int y=4;y<v.h;y++)if(memcmp(library_ground[mode][y%4],pixels+(v.y+y)*width+v.x,row_bytes)){
+      for(int y=4;y<v.h;y++)if(memcmp(library_ground[mode][y%4],pixels+(v.y+y)*width,2*width)){
         library_ground_ok[mode]=0;break;
       }
     }
@@ -754,6 +773,79 @@ static void paint_library(int movement=0){
     };
     field(library_name[variant],item.title);field(library_type[variant],item.category);
   }
+}
+// Input only updates a target. Paint once per display refresh, then coast with
+// time-based friction; a new touch stops the coast without activating a row.
+static void __attribute__((optimize("O3"))) animate_library(){
+  if(current!=media || !library_open){library_velocity=0;library_frame_at=0;return;}
+  if(moving || blanked)return;
+  const auto now=clock_ms();
+  const int dt=library_frame_at?std::clamp(int(now-library_frame_at),0,40):0;
+  if(dt<16 && library_frame_at)return;
+  auto *slot=scanout.acquire(false,true);if(!slot)return;
+  library_frame_at=now;
+  const int cols=library_steps[library_mode][0],step=library_steps[library_mode][1];
+  if(!down && std::abs(library_velocity)>12){
+    const float damping=std::exp(-dt/325.f);
+    library_position+=library_velocity*.325f*(1-damping);
+    library_velocity*=damping;
+    const int limit=std::max(0,int((library.total+cols-1)/cols)*step-library_list.h);
+    library_scroll=std::clamp(int(std::lround(library_position)),0,limit);
+    if(library_position<0 || library_position>limit)library_velocity=0;
+  }
+  library.ensure(size_t(library_scroll/step)*cols,size_t(library_list.h/step+2)*cols);
+  const int movement=library_scroll-library_painted_scroll;
+  if(movement || library_repaint){
+    const auto &v=library_list;
+    // Scroll straight into a retired scanout buffer. A second full viewport
+    // copy consumed most of the frame budget on the P4's external RAM.
+    if(movement && !library_repaint && library_ground_ok[library_mode]==1 && scanout.visible_pixels()){
+      if(slot->page!=revision){
+        scanout.copy_pixels(slot->pixels,page_pixels,2*width*v.y);
+        const size_t end=2*width*(v.y+v.h);
+        scanout.copy_pixels(slot->pixels+end,page_pixels+end,page_bytes-end);
+      }
+      auto *saved=page_pixels;page_pixels=slot->pixels;
+      paint_library(movement,scanout.visible_pixels());page_pixels=saved;
+      // Keep stationary margins at their original dither phase.
+      const int exposed_first=movement>0?std::max(v.y,v.y+v.h-movement):v.y;
+      const int exposed_end=movement>0?v.y+v.h:std::min(v.y+v.h,v.y-movement);
+      for(int y=v.y;y<v.y+v.h;++y){
+        if(!(movement%4) && (y<exposed_first || y>=exposed_end))continue;
+        const auto *ground=library_ground[library_mode][(y-v.y)%4];
+        auto *row=reinterpret_cast<uint16_t*>(slot->pixels)+y*width;
+        copy_library_ground(row,ground,v.x);
+        copy_library_ground(row+v.x+v.w,ground+v.x+v.w,width-v.x-v.w);
+      }
+      if(scanout.present(slot,v.y,v.y+v.h)){slot->page=revision;slot->lamp_background=false;}
+    }else{
+      paint_library();blit(v.x,v.y,v.w,v.h,page_pixels+2*(v.y*width+v.x),width);
+    }
+    library_repaint=false;
+    thumbnail_repaint=-1;
+    library_settled_at=now;
+  }
+  if(thumbnail_repaint>=0 && !down && std::abs(library_velocity)<=12){
+    auto &thumb=thumbnails[thumbnail_repaint];const auto &v=library_list;
+    bool copied=false;int top=height,bottom=0;
+    for(size_t i=0;i<library.items.size();++i){
+      const auto &item=library.items[i];if(!thumb.ready || item.thumbnail!=thumb.url)continue;
+      const auto &ref=library_tiles[2*library_mode+(item.expand?0:1)];
+      const int y=v.y+int((library.first+i)/cols)*step-library_scroll;
+      if(y>=v.y+v.h || y+ref.h<=v.y)continue;
+      if(!copied){scanout.copy_pixels(slot->pixels,scanout.visible_pixels(),page_bytes);copied=true;}
+      auto icon=library_note_rects[library_mode];
+      icon.x+=v.x+(i%cols)*library_steps[library_mode][2]-ref.x;icon.y+=y-ref.y;
+      draw_library_thumbnail(slot->pixels,thumb,icon,v.y,v.y+v.h,0,width);
+      top=std::min(top,std::max(v.y,icon.y));bottom=std::max(bottom,std::min(v.y+v.h,icon.y+icon.h));
+    }
+    if(copied && top<bottom){scanout.present(slot,top,bottom);slot->page=revision;slot->lamp_background=false;}
+    thumbnail_repaint=-1;
+  }
+#ifndef STUDY_BENCH_TEST
+  if(!down && std::abs(library_velocity)<=12 && now-library_settled_at>=140)
+    load_library_thumbnail();
+#endif
 }
 #ifndef STUDY_ARCHITECTURAL_ONLY
 static void diagnostic_scroll_frame(){
@@ -1258,8 +1350,16 @@ static void animate_progress(){
     --labels_remaining;
   previous=now;
 }
+static std::string home_shown_title,home_shown_artist;
+static bool home_shown_playing=false,home_shown_cover=false;
+static bool home_player_changed(){
+  return home_shown_playing!=player().playing || home_shown_cover!=(cover_ready && mini_art_enabled) ||
+    home_shown_title!=player().title || home_shown_artist!=player().artist;
+}
 static void home_player(){
   const bool cover=cover_ready && mini_art_enabled;
+  home_shown_title=player().title;home_shown_artist=player().artist;
+  home_shown_playing=player().playing;home_shown_cover=cover;
   const auto &art=home_strip_art[player().playing?(cover?2:1):0];
   text_background(page_pixels,width,scratch,home_strip,art[0],art[1]);
   if(player().playing){
@@ -1272,7 +1372,7 @@ static void home_player(){
 static bool mini_active(){return current==home && player().playing && !blanked && !down && !moving;}
 static void animate_mini(){
   if(!mini_active() || !scanout.visible_pixels())return;
-  auto *slot=scanout.acquire(false);if(!slot)return;
+  auto *slot=scanout.acquire(false,true);if(!slot)return;
   const auto &bars=mini_bars[cover_ready && mini_art_enabled];
   const Rect area{bars[0].x,bars[0].y,bars[3].x+bars[3].w-bars[0].x,bars[0].h};
   if(slot->page!=revision)scanout.copy_pixels(slot->pixels,scanout.visible_pixels(),page_bytes);
@@ -1758,7 +1858,9 @@ static void animate() {
 #ifdef STUDY_ARCHITECTURAL_ONLY
      || mini_active()
 #endif
+     || library_scrolling()
   )motion_loop.start();else motion_loop.stop();
+  animate_library();
   animate_progress();
   animate_scene_feedback();
 #ifdef STUDY_ARCHITECTURAL_ONLY
@@ -1994,6 +2096,7 @@ static void screen_transition(int dest,bool blank=false){
   screen_fade_from=std::max(0,applied_brightness);
   screen_fade_target=dest==idle?std::max(lux_entity[0]?1:10,int(std::lround(screen_level()*.25))):screen_level();
   screen_fade_up_ms=screen_fade_from?90:180;
+  screen_fade_down_ms=blank?400:90;
   screen_fade_at=clock_ms();screen_fade_stage=1;fade_backlight=screen_fade_from;moving=true;
   last_activity=clock_ms();
   if(dest==idle && !blank && screen_fade_from && blender && scanout.active && scanout.visible_pixels()){
@@ -2027,7 +2130,7 @@ static void animate_screen_fade(){
     return;
   }
   if(screen_fade_stage==1){
-    fade_backlight=std::max(0,screen_fade_from-int((now-screen_fade_at)*screen_fade_from/90));
+    fade_backlight=std::max(0,screen_fade_from-int((now-screen_fade_at)*screen_fade_from/screen_fade_down_ms));
     apply_brightness();
     if(fade_backlight)return;
     if(applied_brightness!=0)return;
@@ -3214,7 +3317,10 @@ template<class Touches> static bool observe_touches(const Touches &touches){
 #endif
 static void touch(int x,int y) {
 #ifdef STUDY_LIVE
-  if(screen_fade_stage)return;
+  if(screen_fade_stage){
+    if(screen_fade_blank){screen_fade_stage=0;moving=false;wake_touch=true;screen_transition(home);}
+    return;
+  }
 #endif
   if(!startup_ready)return;
   bench_demo=false;
@@ -3348,17 +3454,23 @@ static void touch(int x,int y) {
   }
   if(!moving && current==media && !volume_open && !queue_open && !speakers_open &&
       (pressed==-157 || (!down && (browse_button.contains(x,y) || (library_open && y<speaker_end))))){
-    if(!down){down=true;pressed=-157;x0=x;y0=y;library_down_scroll=library_scroll;}
+    if(!down){
+      library_dragged=std::abs(library_velocity)>12;
+      library_velocity=0;library_position=library_scroll;library_touch_at=clock_ms();
+      down=true;pressed=-157;x0=x;y0=y;library_down_scroll=library_scroll;
+    }
     dx=x-x0;dy=y-y0;
-    if(library_open && y0>=library_list.y && std::abs(dy)>8 && !library.waiting){
+    if(library_open && y0>=library_list.y && std::abs(dy)>8 && !library.items.empty()){
       const int cols=library_steps[library_mode][0],step=library_steps[library_mode][1];
       const int max_scroll=std::max(0,int((library.total+cols-1)/cols)*step-library_list.h);
       const int previous=library_scroll;
       library_scroll=std::clamp(library_down_scroll-dy,0,max_scroll);
-      if(previous==library_scroll)return;
-      const size_t first=(library_scroll/step)*cols,offset=first/library.batch*library.batch;
-      if(library.total && (first<library.first || first>=library.first+library.batch))library.get(offset);
-      paint_library(library_scroll-previous);++revision;blit(0,0,width,height,page_pixels);
+      const auto now=clock_ms();const int dt=now-library_touch_at;
+      if(dt>0 && previous!=library_scroll){
+        const float speed=std::clamp(1000.f*(library_scroll-previous)/dt,-4000.f,4000.f);
+        library_velocity=library_dragged?library_velocity*.35f+speed*.65f:speed;
+      }
+      library_touch_at=now;library_position=library_scroll;library_dragged=true;
     }
     return;
   }
@@ -3814,7 +3926,10 @@ static void release() {
   }
   if(pressed==-157){
     down=false;pressed=-2;
-    if(std::abs(dx)>24 || std::abs(dy)>24)return;
+    if(library_dragged || std::abs(dx)>24 || std::abs(dy)>24){
+      if(clock_ms()-library_touch_at>100)library_velocity=0;
+      library_frame_at=clock_ms();return;
+    }
     const int x=x0+dx,y=y0+dy;
     if(!library_open){
       if(!browse_button.contains(x,y))return;
@@ -3832,7 +3947,7 @@ static void release() {
       save_preference("libview",library_mode!=0);
 #endif
       library_scroll=0;if(library.first)library.get(0);
-    }else if(library_list.contains(x,y) && !library.waiting){
+    }else if(library_list.contains(x,y) && !library.items.empty()){
       const int cols=library_steps[library_mode][0],step=library_steps[library_mode][1];
       const int row=(y-library_list.y+library_scroll)/step;
       const int col=cols==1?0:(x-library_list.x)/int(library_steps[library_mode][2]);
@@ -4013,6 +4128,9 @@ static bool start_navigation_demo(){
   navigation_demo=bench_demo=true;demo_step=0;demo_at=clock_ms();return true;
 }
 static void tick() {
+#ifdef STUDY_HOME_ZOOM
+  if(!moving && !down)home_zoom_artwork.preload(palette.selection());
+#endif
 #ifdef STUDY_SD_ONLY
   static int64_t next_art_retry=30000;
   if(clock_ms()>=next_art_retry){
@@ -4095,7 +4213,7 @@ static void tick() {
   }
   if(current==idle && !blanked && !screen_fade_stage){
     if(backlight_off_s>0 && now-dim_since>=backlight_off_s*1000){
-      blanked=true;wake_page=home;depth=0;
+      wake_page=home;depth=0;screen_transition(idle,true);
       ESP_LOGI("study","Timed screen off");
     }else if(minutes_now && page_pixels){
       const int minutes=minutes_now();
@@ -4117,17 +4235,17 @@ static void tick() {
     speakers_dirty=true;
   }
   if(speakers_dirty){if(speakers_open)player().dirty=true;speakers_dirty=false;}
-  if(library_open){library.tick();if(library.dirty){player().dirty=true;library.dirty=false;}}
+  if(library_open){library.tick();if(library.dirty){library_repaint=true;library.dirty=false;}}
 #ifndef STUDY_BENCH_TEST
   album_client.select(speaker_ids[selected_speaker],player().picture);
 #endif
   if(!moving && !down && current!=doorbell && !bench_demo)update_cover();
 #ifndef STUDY_BENCH_TEST
-  if(library_open && !library.waiting && !moving && !down)load_library_thumbnail();
+  // Library artwork is serviced between frames, after scrolling settles.
 #endif
   if(player().dirty && !moving && !down){
     player().dirty=false;
-    if(current==media && page_pixels){
+    if(current==media && page_pixels && !library_open){
 #ifdef STUDY_CARD_OVERLAYS
       if(card_page_visible && (volume_open || queue_open))paint_card_popup(volume_open,page_pixels);
       else
@@ -4154,7 +4272,7 @@ static void tick() {
 #ifdef STUDY_CARD_FIELDS
        && !card_page_visible
 #endif
-    ){home_player();++revision;blit(0,0,width,height,page_pixels);}
+    && home_player_changed()){home_player();++revision;blit(0,0,width,height,page_pixels);}
   }
   static int64_t next_progress=0;
 #ifdef STUDY_CARD_MOTION_GEOMETRY
@@ -4381,7 +4499,7 @@ static inline __attribute__((always_inline)) uint16_t jpeg_pixel(int v,int u,int
   const int threshold=(2*bayer[y%4][x%4]+1)*255/32;
   return (((red*31+threshold)/255)<<11) | (((green*63+threshold)/255)<<5) | ((blue*31+threshold)/255);
 }
-static bool decode_artwork(const p4_runtime::AlbumClient::Frame &frame,
+static bool __attribute__((optimize("O3"))) decode_artwork(const p4_runtime::AlbumClient::Frame &frame,
                            uint16_t *&pixels,int output_width,int output_height){
   if(!frame.data || !previous_pixels || !scratch || frame.size>page_bytes)return false;
   memcpy(scratch,frame.data,frame.size);
@@ -4444,7 +4562,7 @@ static void load_library_thumbnail(){
     auto &thumb=thumbnails[thumbnail_job];
     thumb.ready=f.version==thumbnail_client.generation() && decode_library_thumbnail(f,thumb);
     thumb.retry_after=clock_ms()+10000;
-    if(thumb.ready){player().dirty=true;ESP_LOGD("study","Music library thumbnail decoded");}
+    if(thumb.ready){thumbnail_repaint=thumbnail_job;ESP_LOGD("study","Music library thumbnail decoded");}
     heap_caps_free(f.data);thumbnail_job=-1;
   }
   int cols=library_steps[library_mode][0],step=library_steps[library_mode][1],viewport=library_list.h;
@@ -4453,10 +4571,15 @@ static void load_library_thumbnail(){
     const auto &l=library_layout();cols=l.cols;step=l.step;viewport=l.viewport.h;
   }
 #endif
-  for(size_t i=0;i<library.items.size();i++){
+  // Visible covers first, then forward/backward lookahead within the cache's
+  // actual capacity. Never evict/reload an endless ring of off-screen covers.
+  unsigned candidates=0;
+  for(int pass=0;pass<3;++pass)for(size_t i=0;i<library.items.size();i++){
     const auto &url=library.items[i].thumbnail;
     const int y=int((library.first+i)/cols)*step-library_scroll;
-    if(url.empty() || url.size()>=1536 || y>=viewport || y+step<=0)continue;
+    const bool visible=y<viewport && y+step>0;
+    if(url.empty() || url.size()>=1536 || (pass==0?!visible:pass==1?y<viewport || y>=2*viewport:y+step>0 || y+step<=-viewport))continue;
+    if(++candidates>thumbnail_slots)return;
     auto *slot=std::find_if(thumbnails,thumbnails+thumbnail_slots,[&](const Thumbnail &t){return t.url==url;});
     if(slot!=thumbnails+thumbnail_slots && (slot->ready || clock_ms()<slot->retry_after))continue;
     if(slot==thumbnails+thumbnail_slots)

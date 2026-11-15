@@ -4,6 +4,7 @@
 #include <lwip/inet.h>
 #include <esp_heap_caps.h>
 #include <array>
+#include <algorithm>
 #include <mbedtls/sha256.h>
 
 extern "C" size_t tinfl_decompress_mem_to_mem(void *,size_t,const void *,size_t,int);
@@ -23,7 +24,11 @@ class AlbumClient {
     jobs_=xQueueCreate(1,sizeof(Job));result_=xQueueCreate(1,sizeof(Frame));
   }
   void select(const char *entity,const std::string &value,bool force=false){
-    if(!jobs_ || !result_ || (!force && entity==last_entity_ && value==last_))return;
+    if(!jobs_ || !result_)return;
+    const auto retry=retry_at_.load();
+    if(!force && entity==last_entity_ && value==last_ &&
+       (!retry || int32_t(uint32_t(esp_timer_get_time()/1000)-retry)<0))return;
+    retry_at_=0;
     last_entity_=entity;
     const uint32_t version=++generation_;
     Job job{};job.version=version;job.entity=entity;
@@ -39,12 +44,45 @@ class AlbumClient {
  private:
   struct Job {uint32_t version;const char *entity;char url[1536];};
   std::atomic<uint32_t> generation_{0};
+  std::atomic<uint32_t> retry_at_{0};
   bool thumbnails_=false;
   const FleetSettings *fleet_=nullptr;
   const char *last_entity_="",*origin_="";
   std::string last_;
   QueueHandle_t jobs_{},result_{};
   TaskHandle_t worker_{};
+  struct Cached {std::string key;uint8_t *data=nullptr;size_t size=0;uint32_t used=0;};
+  std::array<Cached,12> cache_{};
+  size_t cached_bytes_=0;
+  uint32_t cache_stamp_=0;
+  Frame cached_fetch(const Job &job){
+    const std::string key=std::string(job.entity)+"\n"+job.url;
+    for(auto &entry:cache_)if(entry.data && entry.key==key){
+      auto *copy=static_cast<uint8_t*>(heap_caps_malloc(entry.size,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+      if(copy){memcpy(copy,entry.data,entry.size);entry.used=++cache_stamp_;return {copy,entry.size,job.version};}
+      break;
+    }
+    auto frame=fetch(job);
+    // A bounded worker-owned cache makes revisiting albums immediate without
+    // retaining unbounded originals or using flash during touch interaction.
+    if(frame.data && frame.size<=64*1024){
+      auto *copy=static_cast<uint8_t*>(heap_caps_malloc(frame.size,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+      if(copy){
+        memcpy(copy,frame.data,frame.size);
+        auto end=cache_.begin()+(thumbnails_?12:2);
+        auto oldest=[&](){return std::min_element(cache_.begin(),end,[](const Cached &a,const Cached &b){return a.used<b.used;});};
+        auto *slot=&*oldest();
+        auto evict=[&](Cached &entry){cached_bytes_-=entry.size;heap_caps_free(entry.data);entry=Cached{};};
+        evict(*slot);
+        while(cached_bytes_+frame.size>192*1024){
+          auto found=std::min_element(cache_.begin(),end,[](const Cached &a,const Cached &b){return (a.data?a.used:UINT32_MAX)<(b.data?b.used:UINT32_MAX);});
+          evict(*found);
+        }
+        *slot={key,copy,frame.size,++cache_stamp_};cached_bytes_+=frame.size;
+      }
+    }
+    return frame;
+  }
   static std::string brand_path(const std::string &picture){
     const std::string prefix="/api/brands/integration/";
     if(picture.compare(0,prefix.size(),prefix))return {};
@@ -194,8 +232,9 @@ class AlbumClient {
     Job job{};
     for(;;){
       xQueueReceive(jobs_,&job,portMAX_DELAY);
-      auto frame=fetch(job);
+      auto frame=cached_fetch(job);
       if(frame.version!=generation_){heap_caps_free(frame.data);continue;}
+      if(!frame.data && *job.url)retry_at_=uint32_t(esp_timer_get_time()/1000)+5000;
       Frame old;
       if(xQueueReceive(result_,&old,0)==pdTRUE)heap_caps_free(old.data);
       xQueueSend(result_,&frame,0);

@@ -33,6 +33,27 @@ def panel_jpeg(image, **options):
     planes.save(output, "JPEG", **options)
     return output.getvalue()
 
+
+def display_jpeg(image, quality=92):
+    """Keep the stationary screen's fine dither in hardware-decoded fades.
+
+    Encode display levels at the centres of the P4's truncation bins. Keep
+    the hardware's fast 4:2:0 path while avoiding smooth RGB gradients
+    into different coloured bands as their opacity changes.
+    """
+    from render import rgb565
+    pixels=np.frombuffer(rgb565(image),dtype='<u2').reshape(image.height,image.width)
+    r=(pixels>>11).astype(np.float32)*8+4
+    g=((pixels>>5)&63).astype(np.float32)*4+2
+    b=(pixels&31).astype(np.float32)*8+4
+    planes=np.stack(((.299*r+.587*g+.114*b)*219/255+16,
+                     (-.168736*r-.331264*g+.5*b)*224/255+128,
+                     (.5*r-.418688*g-.081312*b)*224/255+128),axis=-1)
+    output=io.BytesIO()
+    Image.fromarray(np.rint(planes).clip(0,255).astype('uint8'),'YCbCr').save(
+        output,'JPEG',quality=quality,subsampling=2)
+    return output.getvalue()
+
 def motion_sources(d,views):
     art=(d/"screens.bin").read_bytes()
     pages=[]

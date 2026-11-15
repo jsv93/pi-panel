@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.27.5
+
+- Reduce P4 Home handoff work while the mini-player is active and cache Home animation frames locally.
+- Fade the idle clock to black over 400 ms when its screen-off timer expires.
+- Add momentum scrolling, touch-to-stop and retained pagination to the Architectural music library.
+- Cache artwork, prioritize visible covers and update arriving thumbnails without repainting the whole library; use the normal empty-cover artwork during loading.
+- Match transition quantization to stationary RGB565 backgrounds and negotiate faster SD reads with a normal-speed initialization fallback.
+
 ## 0.27.4
 
 - Keep P4 display refresh running during flash writes, including saved scene participation and offline configuration updates.

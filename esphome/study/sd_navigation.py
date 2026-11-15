@@ -12,7 +12,7 @@ from lz4.block import compress, decompress
 import numpy as np
 from PIL import Image
 
-from jpeg_motion import motion_image, panel_jpeg
+from jpeg_motion import motion_image, display_jpeg
 from page_motion import H, W, routes
 from palette_art import PALETTES, load_pages
 
@@ -25,8 +25,7 @@ def encode_route(job):
     if background.size != (W, H) or foreground.size != (W, H):
         raise ValueError("Navigation artwork must be 720 by 1280")
     return [
-        panel_jpeg(motion_image(background, foreground, phase, travel, clip).crop((0,0,W,(clip+15)//16*16)),
-                   quality=94, subsampling=2)
+        display_jpeg(motion_image(background, foreground, phase, travel, clip).crop((0,0,W,(clip+15)//16*16)))
         for phase in range(10)
     ]
 
@@ -82,7 +81,7 @@ def build(root, destination, workers):
             for number, (job, frames) in enumerate(zip(unique, pool.map(encode_route, unique))):
                 positions = []
                 for frame in frames:
-                    packed = compress(frame,store_size=False)
+                    packed = compress(frame,store_size=False,mode='high_compression',compression=12)
                     if decompress(packed,uncompressed_size=len(frame))!=frame:
                         raise ValueError('Navigation frame compression failed verification')
                     positions.append((output.tell(), len(packed), len(frame)))

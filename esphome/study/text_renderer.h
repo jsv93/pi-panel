@@ -33,7 +33,7 @@ static void text_background(uint8_t *page_pixels,int width,uint8_t *scratch,cons
   if(!text_image(scratch,bytes,offset,size))return;
   for(int y=0;y<r.h;y++)memcpy(page_pixels+2*((r.y+y)*width+r.x),scratch+2*y*r.w,2*r.w);
 }
-static void text_field(uint8_t *page_pixels,int width,uint8_t *scratch,const TextArea &f,const char *value,int clip_top=0,int clip_end=1280,bool restore_background=true){
+static void __attribute__((optimize("O3"))) text_field(uint8_t *page_pixels,int width,uint8_t *scratch,const TextArea &f,const char *value,int clip_top=0,int clip_end=1280,bool restore_background=true){
   const auto &r=f.rect;
   uint16_t colour=f.colour;
 #ifdef STUDY_OVERLAY_PALETTES
