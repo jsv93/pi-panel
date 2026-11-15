@@ -28,7 +28,15 @@ def capture(root, states, destination, cdp=None):
                 scrim:c.getPropertyValue('--scrim').trim(),ink:getComputedStyle(document.getElementById('archTemp')).color};}""")
             colours.append(colour)
             for phase in range(10):
-                page.evaluate("document.getAnimations().forEach(a=>a.finish());document.querySelector('.nav [data-sheet=lights]').click()")
+                page.evaluate("""() => {
+                    // Live playback bars repeat forever, even while hidden.
+                    // Finish page motion; freeze repeating decoration instead.
+                    document.getAnimations().forEach(a=>{
+                        if(Number.isFinite(a.effect.getComputedTiming().endTime))a.finish();
+                        else {a.pause();a.currentTime=0;}
+                    });
+                    document.querySelector('.nav [data-sheet=lights]').click();
+                }""")
                 page.wait_for_timeout(210)
                 pose=page.evaluate("""t=>{
                     document.querySelector('#s-lights [data-close]').click();

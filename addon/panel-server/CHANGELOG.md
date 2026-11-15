@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.27.6
+
+- Build P4 Home artwork while music is playing by freezing repeating playback decoration during capture; preserve all page-animation poses.
+- Exercise active playback in complete-room build validation and verify Home artwork matches the idle-player capture.
+
 ## 0.27.5
 
 - Apply P4 multi-touch settings live without rebuilding artwork or firmware; keep them cached for offline boots.

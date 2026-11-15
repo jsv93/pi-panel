@@ -26,7 +26,7 @@ def main():
             ('light.test','on',dict(brightness=255,supported_color_modes=['color_temp'],color_mode='color_temp',color_temp_kelvin=3000,min_color_temp_kelvin=2000,max_color_temp_kelvin=6500)),
             ('sensor.test_temperature','22',{}),('sensor.test_humidity','45',{}),
             ('climate.test','off',dict(temperature=22,current_temperature=22,min_temp=16,max_temp=30,hvac_modes=['off','cool','heat'])),
-            ('media_player.test','idle',dict(friendly_name='Test speaker',volume_level=.2,supported_features=517055)),
+            ('media_player.test','playing',dict(friendly_name='Test speaker',media_title='Test track',volume_level=.2,supported_features=517055)),
             ('camera.test','idle',{})]]
         identity=dict(id='p4-ci',mac='02:00:00:00:00:01',server='http://panel.invalid:8099',api_name='p4-ci',token='fixture-only-token',sign_key='fixture-only-signing-key',generation=1)
         for name,value in [('config.json',{'config':config}),('states.json',states),('identity.json',identity)]:
