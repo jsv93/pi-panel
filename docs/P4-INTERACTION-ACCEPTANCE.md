@@ -49,3 +49,20 @@ remaining display callback in internal executable memory. On the candidate,
 six saved membership changes had a maximum DMA refresh interval of 18,194 us
 and no reported underruns. The existing transition artwork and timing are
 unchanged.
+
+The user confirmed the full-screen blue flash is gone on this build. Repeated
+focused checks passed with the server online. With Panel Server stopped, the
+P4 retained local artwork, direct HA connectivity, 55 presented mini-player
+frames/second, clock entry/wake, and a stable 5170 K colour-temperature request.
+Original light settings were restored and Panel Server was restarted.
+
+Production rollout completed through the 0.27.4 GitHub release image and the
+server's per-device signed/encrypted updater. The automatic builder passed
+palette packing and firmware compilation, and the panel reported its local
+display and artwork healthy. The production API exposes only `close`, `frame`,
+`ring` and `ring_live_camera`; the private test action is absent.
+
+The installed production firmware also booted with both Panel Server and the
+temporary PC update bridge stopped. After restarting Panel Server, the fleet
+again reported the panel live, HA connected and the production artwork healthy.
+The PC bridge and temporary administrator sessions were closed.
