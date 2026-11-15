@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.27.3
+
+- Animate the Architectural P4 mini-player at display refresh speed with CM5 bar geometry and periods.
+- Keep requested light colour temperature and scene selection visible while Home Assistant confirms them.
+- Update scene participation without repainting the surrounding page.
+- Fade into the idle clock and wake directly to Home, keeping the backlight off until the destination has reached scanout.
+- Preserve rare palette colour mappings that exceed the compact rank table, fixing automatic-build failures without enlarging the panel's rank buffer.
+
 ## 0.27.2
 
 - Restore P4 artwork builds on Home Assistant virtual machines whose CPU profile lacks x86-64-v2 instructions.

@@ -10,6 +10,9 @@
 #define STUDY_LIVE
 #include "control_art.h"
 #include "media_art.h"
+#ifdef STUDY_ARCHITECTURAL_ONLY
+#include "mini_player.h"
+#endif
 #include "text_renderer.h"
 #include "live_runtime/study_profile.h"
 #ifdef STUDY_CARD_ART
@@ -89,6 +92,12 @@ static void screen_callbacks(int (*clock)(),bool (*brightness)(int)){
 static int64_t last_activity,dim_since;
 static int wake_page=home,shown_minute=-2,applied_brightness=-1;
 static bool blanked=false,wake_touch=false;
+static int fade_backlight=-1;
+static int screen_fade_stage=0,screen_fade_dest=0,screen_fade_from=0,screen_fade_target=0,screen_fade_up_ms=90;
+static int64_t screen_fade_at=0;
+static uint32_t screen_fade_epoch=0;
+static bool screen_fade_blank=false;
+static void animate_screen_fade();
 static double brightness_target=backlight_default,brightness_now=backlight_default;
 static int manual_brightness=backlight_default,shown_brightness=-1,preview_brightness=-1;
 static int64_t override_until=0;
@@ -101,7 +110,7 @@ static int screen_level(){
 }
 static void apply_brightness(){
   const int normal=screen_level();
-  const int value=clock_ms()<identify_until?100:
+  const int value=clock_ms()<identify_until?100:fade_backlight>=0?fade_backlight:
     blanked?0:current==idle?std::max(lux_entity[0]?1:10,int(std::lround(normal*.25))):normal;
   if(value!=applied_brightness && set_light_level && set_light_level(value)){
     applied_brightness=value;
@@ -256,6 +265,8 @@ static void restore_media_palette(uint8_t *frame,const Rect &paint);
 #endif
 static uint32_t revision=1;
 static bool popup_requested=false,popup_ground=false;
+static bool scene_feedback_requested=false;
+static bool start_scene_feedback(Scanout::Slot *target);
 static bool start_popup_motion(Scanout::Slot *target,bool ground);
 static void request_popup_motion(bool ground=false){
 #ifdef STUDY_SD_NAVIGATION
@@ -310,6 +321,10 @@ static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
       palette.label(reinterpret_cast<uint16_t*>(slot->pixels),scratch);
   }
 #endif
+  if(full && scene_feedback_requested){
+    scene_feedback_requested=false;
+    if(start_scene_feedback(slot))return true;
+  }
   if(full && popup_requested){
     popup_requested=false;
 #ifdef STUDY_SD_NAVIGATION
@@ -1247,6 +1262,34 @@ static void home_player(){
     label(cover?home_cover_artist:home_artist,player().title.empty()?"Nothing playing":player().artist.empty()?"Playing":player().artist.c_str());
   }
 }
+#ifdef STUDY_ARCHITECTURAL_ONLY
+static bool mini_active(){return current==home && player().playing && !blanked && !down && !moving;}
+static void animate_mini(){
+  if(!mini_active() || !scanout.visible_pixels())return;
+  auto *slot=scanout.acquire(false);if(!slot)return;
+  const auto &bars=mini_bars[cover_ready && mini_art_enabled];
+  const Rect area{bars[0].x,bars[0].y,bars[3].x+bars[3].w-bars[0].x,bars[0].h};
+  if(slot->page!=revision)scanout.copy_pixels(slot->pixels,scanout.visible_pixels(),page_bytes);
+  auto *pixels=reinterpret_cast<uint16_t*>(slot->pixels);
+  const auto *visible=reinterpret_cast<const uint16_t*>(scanout.visible_pixels());
+  for(int y=area.y;y<area.y+area.h;++y)
+    memcpy(pixels+y*width+area.x,visible+y*width+area.x,2*area.w);
+  constexpr int periods[]={900,620,1050,780};
+  const auto now=clock_ms();
+  for(int i=0;i<4;++i){
+    const auto &r=bars[i];
+    const double phase=double(now%(2*periods[i]))/periods[i];
+    const double t=phase>1?2-phase:phase;
+    const int span=std::lround(r.h*(.22+.78*(t*t*(3-2*t))));
+    const int top=r.y+r.h-span;
+    for(int y=r.y;y<r.y+r.h;++y){
+      auto *row=pixels+y*width+r.x;
+      for(int x=0;x<r.w;++x)row[x]=y>=top && y<top+span?mini_colours[palette.selection()]:row[x<r.w/2?-1:r.w];
+    }
+  }
+  if(scanout.present(slot,area.y,area.y+area.h)){slot->page=revision;slot->lamp_background=false;}
+}
+#endif
 static std::string home_diagnostic_message(){
   const auto &profile=fleet.active();
   std::string notes,details;
@@ -1490,7 +1533,28 @@ static void refresh_edit(){
 #endif
   if(light_sheet!=LightSheet::closed && !moving && !down){draw_light_sheet(false);return;}
   if(!moving && page_pixels && (current==edit_page || current==members_page)){
-    edit_fields();++revision;blit(0,0,width,height,page_pixels);
+    edit_fields();++revision;
+#ifdef STUDY_OVERLAY_CONTROLS
+    // Keep the already presented page. A checkbox acknowledgement changes
+    // only its patch; running the whole page through colour conversion again
+    // can expose a different background while its state catches up.
+    if(current==members_page && scanout.active && scanout.visible_pixels() && overlay_artwork.ready()){
+      auto *slot=scanout.acquire(true);
+      if(slot){
+        scanout.copy_pixels(slot->pixels,scanout.visible_pixels(),page_bytes);
+        bool okay=true;
+        for(int i=0;i<light_count;++i){
+          const int mode=int(fleet.active().members[i]!=(edit_waiting && edit_slot==i+2))+
+                         (edit_slot==i+2 && edit_feedback==2?2:0);
+          const auto &s=membership_modes[mode][i];const auto &r=member_status[i];
+          if(!overlay_artwork.control(s.offset,s.size,palette.selection(),scratch,2*s.w*s.h)){okay=false;break;}
+          for(int y=0;y<s.h;++y)memcpy(slot->pixels+2*((r.y+y)*width+r.x),scratch+2*y*s.w,2*s.w);
+        }
+        if(okay && scanout.present(slot,0,height)){slot->page=revision;slot->lamp_background=false;return;}
+      }
+    }
+#endif
+    blit(0,0,width,height,page_pixels);
   }
 }
 static void edit_scene(int slot){
@@ -1565,6 +1629,8 @@ static void list_toggle(int selected){
     ha_lights.request(i,any?0:last_on[i]?last_on[i]:std::max(1,fleet.active().bright[i]));
 }
 #endif
+static int requested_scene=-1;
+static int64_t scene_confirm_until=0;
 static int scene_matches(){
 #ifdef STUDY_LIVE
   int matches=7;
@@ -1578,7 +1644,12 @@ static int scene_matches(){
     if(v>2)matches&=~2;
     if(std::abs(v-profile.bright[i])>2)matches&=~4;
   }
-  return seen?matches:0;
+  const int actual=seen?matches:0;
+  if(requested_scene>=0){
+    if(actual&(1<<requested_scene) || clock_ms()>=scene_confirm_until)requested_scene=-1;
+    else return 1<<requested_scene;
+  }
+  return actual;
 #else
   return scene>=0?1<<scene:0;
 #endif
@@ -1588,6 +1659,34 @@ static void scene_fields(){
   painted_scene=scene_matches();
   for(int i=0;i<3;i++)
     draw_patch(preset_modes[i][(painted_scene>>i)&1],preset_buttons[i],false);
+}
+static uint16_t *scene_from=nullptr,*scene_to=nullptr;
+static int64_t scene_feedback_at=0;
+static int scene_feedback_top=0,scene_feedback_height=0;
+static bool start_scene_feedback(Scanout::Slot *target){
+  if(current!=scenes || !scanout.visible_pixels())return false;
+  scene_feedback_top=preset_buttons[0].y;scene_feedback_height=preset_buttons[0].h;
+  const size_t bytes=2*width*scene_feedback_height;
+  if(!scene_from)scene_from=static_cast<uint16_t*>(heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+  if(!scene_to)scene_to=static_cast<uint16_t*>(heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+  if(!scene_from || !scene_to){heap_caps_free(scene_from);heap_caps_free(scene_to);scene_from=scene_to=nullptr;return false;}
+  memcpy(scene_from,scanout.visible_pixels()+2*width*scene_feedback_top,bytes);
+  memcpy(scene_to,target->pixels+2*width*scene_feedback_top,bytes);
+  target->page=0;scene_feedback_at=clock_ms();return true;
+}
+static void animate_scene_feedback(){
+  if(!scene_feedback_at)return;
+  if(current!=scenes || moving){scene_feedback_at=0;}
+  else if(auto *slot=scanout.acquire(false)){
+    if(slot->page!=revision)scanout.copy_pixels(slot->pixels,scanout.visible_pixels(),page_bytes);
+    const int alpha=std::clamp(int((clock_ms()-scene_feedback_at)*256/180),0,256);
+    auto *out=reinterpret_cast<uint16_t*>(slot->pixels)+width*scene_feedback_top;
+    for(int i=0;i<width*scene_feedback_height;++i)out[i]=interpolate_pixel(scene_from[i],scene_to[i],alpha);
+    if(scanout.present(slot,scene_feedback_top,scene_feedback_top+scene_feedback_height)){
+      slot->page=revision;slot->lamp_background=false;if(alpha==256)scene_feedback_at=0;
+    }
+  }
+  if(!scene_feedback_at){heap_caps_free(scene_from);heap_caps_free(scene_to);scene_from=scene_to=nullptr;}
 }
 static void paint_level(int value,bool update_display=true) {
 #ifdef STUDY_LIVE
@@ -1622,6 +1721,9 @@ static void paint_level(int value,bool update_display=true) {
   draw_patch(patches[value][1],slider_paint,update_display);
 }
 static void animate() {
+#ifdef STUDY_LIVE
+  if(screen_fade_stage){motion_loop.start();animate_screen_fade();return;}
+#endif
   if(!startup_ready)return;
 #ifdef STUDY_LIVE
 #ifdef STUDY_IDENTIFY
@@ -1646,8 +1748,16 @@ static void animate() {
     slot->page=0;slot->lamp_background=false;identify_phase=phase;return;
   }
 #endif
-  if(moving || progress_active())motion_loop.start();else motion_loop.stop();
+  if(moving || progress_active() || scene_feedback_at
+#ifdef STUDY_ARCHITECTURAL_ONLY
+     || mini_active()
+#endif
+  )motion_loop.start();else motion_loop.stop();
   animate_progress();
+  animate_scene_feedback();
+#ifdef STUDY_ARCHITECTURAL_ONLY
+  animate_mini();
+#endif
 #else
   if(moving)motion_loop.start();else motion_loop.stop();
 #endif
@@ -1833,6 +1943,12 @@ static void show(int dest,int shift=14) {
     if(dest==display_page)display_field(screen_level());
     if(dest==media)transport_fields();
     if(dest==home)home_player();
+    if(dest==idle && minutes_now){
+      const int minutes=minutes_now();
+      int digits[]={minutes/600,minutes/60%10,0,minutes%60/10,minutes%10};
+      for(int n=0;n<5;++n)control_patch(target,clock_glyphs[minutes<0?10:digits[n]][n],clock_slots[n]);
+      shown_minute=minutes;
+    }
     status_fields();
     if(i>=0)control_patch(target,detail_modes[levels[i]<0?0:levels[i]==0?1:2],detail_power_button);
 #endif
@@ -1862,6 +1978,48 @@ static void show(int dest,int shift=14) {
     if(!page_pixels && i>=0 && levels[i]>=0)paint_level(levels[i]);
   }
 }
+#ifdef STUDY_LIVE
+static void screen_transition(int dest,bool blank=false){
+  nav.cancel();await_page();
+#ifdef STUDY_SD_NAVIGATION
+  popup_motion.cancel();
+#endif
+  screen_fade_dest=dest;screen_fade_blank=blank;
+  screen_fade_from=std::max(0,applied_brightness);
+  screen_fade_target=dest==idle?std::max(lux_entity[0]?1:10,int(std::lround(screen_level()*.25))):screen_level();
+  screen_fade_up_ms=screen_fade_from?90:180;
+  screen_fade_at=clock_ms();screen_fade_stage=1;fade_backlight=screen_fade_from;moving=true;
+  last_activity=clock_ms();
+}
+static void animate_screen_fade(){
+  const auto now=clock_ms();
+  if(screen_fade_stage==1){
+    fade_backlight=std::max(0,screen_fade_from-int((now-screen_fade_at)*screen_fade_from/90));
+    apply_brightness();
+    if(fade_backlight)return;
+    if(applied_brightness!=0)return;
+    // The physical backlight is already off. Commit the destination and wait
+    // for two scanout boundaries before allowing any light through it.
+    blanked=screen_fade_blank;
+    const auto before=scanout.presentation_count();
+    show(screen_fade_dest,0);moving=true;
+    if(scanout.active && scanout.presentation_count()==before)return;
+    screen_fade_epoch=Scanout::refresh_epoch();screen_fade_at=clock_ms();screen_fade_stage=2;
+    return;
+  }
+  if(screen_fade_stage==2){
+    if(scanout.active && uint32_t(Scanout::refresh_epoch()-screen_fade_epoch)<2)return;
+    if(screen_fade_blank){screen_fade_stage=0;fade_backlight=-1;moving=false;apply_brightness();return;}
+    screen_fade_at=now;screen_fade_stage=3;
+  }
+  fade_backlight=std::min(screen_fade_target,int((now-screen_fade_at)*screen_fade_target/screen_fade_up_ms));
+  apply_brightness();
+  if(fade_backlight==screen_fade_target && applied_brightness==screen_fade_target){
+    screen_fade_stage=0;fade_backlight=-1;moving=false;apply_brightness();
+    ESP_LOGI("study","Screen fade complete; page %d",current);
+  }
+}
+#endif
 #ifdef STUDY_CARD_FIELDS
 static bool show_card_root(int dest,int theme,int mode);
 #endif
@@ -1873,20 +2031,23 @@ static void go(int dest) {
 #endif
     wake_page=backlight_off_s>0?home:current;
     if(wake_page==home)depth=0;
-    dim_since=clock_ms();blanked=backlight_off_s>0;shown_minute=-2;
-    show(idle,0);apply_brightness();return;
+    dim_since=clock_ms();shown_minute=-2;
+    screen_transition(idle,backlight_off_s>0);return;
   }
 #endif
   if(dest<=-6 && dest>=-8) {
     scene=-6-dest;
 #ifdef STUDY_LIVE
+    requested_scene=scene;scene_confirm_until=clock_ms()+4000;
     const auto &profile=fleet.active();
     for(int i=0;i<light_count;i++)if(profile.members[i])
       ha_lights.request(i,scene==0?profile.soft[i]:scene==2?profile.bright[i]:0);
 #else
     for(int i=0;i<light_count;i++)if(presets[scene][i]>=0)levels[i]=presets[scene][i];
 #endif
-    show(current);return;
+    if(current==scenes){scene_feedback_requested=true;scene_fields();++revision;blit(0,0,width,height,page_pixels);}
+    else show(current);
+    return;
   }
   if(dest<=-3 && dest>=-5) {
     int i=light_index();if(i<0)return;
@@ -3019,6 +3180,9 @@ template<class Touches> static bool observe_touches(const Touches &touches){
 }
 #endif
 static void touch(int x,int y) {
+#ifdef STUDY_LIVE
+  if(screen_fade_stage)return;
+#endif
   if(!startup_ready)return;
   bench_demo=false;
 #ifdef STUDY_LIVE
@@ -3115,12 +3279,12 @@ static void touch(int x,int y) {
   }
 #endif
   if(current==idle){
-    wake_touch=true;blanked=false;
+    wake_touch=true;
 #ifdef STUDY_CARD_FIELDS
     if(!card_wake || !show_card_root(wake_page,card_theme,card_mode))
 #endif
-      show(wake_page,0);
-    apply_brightness();return;
+      screen_transition(home);
+    depth=0;return;
   }
   if(!moving && sheet_touch(x,y))return;
 #ifdef STUDY_PALETTE_PICKER
@@ -3740,7 +3904,7 @@ static void release() {
       else if(pressed<=-10 && pressed>=-10-light_count)list_toggle(-10-pressed);
       else if(current==climate_page && (pressed==-80 || pressed==-81))
         thermostat.set(thermostat.target+(pressed==-80?1:-1)*thermostat.step);
-      else if(pressed<=-100 && pressed>=-101-light_count)edit_scene(-100-pressed);
+      else if(pressed<=-100 && pressed>=-101-light_count){down=false;edit_scene(-100-pressed);}
       else if(pressed<=-120 && pressed>=-124)player().press(static_cast<p4_runtime::MediaClient::Control>(-120-pressed));
 #endif
       else go(pressed);
@@ -3752,6 +3916,7 @@ static void ring() {
   if(!startup_ready)return;
   bench_demo=false;
 #ifdef STUDY_LIVE
+  screen_fade_stage=0;fade_backlight=-1;moving=false;
   climate_drag=false;climate_preview=NAN;preview_brightness=-1;
   if(current==idle){
     blanked=false;
@@ -3892,10 +4057,10 @@ static void tick() {
 #ifdef STUDY_CARD_FIELDS
     card_wake=card_page_visible;
 #endif
-    wake_page=current;dim_since=now;shown_minute=-2;show(idle,0);
+    wake_page=home;dim_since=now;shown_minute=-2;screen_transition(idle);
     ESP_LOGI("study","Timed standby");
   }
-  if(current==idle && !blanked){
+  if(current==idle && !blanked && !screen_fade_stage){
     if(backlight_off_s>0 && now-dim_since>=backlight_off_s*1000){
       blanked=true;wake_page=home;depth=0;
       ESP_LOGI("study","Timed screen off");
@@ -4021,8 +4186,9 @@ static void tick() {
   const auto action=moving?PanelAction::none:fleet.take_action();
   if(action==PanelAction::restart)esphome::App.safe_reboot();
   if(action==PanelAction::wake || action==PanelAction::identify){
-    blanked=false;last_activity=now;
-    if(current==idle)show(wake_page,0);
+    last_activity=now;
+    if(current==idle && action==PanelAction::wake)screen_transition(home);
+    else if(current==idle){blanked=false;show(home,0);}
   }
   if(action==PanelAction::identify){
     show(current,0);
@@ -4036,7 +4202,7 @@ static void tick() {
     identify_until=now+10000;
 #endif
   }
-  if(action==PanelAction::sleep){wake_page=current;show(idle,0);blanked=true;}
+  if(action==PanelAction::sleep){wake_page=home;dim_since=now;screen_transition(idle,backlight_off_s>0);}
   if(action==PanelAction::reload && !moving){show(current,0);last_activity=now;}
   const bool display_result=fleet.display_pending();
   const int result=fleet.result();
@@ -4096,7 +4262,7 @@ static void tick() {
        && !card_page_visible
 #endif
     ){
-      scene_fields();++revision;blit(0,0,width,height,page_pixels);
+      scene_feedback_requested=true;scene_fields();++revision;blit(0,0,width,height,page_pixels);
     }
 #ifdef STUDY_CARD_ART
     if(card_page_visible && card_page==CardPage::lights && card_lights_page.refresh(ha_lights)){++revision;blit(0,0,width,height,page_pixels);}

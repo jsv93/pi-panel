@@ -55,10 +55,14 @@ def build(root, bank, states, destination):
         if parent >= index or parent < -1:
             raise ValueError("Invalid palette parent")
         rank = layer ^ ranks[parent] if parent >= 0 else layer
-        if rank.max() > 255:
-            raise ValueError("Invalid palette rank")
         ranks.append(rank)
-        maps.append(put(rank.astype(np.uint8).tobytes()))
+        maps.append(put(np.minimum(rank,255).astype(np.uint8).tobytes()))
+    # A few source colours can have more than 256 exact palette counterparts.
+    # Keep the compact byte map and store only those exceptional pixels, with
+    # their exact destination colours. Never truncate a rank or enlarge every
+    # framebuffer's rank map to accommodate a handful of pixels.
+    overflow=[np.flatnonzero(rank>255) for rank in ranks]
+    exceptions=[np.zeros((len(positions),5),dtype='<u2') for positions in overflow]
     names,base=load_pages(root,"linen")
     if meta["screens"]!=names or meta["palettes"]!=list(PALETTES):
         raise ValueError("Palette bank does not match the Study screen order")
@@ -69,10 +73,11 @@ def build(root, bank, states, destination):
                 y,x=divmod(bayer,4)
                 pixels=source[y::4,x::4]
                 keys_used=np.searchsorted(keys,pixels)
-                variant=ranks[index].reshape(height,width)[y::4,x::4].astype(np.uint8)
+                variant=ranks[index].reshape(height,width)[y::4,x::4]
                 actual=colours[starts[keys_used]+variant,mode]
                 if not np.array_equal(actual,expected[index][y::4,x::4]):
                     raise ValueError(f"Native table mismatch on {name}/{names[index]}")
+            exceptions[index][:,mode]=expected[index].ravel()[overflow[index]]
     def capture_picker(name):
         config = json.loads((root / name / "config.json").read_bytes())["config"]
         with fixture_page(config, states) as page:
@@ -106,6 +111,12 @@ def build(root, bank, states, destination):
     with (destination/"palette_assets.h").open("w", encoding="ascii") as f:
         f.write("#pragma once\n#include \"study_assets.h\"\nnamespace study {\n")
         f.write("struct PaletteSection {unsigned offset,size,raw;};\n")
+        if any(len(positions) for positions in overflow):
+            entries=[(int(position),int(source.ravel()[position]),list(map(int,colours))) for source,positions,rows in zip(base,overflow,exceptions) for position,colours in zip(positions,rows)]
+            starts=list(map(int,np.r_[0,np.cumsum([len(p) for p in overflow])]))
+            f.write('#define STUDY_PALETTE_EXCEPTIONS\nstruct PaletteException {unsigned pixel;uint16_t source,colours[5];};\n')
+            f.write('constexpr PaletteException palette_exceptions[]='+c(entries)+';\n')
+            f.write('constexpr unsigned palette_exception_starts[]='+c(starts)+';\n')
         for name, items in (("palette_tables",tables),("palette_maps",maps),("palette_choices",choices),("palette_labels",labels)):
             f.write("constexpr PaletteSection "+name+"[]="+c(items)+";\n")
         f.write("constexpr Rect palette_buttons[]="+c(geometry)+";\n}\n")

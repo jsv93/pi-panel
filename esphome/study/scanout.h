@@ -28,6 +28,7 @@ class Scanout {
   void (*restore_overlay)(Slot *)=nullptr;
   void (*draw_overlay)(Slot *,int &,int &)=nullptr;
   const uint8_t *visible_pixels()const{return submitted_?front_->pixels:nullptr;}
+  uint32_t presentation_count()const{return presented_count_;}
   bool count_frame=true;
 #ifdef STUDY_LIVE_CAPTURE
   const int64_t *frame_times()const{return presented_at_;}

@@ -44,7 +44,12 @@ template<size_t N> class LightClient {
         for(const char *name:{"brightness","color_temp","hs","xy","rgb","white"})
           if(s.find(name)!=std::string::npos){d.dimmable=true;break;}
       });
-      attr("color_temp_kelvin",[](Detail &d,const std::string &s){d.kelvin=esphome::parse_number<int>(s).value_or(-1);});
+      api->subscribe_home_assistant_state(entities_[i],"color_temp_kelvin",[this,i](esphome::StringRef s){
+        const int value=esphome::parse_number<int>(s.str()).value_or(-1);
+        auto &p=warmth_[i];p.confirmed=value;
+        if(p.until && value>=0 && std::abs(value-p.requested)>50)return;
+        p.until=0;detail_[i].kelvin=value;detail_[i].dirty=true;
+      });
       attr("min_color_temp_kelvin",[](Detail &d,const std::string &s){d.minimum=esphome::parse_number<int>(s).value_or(2000);});
       attr("max_color_temp_kelvin",[](Detail &d,const std::string &s){d.maximum=esphome::parse_number<int>(s).value_or(6500);});
       attr("hs_color",[](Detail &d,const std::string &s){
@@ -73,12 +78,21 @@ template<size_t N> class LightClient {
     return;
 #endif
     auto *api=esphome::api::global_api_server;
-    if(api->is_connected_with_state_subscription())return;
+    if(api->is_connected_with_state_subscription()){
+      for(size_t i=0;i<N;++i){
+        auto &p=warmth_[i];
+        if(p.until && int32_t(esphome::millis()-p.until)>=0){
+          p.until=0;detail_[i].kelvin=p.confirmed;detail_[i].dirty=true;
+        }
+      }
+      return;
+    }
     received_=false;
     for(size_t i=0;i<N;i++){
       if(lights_[i].power<0 && lights_[i].brightness<0)continue;
       lights_[i]=State{};
       detail_[i]=Detail{};
+      warmth_[i]=PendingWarmth{};
       notify(i);
     }
   }
@@ -137,11 +151,19 @@ template<size_t N> class LightClient {
     arg.key=StringRef(colour?"hs_color":property==Property::warmth?"color_temp_kelvin":"effect");
     arg.value=StringRef(text);
     esphome::api::global_api_server->send_homeassistant_action(call);
+    if(property==Property::warmth){
+      auto &p=warmth_[i];
+      if(!p.until)p.confirmed=d.kelvin;
+      p.requested=value;p.until=esphome::millis()+4000;
+      d.kelvin=value;d.dirty=true;
+    }
 #endif
     return true;
   }
  private:
   struct State { int power=-1,brightness=-1; };
+  struct PendingWarmth {int confirmed=-1,requested=-1;uint32_t until=0;};
+  std::array<PendingWarmth,N> warmth_{};
   std::array<State,N> lights_{};
   std::array<int,N> notified_{};
   std::array<bool,N> has_notified_{};

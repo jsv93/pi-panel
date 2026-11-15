@@ -201,6 +201,9 @@ def main():
         sys.path.insert(0,str(Path(__file__).parent.parent / "study"))
         from identify_art import generate as generate_identify
         generate_identify(config,args.build)
+        from mini_player import generate as generate_mini
+        generate_mini(config,args.build/'mini_player.h')
+        source=source.replace('includes: [','includes: [mini_player.h, ',1)
     if args.production:
         source = re.sub(r"(?ms)^    - action: (?:navigation_demo|lamp_demo)\n.*?(?=^    - action:|^\S|\Z)", "", source)
     source = source.replace("          for (const auto &p : touches) {",

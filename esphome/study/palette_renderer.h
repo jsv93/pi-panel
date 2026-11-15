@@ -132,6 +132,17 @@ class PaletteRenderer {
     if(!expand(palette_labels[selected_],scratch,page_bytes))return;
     for(int y=0;y<r.h;y++)memcpy(frame+(r.y+y)*width+r.x,scratch+2*y*r.w,2*r.w);
   }
+  uint16_t map_pixel(unsigned slot,uint16_t colour,unsigned rank,unsigned position,bool exact)const{
+#ifdef STUDY_PALETTE_EXCEPTIONS
+    if(exact && rank==255 && page_>=0){
+      const auto *first=palette_exceptions+palette_exception_starts[page_];
+      const auto *end=palette_exceptions+palette_exception_starts[page_+1];
+      const auto *e=std::lower_bound(first,end,position,[](const auto &entry,unsigned p){return entry.pixel<p;});
+      if(e!=end && e->pixel==position && e->source==colour)return e->colours[selected_-1];
+    }
+#endif
+    return tables_[slot].map(colour,rank);
+  }
   void IRAM_ATTR __attribute__((optimize("O3"))) render(uint16_t *frame,int x,int y,int w,int h,bool exact)const{
     if(!selected_)return;
     // Flat surfaces repeat the same Bayer-position colour and rank. Keep the
@@ -152,10 +163,11 @@ class PaletteRenderer {
           memcpy(&group,frame+position,sizeof(group));
           if(exact && page_>=0)memcpy(&ranks,ranks_+position,sizeof(ranks));
           const unsigned row_slot=row%4;
-          if(!group_valid[row_slot] || previous_groups[row_slot]!=group || previous_ranks[row_slot]!=ranks){
+          const bool special=uint8_t(ranks)==255 || uint8_t(ranks>>8)==255 || uint8_t(ranks>>16)==255 || uint8_t(ranks>>24)==255;
+          if(special || !group_valid[row_slot] || previous_groups[row_slot]!=group || previous_ranks[row_slot]!=ranks){
             uint16_t mapped[4];
             for(unsigned offset=0;offset<4;++offset)
-              mapped[offset]=tables_[row_slot*4+offset].map(uint16_t(group>>(16*offset)),uint8_t(ranks>>(8*offset)));
+              mapped[offset]=map_pixel(row_slot*4+offset,uint16_t(group>>(16*offset)),uint8_t(ranks>>(8*offset)),position+offset,exact);
             memcpy(&converted_groups[row_slot],mapped,sizeof(mapped));
             previous_groups[row_slot]=group;previous_ranks[row_slot]=ranks;group_valid[row_slot]=true;
           }
@@ -167,8 +179,8 @@ class PaletteRenderer {
         const unsigned slot=(row%4)*4+column%4;
         const unsigned rank=exact && page_>=0?ranks_[position]:0;
         const uint32_t key=(uint32_t(pixel)<<8)|rank;
-        if(previous[slot]!=key){
-          converted[slot]=tables_[slot].map(pixel,rank);
+        if(rank==255 || previous[slot]!=key){
+          converted[slot]=map_pixel(slot,pixel,rank,position,exact);
           previous[slot]=key;
         }
         pixel=converted[slot];
