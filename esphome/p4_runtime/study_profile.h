@@ -8,6 +8,7 @@
 #include "album_client.h"
 #include "library_client.h"
 #include "live_settings.h"
+#include "runtime_choices.h"
 
 #if defined(STUDY_CARD_PLAYER) || defined(STUDY_ARCHITECTURAL_ONLY)
 #define STUDY_SCREEN_OPTIONS
@@ -63,6 +64,7 @@ static bool read_screen_choices(cJSON *display,ScreenChoices &screen){
 struct RoomProfile {
   int version=0;
   GestureChoices gesture;
+  RuntimeChoices runtime;
   int soft[light_count]{},bright[light_count]{};
   bool members[light_count]{};
 #ifdef STUDY_SCREEN_OPTIONS
@@ -72,7 +74,7 @@ struct RoomProfile {
 static p4_runtime::FleetClient<RoomProfile> fleet;
 static p4_runtime::LightClient<light_count> ha_lights;
 static p4_runtime::ClimateClient thermostat;
-static p4_runtime::MediaClient players[speaker_count?speaker_count:1];
+static p4_runtime::MediaClient players[speaker_capacity];
 static int selected_speaker=0;
 static p4_runtime::MediaClient &player(){return players[selected_speaker];}
 static p4_runtime::DoorbellClient bell_client;
@@ -82,6 +84,7 @@ static RoomProfile factory_profile(){
   RoomProfile p;
   p4_runtime::Json factory(cJSON_Parse(layout_contract),cJSON_Delete);
   if(factory)read_gesture_choices(cJSON_GetObjectItemCaseSensitive(factory.get(),"display"),p.gesture);
+  if(factory)read_runtime_choices(factory.get(),p.runtime);
 #ifdef STUDY_SCREEN_OPTIONS
   if(factory)read_screen_choices(cJSON_GetObjectItemCaseSensitive(factory.get(),"display"),p.screen);
 #endif
@@ -98,6 +101,8 @@ static bool decode_room(const cJSON *doc,RoomProfile &out){
   const auto *version=cJSON_GetObjectItemCaseSensitive(doc,"_version");
   if(!cJSON_IsNumber(version)||version->valuedouble<1||version->valuedouble!=version->valueint)return false;
   out.version=version->valueint;
+  if(!read_runtime_choices(doc,out.runtime))return false;
+  strip_runtime_choices(shape.get());strip_runtime_choices(expected.get());
   auto *actual_display=cJSON_GetObjectItemCaseSensitive(shape.get(),"display");
   auto *expected_display=cJSON_GetObjectItemCaseSensitive(expected.get(),"display");
   if(!read_gesture_choices(actual_display,out.gesture))return false;
@@ -137,13 +142,18 @@ static bool live_dirty[light_count]{};
 static int last_on[light_count]{};
 static void room_start(){
   fleet.begin(fleet_settings,decode_room,factory_profile());
-  thermostat.start(temperature_entity,humidity_entity,climate_entity);
+  const auto &runtime=fleet.active().runtime;
+  speaker_count=runtime.speakers;
+  memcpy(speaker_ids,runtime.speaker_ids,sizeof(speaker_ids));
+  memcpy(speaker_labels,runtime.speaker_names,sizeof(speaker_labels));
+  thermostat.start(runtime.temperature,runtime.humidity,runtime.climate);
+  selected_speaker=runtime.speaker;
   for(int i=0;i<speaker_count;i++)players[i].start(speaker_ids[i]);
 #ifndef STUDY_BENCH_TEST
   album_client.start(ha_origin);
   thumbnail_client.start(ha_origin,true,&fleet_settings);
 #endif
-  if(bell_enabled)bell_client.begin(fleet_settings,bell_trigger,bell_camera,ha_origin);
+  bell_client.begin(fleet_settings,runtime.bell?runtime.trigger:"",runtime.bell?runtime.camera:"",ha_origin);
   ha_lights.start(room_entities,[](size_t i,int value){
     live_dirty[i]=true;
     ESP_LOGI("study","HA light %u confirmed %d",unsigned(i),value);

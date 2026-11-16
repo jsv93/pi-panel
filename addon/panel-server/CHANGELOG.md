@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.28.0
+
+- Apply P4 display, sensors, doorbell, speaker list and presence GPIO settings live, with signed offline persistence and existing on-panel controls preserved.
+- Reuse verified artwork for firmware-only changes; invalidate the visual cache when layout, artwork, rendering code or control capabilities change.
+- Smooth and prewarm the P4 speaker picker while preserving page transitions and selected speaker identity.
+- Add P4 firmware health, internal memory, PSRAM, SD space, Wi-Fi and measured render-rate diagnostics, plus update pause/resume and saved/applied status.
+- Protect P4 enrollment from Pi-only reinstall/token-reset controls and preserve Pi configuration and diagnostics.
+- Stop the complete Windows compiler process tree when a build is cancelled.
+
 ## 0.27.6
 
 - Build P4 Home artwork while music is playing by freezing repeating playback decoration during capture; preserve all page-animation poses.

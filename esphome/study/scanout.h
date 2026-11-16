@@ -92,18 +92,20 @@ class Scanout {
   }
   // Main-renderer only: source is an already-flushed visible frame, destination
   // is a retired slot. Copying the viewport avoids moving stationary margins.
-  bool copy_rect(uint8_t *destination,const uint8_t *source,int x,int to_y,int from_y,int w,int h){
+  bool copy_rect(uint8_t *destination,const uint8_t *source,int x,int to_y,int from_y,int w,int h,
+                 int source_width=720,int source_height=1280,int source_x=-1,
+                 int destination_width=720,int destination_height=1280){
     if(!rect_done_)rect_done_=xSemaphoreCreateBinary();
     if(!rect_copier_){esp_async_fbcpy_config_t config{};esp_async_fbcpy_install(&config,&rect_copier_);}
     if(!rect_done_ || !rect_copier_)return false;
     // Preserve dirty neighbouring pixels before invalidating complete cache
     // lines. The CPU does not touch this region again until DMA has finished.
-    if(esp_cache_msync(destination+to_y*1440,h*1440,ESP_CACHE_MSYNC_FLAG_DIR_C2M|
+    if(esp_cache_msync(destination+to_y*destination_width*2,h*destination_width*2,ESP_CACHE_MSYNC_FLAG_DIR_C2M|
         ESP_CACHE_MSYNC_FLAG_INVALIDATE|ESP_CACHE_MSYNC_FLAG_UNALIGNED)!=ESP_OK)return false;
     esp_async_fbcpy_trans_desc_t copy{};copy.src_buffer=source;copy.dst_buffer=destination;
-    copy.src_buffer_size_x=copy.dst_buffer_size_x=720;
-    copy.src_buffer_size_y=copy.dst_buffer_size_y=1280;
-    copy.src_offset_x=copy.dst_offset_x=x;copy.src_offset_y=from_y;copy.dst_offset_y=to_y;
+    copy.src_buffer_size_x=source_width;copy.dst_buffer_size_x=destination_width;
+    copy.src_buffer_size_y=source_height;copy.dst_buffer_size_y=destination_height;
+    copy.src_offset_x=source_x<0?x:source_x;copy.dst_offset_x=x;copy.src_offset_y=from_y;copy.dst_offset_y=to_y;
     copy.copy_size_x=w;copy.copy_size_y=h;
     copy.pixel_format_unique_id.color_type_id=COLOR_TYPE_ID(COLOR_SPACE_RGB,COLOR_PIXEL_RGB565);
     if(esp_async_fbcpy(rect_copier_,&copy,rect_done,rect_done_)!=ESP_OK)return false;

@@ -18,6 +18,7 @@ def main():
     p.add_argument("--server", required=True)
     p.add_argument("--identity-file", type=Path)
     p.add_argument("--production", action="store_true", help="Omit touchscreen demonstration actions from the paired build")
+    p.add_argument('--reuse-artwork',action='store_true',help='Reuse the verified visual cache, including mini-player and Identify artwork')
     p.add_argument("--architectural-only", action="store_true", help="Use the onboard Architectural layout and its six palettes")
     p.add_argument("--hosted-wifi",action="store_true",help="Include the Waveshare C6 radio and external text artwork")
     p.add_argument("--card-assets",type=Path,help="Directory containing the generated card_assets.h and card_lights.h for this room")
@@ -85,11 +86,11 @@ def main():
         value=display.get(name,default)
         if not isinstance(value,(int,float)) or value<0 or (name in ("backlight_default","backlight_min","adaptive_min_pct","adaptive_max_pct") and value>100):
             p.error(f"invalid display setting {name}")
-        header.append(f"constexpr double {name}={value};")
+        header.append(f"static double {name}={value};")
     sensor=display.get("adaptive_sensor","") if display.get("adaptive_brightness") else ""
-    header.append("constexpr char lux_entity[]="+json.dumps(sensor)+";")
+    header.append("static char lux_entity[97]="+json.dumps(sensor)+";")
     bell=config.get("doorbell") or {}
-    header.append("constexpr bool bell_enabled="+json.dumps(bool(bell.get("enabled") and bell.get("camera")))+";")
+    header.append("static bool bell_enabled="+json.dumps(bool(bell.get("enabled") and bell.get("camera")))+";")
     header.append("constexpr char bell_trigger[]="+json.dumps(bell.get("trigger") or "")+";")
     camera=bell.get("camera") or ""
     if camera and not re.fullmatch(r"camera\.[a-z0-9_]+",camera):p.error("invalid doorbell camera")
@@ -102,7 +103,7 @@ def main():
     header.append("constexpr char ha_origin[]="+json.dumps(ha_origin)+";")
     duration=bell.get("duration_s",30)
     if type(duration) is not int or not 10<=duration<=120:p.error("invalid doorbell duration")
-    header.append(f"constexpr int bell_seconds={duration};")
+    header.append(f"static int bell_seconds={duration};")
     media=config.get("media") or {}
     speakers=[s if isinstance(s,str) else s.get("entity_id") for s in media.get("speakers",[])]
     speakers=[s for s in speakers if s]
@@ -115,9 +116,11 @@ def main():
     header.append("constexpr char initial_speaker_name[]="+json.dumps(media.get("default_speaker_name") or "")+";")
     labels={s["entity_id"]:s.get("name") for s in media.get("speakers",[]) if isinstance(s,dict) and s.get("entity_id")}
     labels.setdefault(default,media.get("default_speaker_name"))
-    header.append("constexpr const char *speaker_ids[]={"+",".join(map(json.dumps,speakers or [""]))+"};")
-    header.append("constexpr const char *speaker_labels[]={"+",".join(json.dumps(labels.get(s) or s.partition(".")[2]) for s in speakers or [""])+"};")
-    header.append(f"constexpr int speaker_count={len(speakers)};")
+    if len(speakers)>16:p.error("This P4 supports up to 16 speakers including the default")
+    header.append("constexpr int speaker_capacity=16;")
+    header.append("static char speaker_ids[speaker_capacity][97]={"+",".join(map(json.dumps,speakers or [""]))+"};")
+    header.append("static char speaker_labels[speaker_capacity][97]={"+",".join(json.dumps(labels.get(s) or s.partition(".")[2]) for s in speakers or [""])+"};")
+    header.append(f"static int speaker_count={len(speakers)};")
     for role in ("temperature","humidity","climate"):
         entity=config.get("sensors",{}).get(role,"") or ""
         if entity and not re.fullmatch(r"[a-z0-9_]+\.[a-z0-9_]+",entity):
@@ -200,9 +203,11 @@ def main():
         import sys
         sys.path.insert(0,str(Path(__file__).parent.parent / "study"))
         from identify_art import generate as generate_identify
-        generate_identify(config,args.build)
+        if not args.reuse_artwork:generate_identify(config,args.build)
         from mini_player import generate as generate_mini
-        generate_mini(config,args.build/'mini_player.h')
+        if not args.reuse_artwork:generate_mini(config,args.build/'mini_player.h')
+        if any(not (args.build/name).is_file() for name in ('mini_player.h','identify_assets.h')):
+            p.error('Verified visual cache is incomplete')
         source=source.replace('includes: [','includes: [mini_player.h, ',1)
     if args.production:
         source = re.sub(r"(?ms)^    - action: (?:navigation_demo|lamp_demo)\n.*?(?=^    - action:|^\S|\Z)", "", source)
@@ -215,6 +220,7 @@ def main():
     if not (args.build / "text_art.h").exists():
         p.error("generate text_art.h using esphome/study/text_art.py first")
     shutil.copyfile(Path(__file__).parent.parent/"study/text_renderer.h",args.build/"text_renderer.h")
+    shutil.copyfile(Path(__file__).parent.parent/"study/speaker_scroll.inc",dest/"speaker_scroll.inc")
     shutil.copyfile(Path(__file__).parent.parent/"study/framebuffer_copy.h",args.build/"framebuffer_copy.h")
     for name in ('gesture_toast.h','gesture_assets.h'):
         shutil.copyfile(Path(__file__).parent.parent/'study'/name,args.build/name)

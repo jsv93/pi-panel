@@ -736,9 +736,14 @@ _HA_URL_RE = re.compile(
     r"^(?:https?://)?(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._~\-]+)(?::\d{1,5})?(?:/[A-Za-z0-9._~/\-]*)?$")
 
 
-def check_config(cfg):
+def check_config(cfg, panel_id=None):
     if not isinstance(cfg, dict):
         raise HTTPException(400, "config must be an object")
+    panel=db.get_panel(panel_id) if panel_id else None
+    if panel and panel.get('kind')=='esp':
+        from . import p4_config
+        try:p4_config.validate(cfg)
+        except ValueError as error:raise HTTPException(400,str(error))
     if 'doorbell' in cfg:
         try:
             doorbell.validate(cfg['doorbell'])
@@ -1088,7 +1093,7 @@ async def _patch_display(panel_id: str, values: dict) -> dict:
         raise HTTPException(400, "nothing to change")
     cfg = db.merged_config(panel_id)
     cfg["display"] = {**cfg.get("display", {}), **clean}
-    check_config(cfg)
+    check_config(cfg,panel_id)
     version = db.save_config(panel_id, cfg)
     pushed = await notify(panel_id, {"type": "config_updated", "version": version})
     return {"version": version, "pushed": pushed, "display": cfg["display"]}
@@ -1274,6 +1279,8 @@ SCREEN_LAST_REQUEST = {}
 async def screen_diagnostics(panel_id: str, request: Request):
     if not db.get_panel(panel_id):
         raise HTTPException(404, 'unknown panel')
+    if db.get_panel(panel_id).get('kind') == 'esp':
+        raise HTTPException(400, 'Browser capture is not available on P4; use its live device diagnostics')
     if not db.merged_config(panel_id).get('display', {}).get('remote_diagnostics', True):
         raise HTTPException(403, 'Remote diagnostics are disabled for this panel')
     body = await request.json()
@@ -1427,6 +1434,8 @@ async def ssh_access(panel_id: str, request: Request):
     p = db.get_panel(panel_id)
     if not p:
         raise HTTPException(404, 'unknown panel')
+    if p.get('kind') == 'esp':
+        raise HTTPException(400, 'P4 uses authenticated device controls, not SSH')
     if not db.get_panel_token(panel_id) or not db.get_panel_sign_key(panel_id):
         raise HTTPException(409, 'Update and enroll this panel before managing SSH access')
     raw_body = await request.body()
@@ -1515,7 +1524,7 @@ async def put_config(panel_id: str, request: Request):
         raise HTTPException(404, "unknown panel")
     data = await request.json()
     data.pop("_version", None)
-    check_config(data)
+    check_config(data,panel_id)
     v = db.save_config(panel_id, data)
     pushed = await notify(panel_id, {"type": "config_updated", "version": v})
     return {"version": v, "pushed": pushed}
@@ -1599,7 +1608,7 @@ async def import_config(panel_id: str, request: Request):
             raise HTTPException(400, f"{k} must be an object")
     if "lights" in cfg and not isinstance(cfg["lights"], list):
         raise HTTPException(400, "lights must be a list")
-    check_config(cfg)
+    check_config(cfg,panel_id)
     v = db.save_config(panel_id, cfg)
     pushed = await notify(panel_id, {"type": "config_updated", "version": v})
     return {"version": v, "pushed": pushed}
@@ -1627,6 +1636,8 @@ async def reset_panel_token(panel_id: str):
     """
     if not db.get_panel(panel_id):
         raise HTTPException(404, "unknown panel")
+    if db.get_panel(panel_id).get('kind') == 'esp':
+        raise HTTPException(400, 'P4 pairing is retained across firmware updates; token reset requires explicit reprovisioning')
     db.reset_panel_token(panel_id)
     # Whatever holds the socket authenticated with the token just forgotten.
     ws = LIVE.pop(panel_id, None)
@@ -1649,6 +1660,7 @@ async def action(panel_id: str, request: Request):
     if act not in ("reload", "restart", "sync", "identify", "wake", "sleep"):
         raise HTTPException(400, "unknown action")
     ok = await notify(panel_id, {"type": act})
+    access.audit(panel_id, 'Administrator', 'panel-'+act, 'Sent to paired device' if ok else 'Device disconnected')
     return {"sent": ok}
 
 
@@ -1803,6 +1815,8 @@ async def reprovision(panel_id: str, request: Request):
     """
     if not db.get_panel(panel_id):
         raise HTTPException(404, "unknown panel")
+    if db.get_panel(panel_id).get('kind') == 'esp':
+        raise HTTPException(400, 'Use P4 updates in Diagnostics; Pi reinstall must not reset P4 pairing')
     db.clear_tokens(panel_id)
     token = db.create_token(panel_id)
     return {

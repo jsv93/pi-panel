@@ -1,5 +1,6 @@
 #pragma once
 #include "fleet_client.h"
+#include "runtime_state.h"
 #include <esp_heap_caps.h>
 #include <array>
 #include <cstring>
@@ -13,13 +14,21 @@ class DoorbellClient {
   static constexpr size_t frame_limit=384*1024;
   void begin(FleetSettings settings,const char *trigger,const char *camera,const char *origin){
     settings_=settings;
-    camera_=camera;origin_=origin;
+    origin_=origin;
     ticket_=xQueueCreate(1,sizeof(Ticket));
-    if(*camera && *origin && ticket_)
-      esphome::api::global_api_server->subscribe_home_assistant_state(camera,"entity_picture",[this](esphome::StringRef state){
+    configure(trigger,camera);
+  }
+  bool configure(const char *trigger,const char *camera){
+    if(configured_ && !strcmp(camera_,camera) && !strcmp(trigger_,trigger))return false;
+    close();enabled_=false;test_ring=false;trigger_ring=false;previous_.clear();
+    snprintf(camera_,sizeof(camera_),"%s",camera);snprintf(trigger_,sizeof(trigger_),"%s",trigger);
+    Ticket empty{};if(ticket_)xQueueOverwrite(ticket_,&empty);
+    configured_=true;enabled_=*camera;
+    camera_state_.bind(camera,"entity_picture",[this](esphome::StringRef state){
         const auto path=state.str();
         const std::string prefix="/api/camera_proxy/"+std::string(camera_)+"?token=";
         Ticket ticket{};
+        snprintf(ticket.camera,sizeof(ticket.camera),"%s",camera_);
         if(path.compare(0,prefix.size(),prefix)==0){
           const auto token=path.substr(prefix.size());
           if(!token.empty() && token.size()<sizeof(ticket.value) &&
@@ -29,9 +38,8 @@ class DoorbellClient {
         xQueueOverwrite(ticket_,&ticket);
         ESP_LOGD("study","Camera playback permission %s",*ticket.value?"received":"unavailable");
       });
-    if(*trigger){
-      binary_=strncmp(trigger,"binary_sensor.",14)==0;
-      esphome::api::global_api_server->subscribe_home_assistant_state(trigger,nullptr,[this](esphome::StringRef state){
+    binary_=strncmp(trigger,"binary_sensor.",14)==0;
+    trigger_state_.bind(trigger,nullptr,[this](esphome::StringRef state){
         auto next=state.str();
         if(next.empty() || next=="unavailable" || next=="unknown"){previous_.clear();return;}
         const bool timestamp=next.size()>=19 && next[4]=='-' && next[7]=='-' &&
@@ -40,7 +48,7 @@ class DoorbellClient {
                       (binary_?(previous_=="off" && next=="on"):timestamp);
         previous_=next;
       });
-    }
+    return true;
   }
   void listen(){
     if(!settings_.url || listener_ || !esphome::network::is_connected())return;
@@ -59,6 +67,7 @@ class DoorbellClient {
     return true;
   }
   void open(bool use_server){
+    if(!enabled_)return;
     prefer_server_=use_server;
     if(!worker_){
       if(!reserve_frames()){failed_=true;ESP_LOGW("study","Camera frame buffers unavailable");return;}
@@ -81,7 +90,7 @@ class DoorbellClient {
   }
  private:
   struct Frame {uint8_t *pixels;size_t size;uint32_t generation;};
-  struct Ticket {char value[160];};
+  struct Ticket {char value[160];char camera[97];};
   struct Request {
     esp_http_client_handle_t handle;
     Request(const FleetSettings &s,const char *path,int timeout):
@@ -108,7 +117,11 @@ class DoorbellClient {
     }
   };
   FleetSettings settings_{};
-  const char *camera_="",*origin_="";
+  const char *origin_="";
+  char camera_[97]{},trigger_[97]{};
+  RuntimeState camera_state_,trigger_state_;
+  bool configured_=false;
+  std::atomic<bool> enabled_{false};
   TaskHandle_t listener_{},worker_{};
   QueueHandle_t ready_{},free_{},ticket_{};
   std::array<uint8_t*,2> slots_{};
@@ -162,7 +175,8 @@ class DoorbellClient {
     if(!ticket_ || xQueuePeek(ticket_,&t,0)!=pdTRUE || !*t.value){
       ESP_LOGW("study","Direct camera is waiting for its Home Assistant subscription");return;
     }
-    const std::string url=std::string(origin_)+"/api/camera_proxy_stream/"+camera_+"?token="+t.value;
+    if(generation_!=session || !running_)return;
+    const std::string url=std::string(origin_)+"/api/camera_proxy_stream/"+t.camera+"?token="+t.value;
     Request req(url,10000);
     const int status=req.start();
     ESP_LOGI("study","Direct camera HTTP status %d",status);
@@ -179,12 +193,14 @@ class DoorbellClient {
   }
   void wait_loop(){
     for(;;){
+      if(!enabled_){vTaskDelay(pdMS_TO_TICKS(500));continue;}
+      const auto binding=generation_.load();
       int status;
       {
         Request r(settings_,"wait",19000);
         status=r.start();
         uint8_t answer[4];
-        if(status==200 && r.read(answer,sizeof(answer)) && !memcmp(answer,"ring",4))test_ring=true;
+        if(status==200 && r.read(answer,sizeof(answer)) && !memcmp(answer,"ring",4) && enabled_ && generation_==binding)test_ring=true;
       }
       vTaskDelay(pdMS_TO_TICKS(status==200 || status==204?150:10000));
     }

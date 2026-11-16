@@ -9,6 +9,13 @@ from control_art import box
 
 
 def capture(config,states,dest,architectural_only=False,chromium_cdp=None):
+    if architectural_only:
+        config=copy.deepcopy(config)
+        config['media']=dict(config.get('media') or {})
+        # A generic first row is needed even when no players are configured.
+        # Runtime paints names; only geometry/icons/subtitles are artwork.
+        if not config['media'].get('default_speaker') and not config['media'].get('speakers'):
+            config['media']['speakers']=[{'entity_id':'media_player.pi_panel_template','name':'Speaker'}]
     # Include the punctuation used by the HA player and the dashboard.
     chars="".join(chr(i) for i in range(32,127))+" °·éèëàáäöóñüß–—‘’“”…•←›✓✗▂▄▆█"
     bank=bytearray();offsets={};fonts={};fields=[]
@@ -129,6 +136,7 @@ def capture(config,states,dest,architectural_only=False,chromium_cdp=None):
         speaker_end=box(page,".nav")[1]
         speaker_rows=[];speaker_rects=[];speaker_arrows=[]
         rows=page.locator("#spkList .dev")
+        if architectural_only:rows.locator('.spk-name').evaluate_all("es=>es.forEach(e=>e.textContent='Speaker')")
         for i in range(rows.count()):
             row=rows.nth(i)
             scroll=card.evaluate("(e,i)=>{e.scrollTop=Math.max(0,e.querySelectorAll('.dev')[i].getBoundingClientRect().y+e.scrollTop-400);return e.scrollTop}",i)

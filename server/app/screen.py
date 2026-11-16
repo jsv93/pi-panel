@@ -3,6 +3,8 @@ import math
 import re
 
 DEFAULTS = {
+    'p4_presence_pin': -1,
+    'p4_presence_debounce_ms': 10000,
     'idle_power_saving': False,
     'remote_diagnostics': True,
     'browser_recovery': True,
@@ -17,6 +19,7 @@ DEFAULTS = {
     'adaptive_transition_s': 5,
 }
 RANGES = {
+    'p4_presence_debounce_ms': (500,60000),
     'browser_stale_s': (60, 600), 'browser_recovery_limit': (1, 6),
     'adaptive_min_pct': (1, 100), 'adaptive_max_pct': (1, 100),
     'adaptive_dark_lux': (0, 100000), 'adaptive_bright_lux': (1, 200000),
@@ -33,6 +36,9 @@ def validate(display):
         if isinstance(default, bool):
             if type(value) is not bool:
                 raise ValueError(f'{key} must be true or false')
+        elif key == 'p4_presence_pin':
+            if type(value) is not int or value not in (-1,2,3):
+                raise ValueError('Choose Off, P4 GPIO 2 or P4 GPIO 3; other pins are reserved')
         elif key == 'adaptive_sensor':
             if not isinstance(value, str) or (value and not re.fullmatch(r'sensor\.[a-z0-9_]+', value)):
                 raise ValueError('Choose a sensor entity for adaptive brightness')
@@ -40,7 +46,7 @@ def validate(display):
             low, high = RANGES[key]
             if type(value) not in (int, float) or not math.isfinite(value) or not low <= value <= high:
                 raise ValueError(f'{key} must be between {low} and {high}')
-            if key.startswith('browser_') and int(value) != value:
+            if (key.startswith('browser_') or key.startswith('p4_')) and int(value) != value:
                 raise ValueError(f'{key} must be a whole number')
     if values['adaptive_min_pct'] > values['adaptive_max_pct']:
         raise ValueError('Adaptive minimum brightness must not exceed maximum')

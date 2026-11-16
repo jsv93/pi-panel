@@ -18,7 +18,7 @@ COPY esphome /srv/p4/esphome
 COPY panel-ui /srv/p4/panel-ui
 ENV PANEL_P4_SOURCE=/srv/p4 PANEL_CHROMIUM_PATH=/usr/bin/chromium \
     PANEL_RENDER_CONTAINER=1 PLATFORMIO_CORE_DIR=/data/p4-toolchain \
-    ESPHOME_DEFAULT_COMPILE_PROCESS_LIMIT=2
+    ESPHOME_DEFAULT_COMPILE_PROCESS_LIMIT=2 PYTHONPATH=/srv
 
 COPY server/app ./app
 COPY server/run.sh /run.sh

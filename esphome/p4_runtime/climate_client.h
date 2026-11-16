@@ -1,6 +1,7 @@
 #pragma once
 #include "esphome/components/api/api_server.h"
 #include "esphome/core/helpers.h"
+#include "runtime_state.h"
 #include <algorithm>
 #include <cmath>
 
@@ -9,25 +10,28 @@ class ClimateClient {
  public:
   float temperature=NAN, humidity=NAN, target=NAN, minimum=7, maximum=35, step=.5f;
   bool available=false, running=false, dirty=true;
-  void start(const char *temp,const char *hum,const char *thermostat){
-    entity_=thermostat;
+  bool start(const char *temp,const char *hum,const char *thermostat){
+    if(started_ && !strcmp(temp,temp_) && !strcmp(hum,hum_) && !strcmp(thermostat,entity_))return false;
+    started_=true;
+    snprintf(entity_,sizeof(entity_),"%s",thermostat);
+    snprintf(temp_,sizeof(temp_),"%s",temp);snprintf(hum_,sizeof(hum_),"%s",hum);
+    temperature=humidity=target=NAN;minimum=7;maximum=35;step=.5f;available=running=false;dirty=true;
 #ifdef STUDY_BENCH_TEST
     temperature=22.7f;humidity=56.7f;
-    return;
+    return false;
 #endif
-    number(temp,nullptr,temperature);
-    number(hum,nullptr,humidity);
-    if(!*thermostat)return;
-    if(!*temp)number(thermostat,"current_temperature",temperature);
-    number(thermostat,"temperature",target);
-    number(thermostat,"min_temp",minimum,7);
-    number(thermostat,"max_temp",maximum,35);
-    number(thermostat,"target_temp_step",step,.5f);
-    esphome::api::global_api_server->subscribe_home_assistant_state(thermostat,nullptr,[this](esphome::StringRef s){
+    number(0,*temp?temp:thermostat,*temp?nullptr:"current_temperature",temperature);
+    number(1,hum,nullptr,humidity);
+    number(2,thermostat,"temperature",target);
+    number(3,thermostat,"min_temp",minimum,7);
+    number(4,thermostat,"max_temp",maximum,35);
+    number(5,thermostat,"target_temp_step",step,.5f);
+    states_[6].bind(thermostat,nullptr,[this](esphome::StringRef s){
       const auto value=s.str();
       available=!value.empty() && value!="unavailable" && value!="unknown";
       running=available && value!="off";dirty=true;
     });
+    return true;
   }
   bool can_adjust() const {
     return available && std::isfinite(target) && std::isfinite(minimum) && std::isfinite(maximum)
@@ -60,10 +64,11 @@ class ClimateClient {
 #endif
   }
  private:
-  const char *entity_="";
-  void number(const char *entity,const char *attribute,float &dest,float missing=NAN){
-    if(!*entity)return;
-    esphome::api::global_api_server->subscribe_home_assistant_state(entity,attribute,[this,&dest,missing](esphome::StringRef s){
+  char entity_[97]{},temp_[97]{},hum_[97]{};
+  bool started_=false;
+  RuntimeState states_[7];
+  void number(int slot,const char *entity,const char *attribute,float &dest,float missing=NAN){
+    states_[slot].bind(entity,attribute,[this,&dest,missing](esphome::StringRef s){
       auto value=esphome::parse_number<float>(s.str());
       dest=value && std::isfinite(*value)?*value:missing;dirty=true;
     });
