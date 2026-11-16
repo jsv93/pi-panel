@@ -27,13 +27,29 @@ class MediaClient {
     }
     return std::clamp(reported_position_+age,0.,double(duration));
   }
-  void start(const char *speaker){
-    speaker_=speaker;
-    if(!*speaker_)return;
+  bool start(const char *speaker){
+    const bool active=speaker && *speaker;
+    const char *next=active?speaker:"media_player.pi_panel_unassigned";
+    if(active==active_ && (!active || !strcmp(speaker_,next)))return false;
+    active_=active;snprintf(speaker_,sizeof(speaker_),"%s",next);
+    available=playing=shuffled=paused=can_seek=false;repeat_mode=duration=0;volume=-1;
+    reported_position_=updated_at_=0;position_at_=0;dirty=true;
+    title.clear();artist.clear();playlist.clear();album.clear();picture.clear();queue.clear();player_type.clear();
+    if(registered_ || !active)return true;
+    registered_=true;
 #ifdef STUDY_BENCH_TEST
     available=true;volume=45;can_seek=true;
 #else
-    auto *api=esphome::api::global_api_server;
+    // Stable entity storage, one registration per slot. Changing the list
+    // reconnects HA once, so old subscriptions cannot accumulate.
+    struct Subscriptions {
+      MediaClient *owner;
+      void subscribe_home_assistant_state(const char *id,const char *attribute,std::function<void(esphome::StringRef)> callback){
+        esphome::api::global_api_server->subscribe_home_assistant_state(id,attribute,
+          [p=owner,callback](esphome::StringRef value){if(p->active_)callback(value);});
+      }
+    } subscriptions{this};
+    auto *api=&subscriptions;
     auto text=[this,api](const char *attribute,std::string *field){
       api->subscribe_home_assistant_state(speaker_,attribute,[this,field](esphome::StringRef s){
         auto value=s.str();if(value=="None" || value=="unknown" || value=="unavailable")value.clear();
@@ -97,6 +113,7 @@ class MediaClient {
       dirty=true;
     });
 #endif
+    return true;
   }
   void tick(){
 #ifndef STUDY_BENCH_TEST
@@ -170,6 +187,7 @@ class MediaClient {
     auto &arg=action.data.emplace_back();arg.key=StringRef(key);arg.value=StringRef(value);
     api->send_homeassistant_action(action);return true;
   }
-  const char *speaker_="";
+  char speaker_[97]{};
+  bool registered_=false,active_=false;
 };
 }

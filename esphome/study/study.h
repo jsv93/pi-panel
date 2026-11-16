@@ -15,6 +15,7 @@
 #endif
 #include "text_renderer.h"
 #include "live_runtime/study_profile.h"
+#include "live_runtime/presence.h"
 #ifdef STUDY_CARD_ART
 #include "live_runtime/card_lights_page.h"
 #include "live_runtime/card_routes.h"
@@ -268,13 +269,13 @@ static void restore_media_palette(uint8_t *frame,const Rect &paint);
 #endif
 #endif
 static uint32_t revision=1;
-static bool popup_requested=false,popup_ground=false;
+static bool popup_requested=false,popup_ground=false,popup_padded=false;
 static bool scene_feedback_requested=false;
 static bool start_scene_feedback(Scanout::Slot *target);
-static bool start_popup_motion(Scanout::Slot *target,bool ground);
-static void request_popup_motion(bool ground=false){
+static bool start_popup_motion(const uint8_t *pixels,bool ground);
+static void request_popup_motion(bool ground=false,bool padded=false){
 #ifdef STUDY_SD_NAVIGATION
-  popup_requested=true;popup_ground=ground;
+  popup_requested=true;popup_ground=ground;popup_padded=padded;
 #endif
 }
 static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
@@ -288,6 +289,15 @@ static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
                       esphome::display::COLOR_BITNESS_565,false,0,0,stride?stride-w:0);
     return true;
   }
+#if defined(STUDY_SD_NAVIGATION) && defined(STUDY_OVERLAY_PALETTES) && defined(STUDY_LIVE)
+  // The prepared picker already contains its final palette. Start directly
+  // from it instead of copying a full frame to a scanout slot and back again.
+  if(w==width && h==height && pixels==page_pixels && popup_requested && popup_padded &&
+      overlay_frame && !screen_fade_capture && !scene_feedback_requested &&
+      start_popup_motion(pixels,popup_ground)){
+    popup_requested=false;return true;
+  }
+#endif
   auto *slot=scanout.acquire(true);
   if(!slot)return false;
   const bool full=w==width && h==height;
@@ -337,7 +347,7 @@ static bool blit(int x,int y,int w,int h,uint8_t *pixels,int stride=0) {
   if(full && popup_requested){
     popup_requested=false;
 #ifdef STUDY_SD_NAVIGATION
-    if(start_popup_motion(slot,popup_ground))return true;
+    if(start_popup_motion(slot->pixels,popup_ground))return true;
 #endif
   }
   if(full || seed)slot->fixed_page=revision;
@@ -945,6 +955,17 @@ static void diagnostic_scroll_frame(){
 #endif
 static bool speakers_open=false,speakers_dirty=false,transfer_busy=false;
 static int speaker_scroll=0,speaker_down_scroll=0,speaker_max_scroll=0;
+static uint8_t *speaker_cache=nullptr;
+static bool speaker_cache_dirty=true,speaker_dragged=false;
+static int speaker_painted_scroll=-1;
+static float speaker_velocity=0,speaker_position=0;
+static int64_t speaker_frame_at=0,speaker_touch_at=0;
+static int speaker_height(int i){return int(speaker_rows[0][0][2])-(i?1:0);}
+static bool speaker_scrolling(){return speakers_open && speaker_cache && (down || std::abs(speaker_velocity)>12 || speaker_scroll!=speaker_painted_scroll);}
+static void clear_speaker_cache(){
+  heap_caps_free(speaker_cache);speaker_cache=nullptr;speaker_cache_dirty=true;
+  speaker_velocity=0;speaker_frame_at=0;speaker_painted_scroll=-1;
+}
 static uint32_t transfer_serial=0;
 static int64_t transfer_until=0;
 static const char *transfer_status=nullptr;
@@ -965,6 +986,65 @@ static void select_speaker(int i){
   selected_speaker=i;player().dirty=true;
   cover_ready=cover_speaker==i && cover_picture==player().picture;
   speakers_open=false;
+  clear_speaker_cache();
+}
+static p4_runtime::RuntimeState lux_state;
+static p4_runtime::Presence presence;
+static float current_lux=NAN;
+static RuntimeChoices applied_runtime;
+static bool runtime_ready=false;
+static void update_lux_target(){
+  if(!lux_entity[0] || !std::isfinite(current_lux) || current_lux<0)return;
+  const double fraction=std::clamp((std::log1p(current_lux)-std::log1p(adaptive_dark_lux))/
+    (std::log1p(adaptive_bright_lux)-std::log1p(adaptive_dark_lux)),0.0,1.0);
+  brightness_target=adaptive_min_pct+fraction*(adaptive_max_pct-adaptive_min_pct);
+}
+static void apply_runtime_profile(const RuntimeChoices &r,bool initial=false){
+  bool reconnect=false;
+  bool reset_media=false;
+  const bool changed_default=!runtime_ready || r.brightness!=applied_runtime.brightness;
+  idle_timeout_s=r.idle;backlight_off_s=r.off;backlight_default=r.brightness;backlight_min=r.minimum;
+  adaptive_min_pct=r.adaptive_min;adaptive_max_pct=r.adaptive_max;
+  adaptive_dark_lux=r.dark;adaptive_bright_lux=r.bright;adaptive_transition_s=r.transition;
+  if(changed_default){manual_brightness=int(r.brightness);brightness_target=r.brightness;override_until=0;}
+  manual_brightness=std::clamp(manual_brightness,int(r.minimum),100);
+  const char *next_lux=r.adaptive?r.lux:"";
+  if(!runtime_ready || strcmp(lux_entity,next_lux)){
+    snprintf(lux_entity,sizeof(lux_entity),"%s",next_lux);current_lux=NAN;
+    brightness_target=manual_brightness;override_until=0;
+  }
+  reconnect|=lux_state.bind(next_lux,nullptr,[](esphome::StringRef value){
+    auto n=esphome::parse_number<float>(value.str());current_lux=n?*n:NAN;
+    if(!std::isfinite(current_lux) || current_lux<0)brightness_target=manual_brightness;
+    else update_lux_target();
+  });
+  update_lux_target();
+  reconnect|=thermostat.start(r.temperature,r.humidity,r.climate);
+  reconnect|=bell_client.configure(r.bell?r.trigger:"",r.bell?r.camera:"");
+  bell_enabled=r.bell;bell_seconds=r.duration;
+  const bool list_changed=r.speakers!=speaker_count || memcmp(speaker_ids,r.speaker_ids,sizeof(speaker_ids)) ||
+    memcmp(speaker_labels,r.speaker_names,sizeof(speaker_labels));
+  if(list_changed || (runtime_ready && strcmp(r.speaker_ids[r.speaker],applied_runtime.speaker_ids[applied_runtime.speaker]))){
+    char previous[97];snprintf(previous,sizeof(previous),"%s",speaker_ids[selected_speaker]);
+    int selected=r.speaker;
+    const bool default_changed=runtime_ready && strcmp(r.speaker_ids[r.speaker],applied_runtime.speaker_ids[applied_runtime.speaker]);
+    if(!default_changed)for(int i=0;i<r.speakers;++i)if(!strcmp(previous,r.speaker_ids[i]))selected=i;
+    ++transfer_serial;transfer_busy=false;transfer_status=nullptr;
+    speaker_count=r.speakers;
+    memcpy(speaker_ids,r.speaker_ids,sizeof(speaker_ids));memcpy(speaker_labels,r.speaker_names,sizeof(speaker_labels));
+    for(int i=0;i<speaker_capacity;++i)reconnect|=players[i].start(speaker_ids[i]);
+    if(strcmp(previous,speaker_ids[selected])){reset_media=library_open;library_open=false;cover_ready=false;cover_speaker=-1;}
+    selected_speaker=selected;clear_speaker_cache();speaker_scroll=0;player().dirty=true;
+  }
+  presence.configure(r.presence_pin,r.presence_debounce);
+  if(!runtime_ready || r.idle!=applied_runtime.idle || r.off!=applied_runtime.off){
+    last_activity=clock_ms();dim_since=last_activity;
+  }
+  applied_runtime=r;runtime_ready=true;
+  if(initial)brightness_now=brightness_target;
+  else if(reconnect)p4_runtime::refresh_runtime_subscriptions();
+  if(reset_media && current==media)show(media,0);
+  ESP_LOGI("study","Live settings applied: idle %.0fs, blank %.0fs, brightness %.0f%%, GPIO %d",r.idle,r.off,r.brightness,r.presence_pin);
 }
 static void transfer_speaker(int i){
   if(!can_transfer(i))return;
@@ -1095,6 +1175,10 @@ static void measure_refresh(){
   if(previous)display_refresh_hz=(epoch-earlier)*1000./(now-previous);
   refresh_fps=std::lround(scanout.rendered_fps());
   fleet.display_metrics(refresh_fps,display_refresh_hz,applied_brightness);
+#ifdef STUDY_SD_ONLY
+  fleet.device_metrics(startup_ready && navigation_artwork.ready() && home_zoom_artwork.ready() && overlay_artwork.ready(),
+                       presence.pin(),presence.level(),presence.last_event());
+#endif
   earlier=epoch;previous=now;
 }
 #if defined(STUDY_BENCH_TEST) || defined(STUDY_LIVE_CAPTURE)
@@ -1554,34 +1638,20 @@ static void status_fields(){
     label(diagnostics_enabled?diag_uptime:up_status,uptime);
   }
 }
+#include "live_runtime/speaker_scroll.inc"
 static void transport_fields(){
   if(library_open){paint_library();return;}
 #ifdef STUDY_OVERLAY_PALETTES
   TextPaletteScope colours(speakers_open || queue_open?palette.selection():-1);
 #endif
   if(speakers_open){
-    text_background(page_pixels,width,scratch,{0,0,width,height},speaker_base[0],speaker_base[1]);
-    label(speaker_now,transfer_status?transfer_status:speaker_labels[selected_speaker]);
+    text_image(page_pixels,page_bytes,speaker_base[0],speaker_base[1]);
+    label(speaker_now,transfer_status?transfer_status:speaker_count?speaker_labels[selected_speaker]:"No speakers configured");
     int total=0;
-    for(int i=0;i<speaker_count;i++)total+=speaker_rows[i][speaker_variant(i)][2];
+    for(int i=0;i<speaker_count;i++)total+=speaker_height(i);
     speaker_max_scroll=std::max(0,total-(speaker_end-speaker_top));
     speaker_scroll=std::clamp(speaker_scroll,0,speaker_max_scroll);
-    int y=speaker_top-speaker_scroll;
-    for(int i=0;i<speaker_count;i++){
-      const auto *r=speaker_rects[i],*art=speaker_rows[i][speaker_variant(i)];
-      const int h=art[2],x=r[0],w=r[1],ax=r[2];
-      auto draw=[&](const unsigned *a,int left,int sw){
-        const size_t bytes=2*sw*h;
-        if(!text_image(scratch,bytes,a[0],a[1]))return;
-        for(int row=std::max(0,speaker_top-y);row<h && y+row<speaker_end;row++)
-          memcpy(page_pixels+2*((y+row)*width+left),scratch+2*row*sw,2*sw);
-      };
-      if(y<speaker_end && y+h>speaker_top){
-        draw(art,x,w);
-        if(can_transfer(i))draw(speaker_arrows[i],x+ax,w-ax);
-      }
-      y+=h;
-    }
+    if(cache_speakers())paint_speaker_rows(page_pixels);
     return;
   }
   if(queue_open){
@@ -1899,9 +1969,10 @@ static void animate() {
 #ifdef STUDY_ARCHITECTURAL_ONLY
      || mini_active()
 #endif
-     || library_scrolling()
+     || library_scrolling() || speaker_scrolling()
   )motion_loop.start();else motion_loop.stop();
   animate_library();
+  animate_speakers();
   animate_progress();
   animate_scene_feedback();
 #ifdef STUDY_ARCHITECTURAL_ONLY
@@ -2034,6 +2105,7 @@ static void show(int dest,int shift=14) {
   diagnostic_pass=-1;
   light_sheet=LightSheet::closed;sheet_drag=-1;
   volume_open=false;queue_open=false;speakers_open=false;volume_drag=-1;seek_drag=-1;
+  clear_speaker_cache();
   if(library_open){library.close();library_open=false;thumbnail_client.cancel();thumbnail_job=-1;release_library_backgrounds();}
   if(change && current==doorbell)bell_client.close();
 #endif
@@ -2391,7 +2463,7 @@ static bool show_card_root(int dest,int theme,int mode){
 }
 #ifdef STUDY_CARD_SPEAKERS
 static bool paint_card_speakers(int theme,int mode,uint8_t *pixels,bool force){
-  static_assert(card_speaker_count==speaker_count);
+  if(card_speaker_count!=speaker_count)return false;
   return card_speakers.paint(theme,mode,selected_speaker,[](int i){return can_transfer(i)?4:speaker_variant(i);},
                              pixels,scratch,page_bytes,force);
 }
@@ -3111,19 +3183,12 @@ static void begin(Display *display) {
 #ifdef STUDY_LIVE
   std::fill_n(levels,light_count,-1);
   load_display_choice();
+  apply_runtime_profile(fleet.active().runtime,true);
 #ifdef STUDY_SCREEN_OPTIONS
   apply_screen_profile(fleet.active().screen,false);
 #endif
   scanout.draw_overlay=draw_diagnostic_badges;
   scanout.restore_overlay=[](Scanout::Slot *slot){copy_badge_background(slot,false);gesture_toast.restore(slot);};
-  if(lux_entity[0])esphome::api::global_api_server->subscribe_home_assistant_state(
-      lux_entity,nullptr,[](esphome::StringRef s){
-        auto lux=esphome::parse_number<float>(s.str());
-        if(!lux || !std::isfinite(*lux) || *lux<0 || adaptive_bright_lux<=adaptive_dark_lux)return;
-        const double fraction=std::clamp((std::log1p(*lux)-std::log1p(adaptive_dark_lux))/
-                               (std::log1p(adaptive_bright_lux)-std::log1p(adaptive_dark_lux)),0.0,1.0);
-        brightness_target=adaptive_min_pct+fraction*(adaptive_max_pct-adaptive_min_pct);
-      });
   last_activity=clock_ms();
 #else
   std::copy_n(initial,light_count,levels);
@@ -3549,11 +3614,19 @@ static void touch(int x,int y) {
   }
   if(!moving && current==media && !volume_open && !queue_open &&
      (pressed==-156 || (!down && (speaker_button.contains(x,y) || (speakers_open && y<speaker_end))))){
-    if(!down){x0=x;y0=y;down=true;pressed=-156;speaker_down_scroll=speaker_scroll;}
+    if(!down){
+      speaker_dragged=std::abs(speaker_velocity)>12;speaker_velocity=0;speaker_touch_at=clock_ms();
+      x0=x;y0=y;down=true;pressed=-156;speaker_down_scroll=speaker_scroll;
+    }
     dx=x-x0;dy=y-y0;
     if(speakers_open && y0>=speaker_top && std::abs(dy)>8){
+      const int previous=speaker_scroll;const auto now=clock_ms();const int dt=now-speaker_touch_at;
       speaker_scroll=std::clamp(speaker_down_scroll-dy,0,speaker_max_scroll);
-      transport_fields();++revision;blit(0,0,width,height,page_pixels);
+      if(dt>0){
+        const float speed=std::clamp(1000.f*(speaker_scroll-previous)/dt,-4000.f,4000.f);
+        speaker_velocity=speaker_dragged?speaker_velocity*.35f+speed*.65f:speed;
+      }
+      speaker_touch_at=now;speaker_position=speaker_scroll;speaker_dragged=true;
     }
     return;
   }
@@ -4034,17 +4107,19 @@ static void release() {
   }
   if(pressed==-156){
     down=false;pressed=-2;
+    if(speaker_dragged){if(clock_ms()-speaker_touch_at>100)speaker_velocity=0;return;}
     if(std::abs(dx)>24 || std::abs(dy)>24)return;
     const int x=x0+dx,y=y0+dy;
     if(!speakers_open){
       if(!speaker_button.contains(x,y))return;
-      request_popup_motion();
+      request_popup_motion(false,true);
+      speaker_velocity=0;speaker_frame_at=0;speaker_painted_scroll=-1;
       speakers_open=true;speaker_scroll=0;if(!transfer_busy)transfer_status=nullptr;
     }else if(speaker_back.contains(x,y)){show(media,0);return;}
     else if(y>=speaker_top && y<speaker_end && !transfer_busy){
       int top=speaker_top-speaker_scroll;
       for(int i=0;i<speaker_count;i++){
-        const int h=speaker_rows[i][speaker_variant(i)][2];const auto *r=speaker_rects[i];
+        const int h=speaker_height(i);const auto *r=speaker_rects[0];
         if(y>=top && y<top+h && x>=int(r[0]) && x<int(r[0]+r[1])){
           if(x>=int(r[0]+r[2]))transfer_speaker(i);else select_speaker(i);
           break;
@@ -4257,6 +4332,10 @@ static void tick() {
   }
   const auto now=clock_ms();
   static int64_t previous=now;
+  if(!moving && !down && presence.poll(now)){
+    last_activity=now;
+    if(current==idle)screen_transition(home);
+  }
   static int64_t next_home_diagnostic=0;
   if(current==home && diagnostics_enabled && !moving && !down && now>=next_home_diagnostic
 #if defined(STUDY_CARD_FIELDS) && !defined(STUDY_CARD_DIAGNOSTICS)
@@ -4308,6 +4387,7 @@ static void tick() {
     speakers_dirty=true;
   }
   if(speakers_dirty){if(speakers_open)player().dirty=true;speakers_dirty=false;}
+  warm_speakers();
   if(library_open){library.tick();if(library.dirty){library_repaint=true;library.dirty=false;}}
 #ifndef STUDY_BENCH_TEST
   album_client.select(speaker_ids[selected_speaker],player().picture);
@@ -4316,7 +4396,7 @@ static void tick() {
 #ifndef STUDY_BENCH_TEST
   // Library artwork is serviced between frames, after scrolling settles.
 #endif
-  if(player().dirty && !moving && !down){
+  if(player().dirty && !moving && !down && !speaker_scrolling()){
     player().dirty=false;
     if(current==media && page_pixels && !library_open){
 #ifdef STUDY_CARD_OVERLAYS
@@ -4406,8 +4486,12 @@ static void tick() {
     ){climate_field();++revision;blit(0,0,width,height,page_pixels);}
   }
   const auto previous_gesture=fleet.active().gesture;
-  const bool updated=fleet.tick(ha_lights.receiving());
+  const bool updated=(!moving && !down && !speaker_scrolling()) && fleet.tick(ha_lights.receiving());
   if(updated){
+    const auto old_runtime=applied_runtime;
+    apply_runtime_profile(fleet.active().runtime);
+    if(current==doorbell && (old_runtime.bell!=applied_runtime.bell || strcmp(old_runtime.camera,applied_runtime.camera)))
+      screen_transition(home);
     const auto next=fleet.active().gesture;
     if(next.points!=previous_gesture.points || next.hold_ms!=previous_gesture.hold_ms || next.remember!=previous_gesture.remember){
       if(chord_armed)finish_chord(false);

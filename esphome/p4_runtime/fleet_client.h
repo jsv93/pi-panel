@@ -66,6 +66,9 @@ template<typename Profile> class FleetClient {
   void display_metrics(float rendered_fps,float refresh_hz,int backlight){
     rendered_fps_=rendered_fps;refresh_hz_=refresh_hz;backlight_=backlight;
   }
+  void device_metrics(bool artwork,int pin,int level,int64_t presence_ms){
+    artwork_ready_=artwork;presence_pin_=pin;presence_level_=level;presence_ms_=presence_ms;
+  }
   enum class Edit {membership,preset,display};
   bool submit(Edit edit,const std::string &body){
     if(!task_ || !changes_ || !online_ || pending_ || body.size()>=sizeof(Change::body))return false;
@@ -109,6 +112,9 @@ template<typename Profile> class FleetClient {
   std::atomic<bool> ha_connected_{false};
   std::atomic<float> rendered_fps_{0},refresh_hz_{0};
   std::atomic<int> backlight_{-1};
+  std::atomic<bool> artwork_ready_{false};
+  std::atomic<int> presence_pin_{-1},presence_level_{-1};
+  std::atomic<int64_t> presence_ms_{-1};
   FleetSocket socket_;
   Telemetry telemetry_;
   char ip_[48]{};
@@ -158,6 +164,10 @@ template<typename Profile> class FleetClient {
         cJSON_AddStringToObject(metrics.get(),"renderer","native-p4");
         cJSON_AddNumberToObject(metrics.get(),"render_fps",rendered_fps_.load());
         cJSON_AddNumberToObject(metrics.get(),"display_refresh_hz",refresh_hz_.load());
+        cJSON_AddBoolToObject(metrics.get(),"artwork_ready",artwork_ready_.load());
+        cJSON_AddNumberToObject(metrics.get(),"presence_pin",presence_pin_.load());
+        cJSON_AddNumberToObject(metrics.get(),"presence_level",presence_level_.load());
+        if(presence_ms_>=0)cJSON_AddNumberToObject(metrics.get(),"presence_age_s",(esp_timer_get_time()/1000-presence_ms_.load())/1000.);
         if(backlight_>=0){
           const auto brightness=std::to_string(backlight_.load())+"%";
           cJSON_AddStringToObject(metrics.get(),"backlight",brightness.c_str());
@@ -180,11 +190,11 @@ template<typename Profile> class FleetClient {
             r.status=0;
           }
           auto doc=verified_config(r.body,r.signature,settings_.sign_key,settings_.id);
-          Profile next{};
-          if(r.status==200 && doc && decode_(doc.get(),next) &&
+          Update update{};
+          if(r.status==200 && doc && decode_(doc.get(),update.profile) &&
              (last_signature_==r.signature || save_config(r.body,r.signature))){
-            version=next.version;last_signature_=r.signature;
-            Update update{next,edited_version==version && c.edit==Edit::display};
+            version=update.profile.version;last_signature_=r.signature;
+            update.own_display=edited_version==version && c.edit==Edit::display;
             xQueueOverwrite(latest_,&update);
             ESP_LOGI("p4_fleet","Cached signed profile v%d",version);
           }else ESP_LOGW("p4_fleet","Kept local profile; server configuration failed verification or layout checks");

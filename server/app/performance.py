@@ -6,7 +6,10 @@ from . import db
 FIELDS = {'cpu_usage_pct': (0, 100), 'cpu_temp': (-40, 150),
           'ram_used_pct': (0, 100), 'ram_used_mb': (0, 1e9), 'ram_total_mb': (0, 1e9),
           'net_rx_kbps': (0, 1e10), 'net_tx_kbps': (0, 1e10),
-          'disk_write_kbps': (0, 1e10), 'load_1m': (0, 1e6), 'cpu_cores': (1, 4096)}
+          'disk_write_kbps': (0, 1e10), 'load_1m': (0, 1e6), 'cpu_cores': (1, 4096),
+          'render_fps': (0,240), 'display_refresh_hz': (0,240),
+          'internal_free_kb': (0,1e7), 'internal_min_free_kb': (0,1e7),
+          'psram_free_mb': (0,1e7), 'psram_min_free_mb': (0,1e7), 'wifi_rssi_dbm': (-150,0)}
 RANGES = {'live': (300, 5), '15m': (900, 5), '1h': (3600, 15), '24h': (86400, 300)}
 _last_prune = 0
 

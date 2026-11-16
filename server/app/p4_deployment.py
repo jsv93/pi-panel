@@ -19,7 +19,7 @@ import time
 from fastapi import Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from . import access, backgrounds, db, ha
+from . import access, backgrounds, db, ha, p4_config
 
 ROOT = Path(os.environ.get('PANEL_P4_DATA', str(Path(db.DB_PATH).parent/'p4')))
 SOURCE = Path(os.environ.get('PANEL_P4_SOURCE', str(Path(__file__).resolve().parents[2])))
@@ -45,16 +45,14 @@ def artifact_cipher(signing_key, generation, digest, offset=0):
 
 
 def shape(config):
-    value = json.loads(json.dumps(config))
-    for key in list(value):
-        if key.startswith('_'): value.pop(key)
-    for light in value.get('lights', []):
-        for key in ('soft', 'bright', 'include_presets'): light.pop(key, None)
-    # These choices already use the small, signed live-config protocol.
-    for key in ('palette', 'diagnostics', 'browse_view', 'mini_art',
-                'touch_gesture', 'touch_points', 'touch_hold_ms', 'remember_last_state'):
-        value.get('display', {}).pop(key, None)
-    return hashlib.sha256(canonical(value)).hexdigest()
+    # Bump when new runtime capabilities require a one-time firmware upgrade.
+    return hashlib.sha256(canonical([2,p4_config.structural(config)])).hexdigest()
+
+def matches(job,config):
+    if job['shape']==shape(config):return True
+    try:compiled=json.loads((ROOT/str(job['id'])/'config.json').read_bytes())['config']
+    except (OSError,ValueError,KeyError):return False
+    return shape(compiled)==job['shape'] and p4_config.compatible(config,compiled)
 
 
 def init():
@@ -83,7 +81,13 @@ def status(panel_id):
             try: job['detail'] = json.loads((ROOT/str(job['id'])/'progress.json').read_bytes())['phase']
             except (OSError, ValueError, KeyError): pass
         job['report'] = json.loads(job['report'])
-    return dict(enrolled=bool(enrolled), enabled=bool(enrolled and enrolled['enabled']), jobs=jobs)
+    panel=db.get_panel(panel_id)
+    if not panel or panel.get('kind')!='esp':raise HTTPException(404,'Unknown P4')
+    metrics=panel.get('metrics') or {}
+    return dict(enrolled=bool(enrolled), enabled=bool(enrolled and enrolled['enabled']), jobs=jobs,
+                saved_version=db.latest_version(panel_id), applied_version=panel.get('config_version',0),
+                generation=metrics.get('firmware_generation'),
+                recovery='Failed health checks automatically return to the previous valid firmware. Configuration history restores saved settings.')
 
 
 def queue(panel_id, retry=False):
@@ -93,11 +97,13 @@ def queue(panel_id, retry=False):
         device = c.execute('SELECT * FROM p4_devices WHERE panel_id=? AND enabled=1', (panel_id,)).fetchone()
         if not device: return
         last = c.execute('SELECT * FROM p4_builds WHERE panel_id=? ORDER BY id DESC LIMIT 1', (panel_id,)).fetchone()
-        if last and last['shape'] == fingerprint and not retry: return
+        if last and matches(last,cfg) and last['state']!='superseded' and not retry: return
         if last and last['state'] in ('queued', 'building') and retry: return
         # Time-based floor also survives restoring an older database backup.
         # Seconds since 2020 fit the embedded signed 32-bit generation field.
         generation=max(int(time.time())-1577836800, c.execute('SELECT COALESCE(MAX(id),0)+1 FROM p4_builds').fetchone()[0])
+        directory=ROOT/str(generation);directory.mkdir(mode=0o700,exist_ok=True)
+        (directory/'config.json').write_bytes(canonical({'config':cfg}))
         c.execute("INSERT INTO p4_builds(id,panel_id,shape,version,state,created) VALUES(?,?,?,?,'queued',?)",
                   (generation, panel_id, fingerprint, db.latest_version(panel_id), time.time()))
 
@@ -182,6 +188,14 @@ async def existing_api_name(panel,key):
 
 async def stop_build(process):
     if process.returncode is not None:return
+    if os.name=='nt':
+        # A Windows compiler is a process tree. Terminating only Python leaves
+        # CMake/SCons writing into an abandoned build after pause or shutdown.
+        killer=await asyncio.create_subprocess_exec('taskkill','/PID',str(process.pid),'/T','/F',
+            stdout=asyncio.subprocess.DEVNULL,stderr=asyncio.subprocess.DEVNULL)
+        await killer.wait()
+        await process.wait()
+        return
     try:
         if os.name!='nt':os.killpg(process.pid,signal.SIGTERM)
         else:process.terminate()
@@ -201,7 +215,7 @@ async def wait_build(process,job,interval=15):
             except asyncio.TimeoutError:pass
             with db.conn() as c:
                 device=c.execute('SELECT enabled FROM p4_devices WHERE panel_id=?',(job['panel_id'],)).fetchone()
-            if not device or not device['enabled'] or shape(db.merged_config(job['panel_id']))!=job['shape']:
+            if not device or not device['enabled'] or not matches(job,db.merged_config(job['panel_id'])):
                 await stop_build(process);return None
         raise asyncio.TimeoutError()
     except (asyncio.TimeoutError,asyncio.CancelledError):
@@ -223,8 +237,10 @@ async def worker():
             with db.conn() as c:
                 device = c.execute('SELECT * FROM p4_devices WHERE panel_id=?', (pid,)).fetchone()
             cfg = db.merged_config(pid)
-            if not device or not device['enabled'] or shape(cfg) != job['shape']:
+            if not device or not device['enabled'] or not matches(job,cfg):
                 set_state(job, 'superseded'); continue
+            snapshot=directory/'config.json'
+            if snapshot.exists():cfg=json.loads(snapshot.read_bytes())['config']
             panel = db.get_panel(pid)
             background=cfg.get('display',{}).get('background',{})
             if background.get('mode')=='image':
@@ -233,7 +249,7 @@ async def worker():
                 if hashlib.sha256(data).hexdigest()!=background['image']:raise ValueError('Background image verification failed')
                 assets=directory/'private-assets';assets.mkdir(mode=0o700,exist_ok=True)
                 (assets/('background-'+background['image']+'.webp')).write_bytes(data)
-            cfg.update(_version=db.latest_version(pid), _panel_id=pid, _claimed=True)
+            cfg.update(_version=job['version'], _panel_id=pid, _claimed=True)
             identity = dict(id=pid, mac=panel['mac'], server=device['server'], api_name=device['api_name'],
                             token=db.get_panel_token(pid), sign_key=db.get_panel_sign_key(pid), generation=job['id'])
             for name, value in [('config.json', {'config':cfg}), ('identity.json',identity), ('states.json', await ha.states())]:
@@ -242,17 +258,18 @@ async def worker():
             (directory/'api.key').write_text(device['api_key']); (directory/'api.key').chmod(0o600)
             set_state(job, 'building')
             with (directory/'build.log').open('wb') as log:
-                process = await asyncio.create_subprocess_exec(sys.executable, str(SOURCE/'esphome/p4_runtime/build.py'), str(directory),
-                    stdout=log, stderr=log, env=dict(os.environ, PYTHONUNBUFFERED='1'),start_new_session=os.name!='nt')
+                process = await asyncio.create_subprocess_exec(os.environ.get('PANEL_P4_PYTHON',sys.executable), str(SOURCE/'esphome/p4_runtime/build.py'), str(directory),
+                    stdout=log, stderr=log, env=dict(os.environ, PYTHONUNBUFFERED='1',
+                        PANEL_P4_ART_CACHE=str(ROOT/'artwork-cache'/hashlib.sha256(pid.encode()).hexdigest())),start_new_session=os.name!='nt')
                 code=await wait_build(process,job)
             if code is None:
-                set_state(job,'superseded','Room changed during build; preparing its latest configuration')
+                set_state(job,'superseded','Build stopped because settings changed or automatic updates were paused')
                 await asyncio.to_thread(trim_storage,pid)
                 continue
             if code: raise RuntimeError('Build failed; the installed panel is unchanged. Private compiler log retained on server.')
             product = json.loads((directory/'product.json').read_bytes())
             await asyncio.to_thread(validate_product, product, directory/'artifacts')
-            if shape(db.merged_config(pid)) != job['shape']:
+            if not matches(job,db.merged_config(pid)):
                 set_state(job, 'superseded'); continue
             manifest = dict(product, encryption=ENCRYPTION, _panel_id=pid, _claimed=True, _version=job['id'], mac=panel['mac'], config_version=cfg['_version'])
             (directory/'manifest.json').write_bytes(canonical(manifest))
@@ -295,6 +312,8 @@ def install(app, admin, owner, panel_auth, server_url):
         if not panel or panel['kind'] != 'esp' or not panel['claimed'] or not panel.get('mac'):
             raise HTTPException(400, 'Choose a paired P4')
         b = await request.json()
+        if not isinstance(b,dict) or any(k in b and type(b[k]) is not bool for k in ('enabled','retry')):
+            raise HTTPException(400,'enabled and retry must be true or false')
         with db.conn() as c:
             old = c.execute('SELECT * FROM p4_devices WHERE panel_id=?', (pid,)).fetchone()
         key = b.get('api_key') or (old['api_key'] if old else '')
@@ -308,7 +327,7 @@ def install(app, admin, owner, panel_auth, server_url):
         with db.conn() as c:
             c.execute('INSERT OR REPLACE INTO p4_devices VALUES(?,?,?,?,?)', (pid,key,name,server_url(request),int(b.get('enabled',True))))
         access.audit(pid, 'admin', 'p4-enrollment', 'Automatic firmware and artwork deployment configured')
-        queue(pid, retry=bool(b.get('retry')))
+        if b.get('enabled',True):queue(pid, retry=bool(b.get('retry')))
         return status(pid)
 
     @app.get('/api/p4/{pid}/release')
@@ -318,8 +337,8 @@ def install(app, admin, owner, panel_auth, server_url):
             row = c.execute("SELECT b.id FROM p4_builds b JOIN p4_devices d ON d.panel_id=b.panel_id WHERE b.panel_id=? AND d.enabled=1 AND b.state IN ('ready','installed') ORDER BY b.id DESC LIMIT 1", (pid,)).fetchone()
         if not row: return Response(status_code=204)
         with db.conn() as c:
-            built=c.execute('SELECT shape FROM p4_builds WHERE id=?',(row['id'],)).fetchone()
-        if built['shape']!=shape(db.merged_config(pid)): return Response(status_code=204)
+            built=c.execute('SELECT id,shape FROM p4_builds WHERE id=?',(row['id'],)).fetchone()
+        if not matches(built,db.merged_config(pid)): return Response(status_code=204)
         body = (ROOT/str(row['id'])/'manifest.json').read_bytes()
         return Response(body, media_type='application/json', headers={'Cache-Control':'no-store',
             'X-Panel-Signature':hmac.new(db.get_panel_sign_key(pid).encode(),body,hashlib.sha256).hexdigest()})

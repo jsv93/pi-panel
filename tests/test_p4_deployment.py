@@ -23,10 +23,21 @@ async def check(server, db, deploy):
         assert (await client.get(route)).status_code==401
         assert (await client.post(route,json={})).status_code==401
         client.cookies.set('psid','test-session')
+        # Pi-only management must never clear a P4's enrolled credentials.
+        saved=(db.get_panel_token(pid),db.get_panel_sign_key(pid))
+        assert (await client.post(f'/api/panels/{pid}/reprovision')).status_code==400
+        assert (await client.post(f'/api/panels/{pid}/token/reset')).status_code==400
+        assert (db.get_panel_token(pid),db.get_panel_sign_key(pid))==saved
+        assert (await client.post(f'/api/panels/{pid}/screen-diagnostics',json={'capture':True})).status_code==400
+        assert (await client.post(f'/api/panels/{pid}/ssh-access',headers={'X-Panel-Access':'1'},json={})).status_code==400
         assert (await client.post(route,json={})).status_code==400
         response=await client.post(route,json={'api_name':pid,'api_key':base64.b64encode(bytes(32)).decode()})
         assert response.status_code==200,response.text
         assert 'api_key' not in response.text and signing not in response.text
+        assert (await client.post(route,json={'enabled':'false'})).status_code==400
+        assert (await client.post(route,json={'enabled':False})).json()['enabled'] is False
+        assert (await client.post(route,json={'enabled':True})).json()['enabled'] is True
+        assert (db.get_panel_token(pid),db.get_panel_sign_key(pid))==saved
         job=deploy.status(pid)['jobs'][0]; generation=job['id']
         deploy.queue(pid);assert len(deploy.status(pid)['jobs'])==1
         dynamic=json.loads(json.dumps(cfg));dynamic['display']['palette']='ember'
@@ -61,6 +72,10 @@ async def check(server, db, deploy):
         assert (await client.get(path)).status_code==401 # admin cookie is not device auth
         assert (await client.get(path.replace(pid,'other'),headers=auth)).status_code==401
         release=await client.get(path,headers=auth);assert release.content==raw
+        await client.post(route,json={'enabled':False})
+        assert (await client.get(path,headers=auth)).status_code==204
+        await client.post(route,json={'enabled':True})
+        assert (await client.get(path,headers=auth)).content==raw
         assert release.headers['X-Panel-Signature']==hmac.new(signing.encode(),raw,hashlib.sha256).hexdigest()
         file=f"/api/p4/{pid}/files/{generation}/{items[0]['sha256']}"
         assert (await client.get(file)).status_code==401
