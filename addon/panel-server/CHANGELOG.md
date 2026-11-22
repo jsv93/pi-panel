@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.28.1
+
+- Add new P4s through Add panel → Setup command → Install over USB, with direct browser flashing and a secure window for HTTP/HA ingress.
+- Prepare firmware for the selected board, verify USB writes and automatically load matching artwork onto its microSD card at first boot.
+- Protect existing installations and device identities; retain Pi setup and existing P4 update, rollback and offline controls.
+- Read-only USB checks and simulated installation are validated. A clean physical installation still requires spare-hardware acceptance testing.
+
 ## 0.28.0
 
 - Apply P4 display, sensors, doorbell, speaker list and presence GPIO settings live, with signed offline persistence and existing on-panel controls preserved.

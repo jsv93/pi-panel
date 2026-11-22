@@ -28,7 +28,7 @@ def main():
             ('climate.test','off',dict(temperature=22,current_temperature=22,min_temp=16,max_temp=30,hvac_modes=['off','cool','heat'])),
             ('media_player.test','playing',dict(friendly_name='Test speaker',media_title='Test track',volume_level=.2,supported_features=517055)),
             ('camera.test','idle',{})]]
-        identity=dict(id='p4-ci',mac='02:00:00:00:00:01',server='http://panel.invalid:8099',api_name='p4-ci',token='fixture-only-token',sign_key='fixture-only-signing-key',generation=1)
+        identity=dict(id='p4-ci',mac='02:00:00:00:00:01',server='http://panel.invalid:8099',api_name='p4-ci',token='fixture-only-token',sign_key='fixture-only-signing-key',generation=1,initial_install=True)
         for name,value in [('config.json',{'config':config}),('states.json',states),('identity.json',identity)]:
             (job/name).write_text(json.dumps(value))
         (job/'api.key').write_text(base64.b64encode(bytes(range(32))).decode())
@@ -37,6 +37,8 @@ def main():
         product=json.loads((job/'product.json').read_bytes())
         assert product['application']['bytes']<=0x300000
         assert {f['role'] for f in product['artwork']}=={'volume','text','palette','navigation','home','overlays'}
+        assert {f['role'] for f in product['usb']}=={'bootloader','partitions','otadata','application','nvs'}
+        assert next(f for f in product['usb'] if f['role']=='application')['sha256']==product['application']['sha256']
         print('PASS portable complete-room rendering and firmware compilation')
 
 if __name__=='__main__':main()

@@ -1668,6 +1668,12 @@ async def action(panel_id: str, request: Request):
 async def remove(panel_id: str):
     """Forget the device. If the hardware is still alive it will re-register
     as unclaimed, which is the intended behaviour — this is 'forget', not 'ban'."""
+    # Cancelling a new USB setup must also stop its queued/active compiler.
+    with db.conn() as c:
+        if c.execute('SELECT 1 FROM p4_setup WHERE panel_id=?',(panel_id,)).fetchone():
+            c.execute('DELETE FROM p4_devices WHERE panel_id=?',(panel_id,))
+            c.execute('DELETE FROM p4_setup WHERE panel_id=?',(panel_id,))
+            c.execute("UPDATE p4_builds SET state='superseded' WHERE panel_id=? AND state IN ('queued','building')",(panel_id,))
     db.delete_panel(panel_id)
     ws = LIVE.pop(panel_id, None)
     if ws:
@@ -2323,7 +2329,7 @@ def _gui_csp():
         print(f"[server] no CSP for the admin GUI: {e}")
         return ""
     value = ("default-src 'self'; "
-            f"script-src 'sha256-{digest}'; "
+            f"script-src 'sha256-{digest}' 'strict-dynamic'; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; font-src 'self'; connect-src 'self'; "
             "object-src 'none'; base-uri 'self'; form-action 'self'")
@@ -2363,4 +2369,6 @@ async def no_cache_html(request: Request, call_next):
 
 
 p4_deployment.install(app, require_admin, require_config_owner, panel_auth, _server_url)
+from . import p4_setup
+p4_setup.install(app, require_admin, require_config_owner, _server_url)
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

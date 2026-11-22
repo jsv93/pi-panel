@@ -1,0 +1,6 @@
+{
+  "package": "esptool-js",
+  "version": "0.7.1",
+  "source": "https://github.com/espressif/esptool-js",
+  "integrity": "sha512-vw1isT5ROHgpRmMG3y6B81dceeZ7O1WhF1x05qFbAlH8N0N/pOQqODzJLA+36lCbOXCw06iA4CWctyrQQ7VeSA=="
+}
