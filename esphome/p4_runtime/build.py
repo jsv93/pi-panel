@@ -88,6 +88,24 @@ def build(job,prepare_only=False):
         '--overlay-assets',job/'overlay-assets','--navigation-assets',job/'navigation-assets','--home-zoom-assets',job/'home-assets',
         *(['--reuse-artwork'] if reused else []))
     if cache and not reused:artwork_cache.publish(cache,key,job)
+    initial=identity.get('initial_install') is True
+    # All initial artwork hashes are compiled into the application itself. A
+    # factory boot can fetch these exact files before the renderer is healthy;
+    # ordinary OTA boots retain their existing health and rollback requirements.
+    banks=json.loads((build/'sd-assets/local-banks.json').read_bytes())
+    initial_files=[dict(role=b['name'],sha256=b['sha256'],bytes=(build/'sd-assets'/(b['sha256']+'.bin')).stat().st_size) for b in banks]
+    for role,folder,manifest in [('navigation','navigation-assets','navigation.json'),('home','home-assets','home_zoom.json')]:
+        m=json.loads((job/folder/manifest).read_bytes())
+        initial_files.append(dict(role=role,sha256=m['sha256'],bytes=(job/folder/(m['sha256']+'.bin')).stat().st_size))
+    overlay_banks=list((job/'overlay-assets').glob('*.bin'))
+    if len(overlay_banks)!=1:raise ValueError('Ambiguous overlay bank')
+    initial_files.append(dict(role='overlays',sha256=hashlib.sha256(overlay_banks[0].read_bytes()).hexdigest(),bytes=overlay_banks[0].stat().st_size))
+    header='#pragma once\nnamespace p4_runtime {\nstruct InitialAsset {const char *role,*hash; size_t bytes;};\n'
+    header+='constexpr InitialAsset initial_assets[]={'+','.join('{'+json.dumps(f['role'])+','+json.dumps(f['sha256'])+','+str(f['bytes'])+'}' for f in initial_files)+'};\n}\n'
+    (build/'live_runtime/initial_artwork.h').write_text(header,encoding='ascii')
+    if initial:
+        yaml=build/'study-live.yaml'
+        yaml.write_text(yaml.read_text().replace('build_flags: [','build_flags: [-DSTUDY_INITIAL_INSTALL, ',1))
     if prepare_only:
         phase('Prepared');return
     phase('Compiling firmware')
@@ -111,6 +129,18 @@ def build(job,prepare_only=False):
     if len(banks)!=1:raise ValueError('Ambiguous overlay bank')
     files.append(artifact(banks[0],'overlays'))
     result=dict(hardware=HARDWARE,application=app,artwork=files,api_name=name)
+    if initial:
+        compiled=firmware.parent
+        usb=[]
+        for role,name,offset,limit in [('bootloader','bootloader.bin',0x2000,0x6000),('partitions','partitions.bin',0x8000,0x1000)]:
+            path=compiled/name
+            if not 0<path.stat().st_size<=limit:raise ValueError('Invalid USB '+role)
+            usb.append(dict(artifact(path,role),offset=offset))
+        for role,offset,size in [('otadata',0x9000,0x2000),('nvs',0x1f90000,0x70000)]:
+            path=build/(role+'-blank.bin');path.write_bytes(b'\xff'*size)
+            usb.append(dict(artifact(path,role),offset=offset))
+        usb.append(dict(app,offset=0x10000))
+        result['usb']=usb
     (job/'product.json').write_text(json.dumps(result,indent=2))
     phase('Ready')
 

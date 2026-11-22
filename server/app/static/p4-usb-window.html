@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Pi Panel · Install over USB</title>
+<style>:root{color-scheme:dark;font-family:system-ui;background:#15151b;color:#eee}body{max-width:540px;margin:48px auto;padding:24px;line-height:1.6}small{color:#82d4b5}h1{line-height:1.2}p{color:#bbb}button{background:#82d4b5;color:#13271f;border:0;border-radius:8px;padding:14px 20px;min-height:48px;font:inherit;cursor:pointer}button:disabled{opacity:.4;cursor:default}button:focus-visible{outline:3px solid white;outline-offset:4px}#status{padding:18px 0;color:#eee}</style></head><body>
+<small>PI PANEL</small><h1>Install over USB</h1><h2 id="room"></h2>
+<p id="server"></p>
+<p>Connect the new Waveshare P4 by USB. Insert its FAT32 microSD card and connect Ethernet for automatic artwork loading.</p>
+<p>Installation replaces factory/demo firmware. Existing Pi Panel installations are protected.</p>
+<button id="connect" disabled>Connect and install</button><p id="status" role="status" aria-live="polite">Connecting to Panel Server…</p>
+<p>Your firmware passes directly between browser windows. This page does not upload it to a website.</p>
+<script type="module" src="./p4-usb-window.js"></script></body></html>

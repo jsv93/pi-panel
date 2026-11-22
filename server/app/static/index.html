@@ -41,6 +41,7 @@ input:focus,select:focus{outline:0;border-color:var(--ok)}
 .wrap{max-width:1180px;margin:0 auto;padding:22px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px}
 .btn{border:1px solid #2E2E38;color:var(--quiet);padding:7px 13px;border-radius:7px;font-size:13px}
+.modal a.btn{display:inline-flex;align-items:center;text-decoration:none}
 .btn:hover{color:var(--ink);border-color:#3A3A46}
 .btn.primary{background:var(--ok);color:#0E0E14;border-color:var(--ok);font-weight:600}
 .btn.danger{color:var(--bad);border-color:rgba(196,112,90,.4)}
@@ -818,9 +819,10 @@ let modalPreviousFocus=null;
 function confirmModal(title, body, onOk){
   modalPreviousFocus=document.activeElement;
   $("#mTitle").textContent=title; $("#mBody").innerHTML=body;
+  $("#mCancel").onclick=()=>{$("#modal").classList.remove("on");modalPreviousFocus?.focus();};
   $("#mOk").textContent="Confirm";   // callers may override; reset so it can't leak
   $("#modal").classList.add("on");
-  $("#mOk").disabled=false;$("#mCancel").focus();
+  $("#mOk").disabled=false;$("#mCancel").disabled=false;$("#mCancel").focus();
   $("#mOk").onclick = async ()=>{ $("#modal").classList.remove("on"); await onOk(); };
 }
 $("#mCancel").onclick = ()=>{$("#modal").classList.remove("on");modalPreviousFocus?.focus();};
@@ -1099,6 +1101,7 @@ function ramUsage(m){
 async function openPanel(id){
   resetPerformance();
   CUR = await api("/panels/"+id);
+  CUR.usbSetup=CUR.panel.kind==='esp'?await api('/p4-setup/'+encodeURIComponent(id)).catch(()=>null):null;
   setNavigation("panel");
   CFG = JSON.parse(JSON.stringify(CUR.config));
   await loadEntities();
@@ -1124,7 +1127,7 @@ async function openPanel(id){
   /* Setup command is for a panel that has never checked in; Reinstall is for
      one that has. Never both, so there is no question which to use. */
   const pending = await pendingTokenFor(id);
-  $("#setupCmdBtn").style.display = !isP4() && pending ? "" : "none";
+  $("#setupCmdBtn").style.display = isP4() ? (CUR.usbSetup?.initial?'':'none') : (pending?'':'none');
   $("#reinstallBtn").style.display = isP4() || pending ? "none" : "";
 }
 async function loadP4Updates(){
@@ -1139,6 +1142,11 @@ async function loadP4Updates(){
     $('#p4BuildLog').hidden=!job;
     $('#p4BuildLog').dataset.panel=id;
     $('#p4BuildLog').dataset.job=job?.id||'';
+    if(CUR.usbSetup?.initial&&!result.enrolled){
+      for(const field of ['p4PairingLabel','p4Enable','p4Retry','p4Pause'])$('#'+field).hidden=true;
+      $('#p4UpdateStatus').textContent='Save your room, then choose Setup command → Install over USB.';
+      $('#p4AppliedStatus').textContent='Waiting for the new P4';$('#p4Recovery').textContent='';return;
+    }
     $('#p4PairingLabel').hidden=result.enrolled;
     if(result.enrolled)$('#p4PairingKey').value='';
     $('#p4Enable').hidden=result.enabled;
@@ -1610,19 +1618,17 @@ $("#pushAllBtn").onclick = async ()=>{
 $("#addPanelBtn").onclick = async ()=>{
   const tpls = await api("/templates");
   confirmModal("Add a panel",
-    html`<div class="lbl">ROOM</div><input id="provRoom" placeholder="e.g. Master Bedroom">
+    html`<label class="lbl" for="provKind">PANEL TYPE</label><select id="provKind"><option value="pi">Raspberry Pi</option><option value="esp">Waveshare ESP32-P4 · 5-inch DSI</option></select>
+     <div class="lbl">ROOM</div><input id="provRoom" placeholder="e.g. Master Bedroom">
      <div class="lbl" style="margin-top:12px">ROOM LABEL (shown under the clock)</div>
      <input id="provLabel" placeholder="defaults to the room name">
      <div class="lbl" style="margin-top:12px">TEMPLATE</div>
      <select id="provTpl">${tpls.map(t=>html`<option value="${t.name}">${t.name}</option>`)}</select>
-     <p class="muted" style="margin-top:12px;font-size:13px">Next you will configure
-       the room's lights, speakers and sensors. The command to run on the Pi is
-       handed over after you save that — the panel then arrives fully configured
-       rather than needing a second push.</p>`,
+     <p class="muted" style="margin-top:12px;font-size:13px">Next, configure the room's lights, speakers and sensors, then save. Open Setup command to install: USB for a P4, or the existing setup options for a Pi.</p>`,
     async ()=>{
       const room = $("#provRoom").value.trim();
       if(!room){ toast("Room is required"); return; }
-      const r = await api("/provision",{method:"POST",body:JSON.stringify({
+      const r = await api($("#provKind").value==='esp'?'/p4-setup':'/provision',{method:"POST",body:JSON.stringify({
         room, room_label:$("#provLabel").value.trim(), template:$("#provTpl").value})});
       /* Straight into configuration. The command is deliberately not shown yet:
          it comes after Save & push, so it cannot be run against an unconfigured
@@ -1631,6 +1637,84 @@ $("#addPanelBtn").onclick = async ()=>{
       openPanel(r.panel_id);
     });
 };
+/* Install starts from the same Setup command used by Pi panels. */
+let p4SetupView=0,p4UsbModule=null;
+async function showP4SetupProgress(pid){
+ const view=++p4SetupView,controller=new AbortController();
+ let pollTimer=null,busy=false,writing=false,installed=false;
+ confirmModal('Setup command',html`<p>Connect the new Waveshare P4 to this computer with a USB data cable, insert its FAT32 microSD card and connect Ethernet.</p>
+   <button class="btn primary" id="p4InstallUsb" disabled>Install over USB</button>
+   <p class="hint">Select the USB device when prompted. Installation replaces factory/demo firmware; existing Pi Panel installations are protected. Firmware and artwork are prepared and loaded automatically.</p>
+   <p id="p4UsbStatus" role="status" aria-live="polite">Loading USB support…</p>
+   <p id="p4SetupPhase" class="muted" role="status"></p>
+   <details><summary>Connect Home Assistant</summary><p>Once the panel starts, add the ESPHome integration in Home Assistant using the address and encryption key below. Enable “Allow the device to perform Home Assistant actions”.</p><p id="p4SetupAddress"></p><button class="btn" id="p4ShowKey">Show pairing key</button><pre id="p4SetupKey" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></details>
+   <p id="p4SetupCheck" role="status"></p>`,()=>{});
+ $('#mOk').textContent='Done';
+ const active=()=>view===p4SetupView&&$('#p4UsbStatus')&&$('#modal').classList.contains('on');
+ const warnLeaving=event=>{if(busy){event.preventDefault();event.returnValue='';}};
+ window.addEventListener('beforeunload',warnLeaving);
+ const report=text=>{if(active()){
+   if(text.startsWith('Installing ')||text.startsWith('USB installation verified'))writing=text.startsWith('Installing ');
+   $('#mOk').disabled=$('#mCancel').disabled=writing;$('#p4UsbStatus').textContent=text;
+ }};
+ const close=()=>{if(writing)return;controller.abort();clearTimeout(pollTimer);window.removeEventListener('beforeunload',warnLeaving);$('#modal').classList.remove('on');modalPreviousFocus?.focus();};
+ $('#mOk').onclick=close;
+ $('#mCancel').onclick=close;
+ $('#p4ShowKey').onclick=async()=>{try{const key=await api('/p4-setup/'+encodeURIComponent(pid)+'/pairing');if(active())$('#p4SetupKey').textContent=key.api_key;}catch(e){if(active())$('#p4SetupCheck').textContent=e.message;}};
+ const pause=signal=>new Promise((resolve,reject)=>{
+   const abort=()=>{clearTimeout(timer);reject(new DOMException('Setup cancelled','AbortError'));};
+   const timer=setTimeout(()=>{signal?.removeEventListener('abort',abort);resolve();},5000);
+   signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();
+ });
+ async function prepare(probe,signal=controller.signal,update=report){
+   await api('/p4-setup/'+encodeURIComponent(pid)+'/connect',{method:'POST',body:JSON.stringify(probe),signal});
+   const deadline=Date.now()+2*60*60*1000;
+   while(Date.now()<deadline){
+     if(signal?.aborted)throw new DOMException('Setup cancelled','AbortError');
+     const state=await api('/p4-setup/'+encodeURIComponent(pid),{signal});
+     const job=state.jobs[0];
+     if(!state.initial)throw Error('This panel has already been installed.');
+     if(!state.enabled)throw Error('Automatic updates are paused. Resume them in P4 updates, then try again.');
+     if(job?.state==='failed')throw Error(job.detail||'Preparation failed. Click Install over USB to retry.');
+     if(job?.state==='ready')return api('/p4-setup/'+encodeURIComponent(pid)+'/package/'+job.id,{signal});
+     update(job?.detail||'Preparing your room. Keep the USB setup open…');await pause(signal);
+   }
+   throw Error('Preparation is taking longer than expected. Resume from Setup command.');
+ }
+ $('#p4InstallUsb').onclick=async()=>{
+   if(busy||!p4UsbModule)return;
+   busy=true;$('#p4InstallUsb').disabled=true;
+   try{
+     const options={room:CUR?.config?.room_label||'New P4',prepare,status:report,signal:controller.signal};
+     if(p4UsbModule.directSerial())await p4UsbModule.installSelected(options);
+     else await p4UsbModule.openUsbWindow(options);
+     installed=true;report('USB installation complete. The P4 now loads its artwork automatically.');
+   }catch(e){report(e.name==='NotFoundError'?'No USB device selected. Try Install over USB again.':e.message);}
+   finally{busy=writing=false;if(active()){$('#mOk').disabled=$('#mCancel').disabled=false;$('#p4InstallUsb').disabled=installed||controller.signal.aborted;}}
+ };
+ async function poll(){
+   if(!active())return;
+   try{
+     const state=await api('/p4-setup/'+encodeURIComponent(pid));if(!active())return;
+     const job=state.jobs[0],metrics=state.metrics||{},recent=state.last_seen&&Date.now()/1000-state.last_seen<90;
+     $('#p4SetupPhase').textContent=job?`${job.state} — ${job.report?.detail||job.detail||'Preparing the room'}`:'';
+     $('#p4SetupAddress').textContent=state.ip||pid+'.local';
+     $('#p4SetupCheck').textContent=metrics.artwork_ready&&recent?(metrics.ha_connected?'Ready — artwork verified and Home Assistant connected.':'Artwork ready — connect Home Assistant to finish.'):'Keep the panel powered. Artwork downloads resume automatically after interruptions.';
+     $('#p4ShowKey').disabled=!state.enrolled;
+     if(!state.initial&&!busy)$('#p4InstallUsb').disabled=true;
+   }catch(e){if(active())$('#p4SetupPhase').textContent=e.message;}
+   if(active())pollTimer=setTimeout(poll,5000);
+ }
+ try{
+   if(!p4UsbModule)await new Promise((resolve,reject)=>{
+     const loader=document.createElement('script');loader.type='module';loader.src=BASE+'p4-usb-loader.js';
+     loader.onload=()=>{p4UsbModule=window.piPanelUsb;loader.remove();p4UsbModule?resolve():reject(Error('USB module missing'));};
+     loader.onerror=()=>{loader.remove();reject(Error('USB module failed'));};document.head.appendChild(loader);
+   });
+   if(active()){$('#p4InstallUsb').disabled=false;report(p4UsbModule.directSerial()?'Ready to connect to USB.':'Install opens the secure USB window automatically, like ESPHome.');}
+ }catch(e){report('USB support could not load. Refresh this page and try again.');}
+ poll();
+}
 /* The bootstrap announces each phase as "==> name", so progress comes from
    the script's own output rather than a second thing to keep in step with it.
    An unrecognised phase still shows; it just does not move the bar. */
@@ -1827,6 +1911,7 @@ $("#reinstallBtn").onclick = ()=>{
     });
 };
 $("#setupCmdBtn").onclick = async ()=>{
+  if(isP4()){await showP4SetupProgress(CUR.panel.id);return;}
   const t = await pendingTokenFor(CUR.panel.id);
   if(!t){ toast("This panel has already been provisioned"); return; }
   showProvisionCommand(t);

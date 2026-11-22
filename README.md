@@ -67,6 +67,7 @@ The GUI warns while the shipped default is still in place.
 
 ## Documentation
 
+- [docs/P4-SETUP.md](docs/P4-SETUP.md) — USB setup wizard, automatic artwork and recovery
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the decisions, and what was rejected
 - [docs/DALI-INTEGRATION.md](docs/DALI-INTEGRATION.md) — gateway API, and the degraded path
 - [docs/INTEGRATION.md](docs/INTEGRATION.md) — the Home Assistant integration

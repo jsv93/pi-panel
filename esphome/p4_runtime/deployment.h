@@ -13,6 +13,9 @@
 #include "artifact_retention.h"
 #include <atomic>
 #include <sys/stat.h>
+#ifdef STUDY_INITIAL_INSTALL
+#include "initial_artwork.h"
+#endif
 
 namespace p4_runtime {
 class Deployment {
@@ -23,6 +26,25 @@ class Deployment {
   uint32_t highest_=STUDY_BUILD_GENERATION;
   ArtifactRetention retention_;
   const FleetSettings &settings_;
+#ifdef STUDY_INITIAL_INSTALL
+  bool initial_checked_=false;
+  std::atomic<bool> initial_{false};
+  std::atomic<bool> initial_staged_{false};
+  void initial_poll(){
+    // Immutable compile-time hashes authenticate the initial artwork even on
+    // HTTP LANs. No release selector can substitute a newer/different room.
+    for(const auto &asset:initial_assets){
+      File file;file.role=asset.role;file.hash=asset.hash;file.bytes=asset.bytes;
+      for(unsigned i=0;i<64;++i){const char c=asset.hash[i];file.digest[i/2]=(file.digest[i/2]<<4)|(c<='9'?c-'0':c-'a'+10);}
+      report(STUDY_BUILD_GENERATION,"staging",("First setup: loading "+file.role+" artwork").c_str());
+      if(!download(STUDY_BUILD_GENERATION,file)){
+        report(STUDY_BUILD_GENERATION,"staging","Check FAT32 card, free space and Ethernet. Artwork downloads retry automatically.");return;
+      }
+    }
+    report(STUDY_BUILD_GENERATION,"staging","Artwork verified. Waiting for display and local artwork health checks.");
+    initial_staged_=true;
+  }
+#endif
   struct File {std::string hash,role;size_t bytes=0;uint8_t digest[32]{};};
   bool persist(uint32_t generation){
     nvs_handle_t h;
@@ -195,12 +217,39 @@ class Deployment {
     }
     nvs_handle_t h;
     if(nvs_open("p4-update",NVS_READONLY,&h)==ESP_OK){uint32_t value=0;nvs_get_u32(h,"attempt",&value);self.highest_=std::max(self.highest_,value);nvs_close(h);}
-    for(;;){if(self.healthy_ && esphome::network::is_connected())self.poll();vTaskDelay(pdMS_TO_TICKS(60000));}
+    for(;;){
+#ifdef STUDY_INITIAL_INSTALL
+      if(self.initial_){
+        if(!self.initial_staged_ && esphome::network::is_connected())self.initial_poll();
+        vTaskDelay(pdMS_TO_TICKS(15000));continue;
+      }
+#endif
+      if(self.healthy_ && esphome::network::is_connected())self.poll();vTaskDelay(pdMS_TO_TICKS(60000));
+    }
   }
  public:
   explicit Deployment(const FleetSettings &settings):settings_(settings){}
   void tick(bool local_ok,bool idle){
     idle_=idle;
+#ifdef STUDY_INITIAL_INSTALL
+    if(!initial_checked_){
+      initial_checked_=true;
+      esp_ota_img_states_t state{};const auto *running=esp_ota_get_running_partition();
+      const auto result=esp_ota_get_state_partition(running,&state);
+      // Only an unselected factory app0 can bypass the renderer gate to obtain
+      // its initial artwork. Pending OTA and valid installed slots cannot.
+      initial_=!local_ok && running && running->address==0x10000 &&
+        (result==ESP_ERR_NOT_FOUND || (result==ESP_OK && state==ESP_OTA_IMG_UNDEFINED));
+    }
+    if(initial_){
+      idle_=true;
+      if(!task_)xTaskCreate(worker,"p4_initial",12288,this,1,&task_);
+      if(!initial_staged_ || !local_ok)return;
+      // Readers retry missing files in place. Wait for all of them instead of
+      // rebooting as soon as downloads finish, which could loop on slow cards.
+      initial_=false;boot_=esp_timer_get_time();healthy_since_=0;
+    }
+#endif
     const int64_t now=esp_timer_get_time();
     if(!local_ok)healthy_since_=0;
     else if(!healthy_since_)healthy_since_=now;

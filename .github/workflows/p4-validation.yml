@@ -16,6 +16,8 @@ jobs:
       - name: Test update isolation and image service
         run: |
           docker run --rm -v "$PWD:/src:ro" panel-p4-test python /src/tests/test_p4_deployment.py
+          docker run --rm -v "$PWD:/src:ro" panel-p4-test python /src/tests/test_p4_setup.py
+          docker run --rm --shm-size=2g -v "$PWD:/src:ro" panel-p4-test python /src/tests/test_p4_setup_ui.py
           docker run --rm -v "$PWD:/src:ro" panel-p4-test python /src/tests/test_p4_live_settings.py
           docker run --rm -v "$PWD:/src:ro" panel-p4-test python /src/tests/test_p4_artwork_cache.py
           docker run --rm -v "$PWD:/src:ro" panel-p4-test python /src/tests/test_p4_signed_config.py
@@ -23,3 +25,5 @@ jobs:
           docker run --rm --shm-size=2g -v "$PWD:/src:ro" panel-p4-test python /src/tests/test_p4_home_zoom.py
       - name: Render and compile a complete room on Linux
         run: docker run --rm --shm-size=2g -v "$PWD:/src:ro" panel-p4-test python /src/tests/test_p4_builder.py
+      - name: Test USB write safeguards
+        run: node tests/test_p4_usb.mjs

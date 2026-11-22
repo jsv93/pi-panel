@@ -252,6 +252,8 @@ async def worker():
             cfg.update(_version=job['version'], _panel_id=pid, _claimed=True)
             identity = dict(id=pid, mac=panel['mac'], server=device['server'], api_name=device['api_name'],
                             token=db.get_panel_token(pid), sign_key=db.get_panel_sign_key(pid), generation=job['id'])
+            from . import p4_setup
+            identity['initial_install'] = p4_setup.initial_install(pid)
             for name, value in [('config.json', {'config':cfg}), ('identity.json',identity), ('states.json', await ha.states())]:
                 (directory/name).write_bytes(canonical(value))
                 (directory/name).chmod(0o600)
